@@ -54,8 +54,9 @@ local KEYBIND_BASE = 48;
 -- State
 -- ============================================
 
--- Background primitive handle
-local bgPrimHandle = nil;
+-- Background primitive handles (one for horizontal, one for vertical)
+local bgPrimHandleHorizontal = nil;
+local bgPrimHandleVertical = nil;
 
 -- Theme tracking (for detecting changes like petbar)
 local loadedBgTheme = nil;
@@ -90,8 +91,8 @@ local drawing = require('libs.drawing');
 function M.DrawWindow(settings)
     -- Render a themed hotbar with two HORIZONTAL_ROWS of buttons (10 per row, 20 total) using an imgui window
 
-    -- Validate primitive
-    if not bgPrimHandle then
+    -- Validate primitives
+    if not bgPrimHandleHorizontal or not bgPrimHandleVertical then
         return;
     end
 
@@ -140,10 +141,11 @@ function M.DrawWindow(settings)
     local borderOpacity = gConfig.hotbarBorderOpacity or 1.0;
 
     -- Apply theme change safely
-    if loadedBgTheme ~= bgTheme and bgPrimHandle then
+    if loadedBgTheme ~= bgTheme and bgPrimHandleHorizontal and bgPrimHandleVertical then
         loadedBgTheme = bgTheme;
         pcall(function()
-            windowBg.setTheme(bgPrimHandle, bgTheme, bgScale, borderScale);
+            windowBg.setTheme(bgPrimHandleHorizontal, bgTheme, bgScale, borderScale);
+            windowBg.setTheme(bgPrimHandleVertical, bgTheme, bgScale, borderScale);
         end);
     end
 
@@ -166,6 +168,8 @@ function M.DrawWindow(settings)
     -- Use saved state if present (for drag-to-move later)
     local savedX = (gConfig.hotbarState and gConfig.hotbarState.x) or 1000;
     local savedY = (gConfig.hotbarState and gConfig.hotbarState.y) or 1000;
+    local savedVerticalX = (gConfig.hotbarVerticalState and gConfig.hotbarVerticalState.x) or 1200;
+    local savedVerticalY = (gConfig.hotbarVerticalState and gConfig.hotbarVerticalState.y) or 1000;
 
     local bgOptions = {
         theme = bgTheme,
@@ -182,6 +186,12 @@ function M.DrawWindow(settings)
     -- Use an imgui window (no decoration / no background) to get a consistent position/size like PartyWindow
     local windowFlags = GetBaseWindowFlags(gConfig.lockPositions);
 
+    -- Get draw list once for all windows
+    local drawList = drawing.GetUIDrawList();
+
+    -- ============================================
+    -- HORIZONTAL HOTBAR WINDOW
+    -- ============================================
     local windowName = 'Hotbar';
 
     imgui.PushStyleVar(ImGuiStyleVar_FramePadding, {0,0});
@@ -195,15 +205,12 @@ function M.DrawWindow(settings)
 
         -- Reserve window space IMMEDIATELY after Begin()
         -- This tells imgui about the window bounds before any button drawing
-        imgui.Dummy({contentWidth, contentHeight});
-
-        -- Foreground draw list for text and overlays
-        local drawList = drawing.GetUIDrawList();
+        imgui.Dummy({mainHotbarWidth + (padding * 2), contentHeight});
 
         -- Draw title above the hotbar (centered)
         local title = 'Hotbar';
         local titleWidth = imgui.CalcTextSize(title) or 0;
-        local titleX = imguiPosX + (contentWidth / 2) - (titleWidth / 2);
+        local titleX = imguiPosX + ((mainHotbarWidth + (padding * 2)) / 2) - (titleWidth / 2);
         local titleY = imguiPosY - imgui.GetTextLineHeight() - 6;
         drawList:AddText({titleX, titleY}, imgui.GetColorU32({0.9, 0.9, 0.9, 1.0}), title);
 
@@ -271,16 +278,54 @@ function M.DrawWindow(settings)
                 idx = idx + 1;
             end
         end
-        
+
+        -- Update background primitive using imgui window position
+        pcall(function()
+            windowBg.update(bgPrimHandleHorizontal, imguiPosX, imguiPosY, mainHotbarWidth + (padding * 2), contentHeight, bgOptions);
+        end);
+
+        imgui.End();
+    end
+
+    imgui.PopStyleVar(2);
+
+    -- Save horizontal window position
+    if imguiPosX ~= nil then
+        if gConfig.hotbarState == nil then
+            gConfig.hotbarState = {};
+        end
+        if gConfig.hotbarState.x ~= imguiPosX or gConfig.hotbarState.y ~= imguiPosY then
+            gConfig.hotbarState.x = imguiPosX;
+            gConfig.hotbarState.y = imguiPosY;
+        end
+    end
+
+    -- ============================================
+    -- VERTICAL HOTBAR WINDOW
+    -- ============================================
+    imgui.PushStyleVar(ImGuiStyleVar_FramePadding, {0,0});
+    imgui.PushStyleVar(ImGuiStyleVar_ItemSpacing, { buttonGap, 0 });
+    imgui.SetNextWindowPos({savedVerticalX, savedVerticalY}, ImGuiCond_FirstUseEver);
+
+    local imguiVerticalPosX, imguiVerticalPosY;
+    if (imgui.Begin('HotbarVertical', true, windowFlags)) then
+        imguiVerticalPosX, imguiVerticalPosY = imgui.GetWindowPos();
+
+        -- Calculate vertical hotbar total width
+        local verticalHotbarsExtraMargin = (VERTICAL_HOTBARS_COUNT - 1) * VERTICAL_HOTBAR_SPACING;
+        local totalVerticalWidth = (verticalHotbarWidth * VERTICAL_HOTBARS_COUNT) + (buttonGap * (VERTICAL_HOTBARS_COUNT - 1)) + verticalHotbarsExtraMargin + (padding * 2);
+
+        imgui.Dummy({totalVerticalWidth, contentHeight});
+
         -- Draw vertical hotbars (5, 6, 7) - each with 4 rows x 2 columns
-        local verticalStartX = imguiPosX + padding + mainHotbarWidth + verticalMargin;
+        local verticalStartX = imguiVerticalPosX + padding;
         local hotbarMargin = 0;
         for hotbarNum = 1, VERTICAL_HOTBARS_COUNT do
             local hotbarOffsetX = verticalStartX + (hotbarNum - 1) * (verticalHotbarWidth + buttonGap) + hotbarMargin;
             local verticalIdx = 1;
             for row = 1, VERTICAL_HOTBAR_ROWS do
                 local btnX = hotbarOffsetX;
-                local btnY = imguiPosY + padding + (row - 1) * (buttonSize + labelGap + textHeight + rowGap);
+                local btnY = imguiVerticalPosY + padding + (row - 1) * (buttonSize + labelGap + textHeight + rowGap);
                 for column = 1, VERTICAL_HOTBAR_COLUMNS do
                     local buttonIndex = (hotbarNum - 1) * (VERTICAL_HOTBAR_ROWS * VERTICAL_HOTBAR_COLUMNS) + verticalIdx;
                     local id = 'hotbar_vertical_btn_' .. buttonIndex;
@@ -326,15 +371,17 @@ function M.DrawWindow(settings)
             -- Draw hotbar number below vertical hotbar
             local hotbarNumber = tostring(4 + hotbarNum);
             local hotbarNumX = hotbarOffsetX + (verticalHotbarWidth / 2) - (imgui.CalcTextSize(hotbarNumber) / 2);
-            local hotbarNumY = imguiPosY + padding + VERTICAL_HOTBAR_ROWS * (buttonSize + labelGap + textHeight + rowGap) + VERTICAL_HOTBAR_NUMBER_POSITION;
+            local hotbarNumY = imguiVerticalPosY + padding + VERTICAL_HOTBAR_ROWS * (buttonSize + labelGap + textHeight + rowGap) + VERTICAL_HOTBAR_NUMBER_POSITION;
             drawList:AddText({hotbarNumX, hotbarNumY}, imgui.GetColorU32({0.8, 0.8, 0.8, 1.0}), hotbarNumber);
             
             hotbarMargin = hotbarMargin + VERTICAL_HOTBAR_SPACING;
         end
 
-        -- Update background primitive using imgui window position
+        -- Update vertical background primitive
+        local verticalHotbarsExtraMargin = (VERTICAL_HOTBARS_COUNT - 1) * VERTICAL_HOTBAR_SPACING;
+        local totalVerticalWidth = (verticalHotbarWidth * VERTICAL_HOTBARS_COUNT) + (buttonGap * (VERTICAL_HOTBARS_COUNT - 1)) + verticalHotbarsExtraMargin + (padding * 2);
         pcall(function()
-            windowBg.update(bgPrimHandle, imguiPosX, imguiPosY, contentWidth, contentHeight, bgOptions);
+            windowBg.update(bgPrimHandleVertical, imguiVerticalPosX, imguiVerticalPosY, totalVerticalWidth, contentHeight, bgOptions);
         end);
 
         imgui.End();
@@ -342,27 +389,24 @@ function M.DrawWindow(settings)
 
     imgui.PopStyleVar(2);
 
-    -- Save window position after dragging
-    -- Get the current window position (in case it was dragged)
-    local finalX, finalY = imguiPosX, imguiPosY;
-    if imguiPosX ~= nil then
-        -- The window was rendered, so we can try to get its final position
-        -- Note: GetWindowPos only works inside Begin/End, so we use the value from inside
-        if gConfig.hotbarState == nil then
-            gConfig.hotbarState = {};
+    -- Save vertical window position
+    if imguiVerticalPosX ~= nil then
+        if gConfig.hotbarVerticalState == nil then
+            gConfig.hotbarVerticalState = {};
         end
-        
-        -- Only save if position has changed
-        if gConfig.hotbarState.x ~= finalX or gConfig.hotbarState.y ~= finalY then
-            gConfig.hotbarState.x = finalX;
-            gConfig.hotbarState.y = finalY;
+        if gConfig.hotbarVerticalState.x ~= imguiVerticalPosX or gConfig.hotbarVerticalState.y ~= imguiVerticalPosY then
+            gConfig.hotbarVerticalState.x = imguiVerticalPosX;
+            gConfig.hotbarVerticalState.y = imguiVerticalPosY;
         end
     end
 end
 
 function M.HideWindow()
-    if bgPrimHandle then
-        windowBg.hide(bgPrimHandle);
+    if bgPrimHandleHorizontal then
+        windowBg.hide(bgPrimHandleHorizontal);
+    end
+    if bgPrimHandleVertical then
+        windowBg.hide(bgPrimHandleVertical);
     end
 
     -- Hide main hotbar buttons
@@ -387,7 +431,7 @@ function M.Initialize(settings)
     local borderScale = gConfig.hotbarBorderScale or 1.0;
     loadedBgTheme = bgTheme;
 
-    -- Create background primitive (fonts created by init.lua)
+    -- Create background primitives (fonts created by init.lua)
     local primData = {
         visible = false,
         can_focus = false,
@@ -395,7 +439,8 @@ function M.Initialize(settings)
         width = 100,
         height = 100,
     };
-    bgPrimHandle = windowBg.create(primData, bgTheme, bgScale, borderScale);
+    bgPrimHandleHorizontal = windowBg.create(primData, bgTheme, bgScale, borderScale);
+    bgPrimHandleVertical = windowBg.create(primData, bgTheme, bgScale, borderScale);
 end
 
 function M.UpdateVisuals(settings)
@@ -403,9 +448,10 @@ function M.UpdateVisuals(settings)
     local bgTheme = gConfig.hotbarBackgroundTheme or 'Plain';
     local bgScale = gConfig.hotbarBgScale or 1.0;
     local borderScale = gConfig.hotbarBorderScale or 1.0;
-    if loadedBgTheme ~= bgTheme and bgPrimHandle then
+    if loadedBgTheme ~= bgTheme and bgPrimHandleHorizontal and bgPrimHandleVertical then
         loadedBgTheme = bgTheme;
-        windowBg.setTheme(bgPrimHandle, bgTheme, bgScale, borderScale);
+        windowBg.setTheme(bgPrimHandleHorizontal, bgTheme, bgScale, borderScale);
+        windowBg.setTheme(bgPrimHandleVertical, bgTheme, bgScale, borderScale);
     end
 end
 
@@ -416,9 +462,13 @@ function M.SetHidden(hidden)
 end
 
 function M.Cleanup()
-    if bgPrimHandle then
-        windowBg.destroy(bgPrimHandle);
-        bgPrimHandle = nil;
+    if bgPrimHandleHorizontal then
+        windowBg.destroy(bgPrimHandleHorizontal);
+        bgPrimHandleHorizontal = nil;
+    end
+    if bgPrimHandleVertical then
+        windowBg.destroy(bgPrimHandleVertical);
+        bgPrimHandleVertical = nil;
     end
 
     -- Destroy main hotbar buttons
