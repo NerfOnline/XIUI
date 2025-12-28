@@ -86,10 +86,9 @@ function M.DrawWindow(settings)
     local buttonGap = 12; -- increased horizontal spacing between buttons
 
     -- Determine button size to fit text ("Button Text") plus padding, then apply configured button scale
-    local sampleLabel = 'Button Text';
-    local sampleLabelW = imgui.CalcTextSize(sampleLabel) or 0;
+    local sampleLabel = 'Shellra2';
     local labelPadding = 12; -- horizontal padding to give breathing room for text
-    local baseButtonSize = math.max(iconSize, math.ceil(sampleLabelW + labelPadding));
+    local baseButtonSize = 100
     local button_scale = gConfig.hotbarButtonScale or 0.56; -- final scale (default ~56%)
     local buttonSize = math.max(8, math.floor(baseButtonSize * button_scale));
 
@@ -182,7 +181,7 @@ function M.DrawWindow(settings)
             local btnY = imguiPosY + padding + (r - 1) * (buttonSize + labelGap + textHeight + rowGap);
             for c = 1, COLUMNS do
                 local id = 'hotbar_btn_' .. idx;
-                local labelText = (idx == 1) and 'Cure' or 'Sample';
+                local labelText = (idx == 1) and 'Cure' or sampleLabel;
                 local clicked, hovered = button.Draw(id, btnX, btnY, buttonSize, buttonSize, {
                     colors = button.COLORS_NEUTRAL,
                     rounding = 4,
