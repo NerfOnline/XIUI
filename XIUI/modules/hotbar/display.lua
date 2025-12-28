@@ -26,8 +26,15 @@ local ICON_TEXT_GAP = 6;
 local ROW_SPACING = 4;
 local BAR_HEIGHT = 3;
 
+-- Keybind text positioning
+local KEYBIND_OFFSET = 0.04;  -- relative to button size
+
 local HORIZONTAL_COLUMNS = 10; -- buttons per row
 local HORIZONTAL_ROWS = 4; -- number of HORIZONTAL_ROWS
+
+local SIDE_HOTBAR_COLUMNS = 2;
+local SIDE_HOTBAR_ROWS = 4;
+local SIDE_HOTBARS_COUNT = 3;
 
 -- Keybind constants for hotbar HORIZONTAL_ROWS
 local KEYBIND_SHIFT = 10;
@@ -104,9 +111,18 @@ function M.DrawWindow(settings)
     local textHeight = imgui.GetTextLineHeight();
     local rowGap = 6; -- vertical gap between HORIZONTAL_ROWS
 
-    -- Compute content size to fit buttons + padding + labels and inter-row gap
-    local contentWidth = (padding * 2) + (buttonSize * HORIZONTAL_COLUMNS) + (buttonGap * (HORIZONTAL_COLUMNS - 1));
-    local contentHeight = (padding * 2) + (buttonSize + labelGap + textHeight) * HORIZONTAL_ROWS + (rowGap * (HORIZONTAL_ROWS - 1));
+    -- Compute content size for main hotbar
+    local mainHotbarWidth = (buttonSize * HORIZONTAL_COLUMNS) + (buttonGap * (HORIZONTAL_COLUMNS - 1));
+    local mainHotbarHeight = (buttonSize + labelGap + textHeight) * HORIZONTAL_ROWS + (rowGap * (HORIZONTAL_ROWS - 1));
+    
+    -- Compute content size for side hotbars (5, 6, 7)
+    local sideHotbarWidth = (buttonSize * SIDE_HOTBAR_COLUMNS) + (buttonGap * (SIDE_HOTBAR_COLUMNS - 1));
+    local sideHotbarHeight = (buttonSize + labelGap + textHeight) * SIDE_HOTBAR_ROWS + (rowGap * (SIDE_HOTBAR_ROWS - 1));
+    
+    -- Compute total content size (main hotbar + gap + side hotbars)
+    local sideGap = 16; -- horizontal gap between main hotbar and side hotbars
+    local contentWidth = (padding * 2) + mainHotbarWidth + sideGap + (sideHotbarWidth * SIDE_HOTBARS_COUNT) + (buttonGap * (SIDE_HOTBARS_COUNT - 1));
+    local contentHeight = (padding * 2) + math.max(mainHotbarHeight, sideHotbarHeight);
 
     -- Background options (use theme settings like partylist)
     local bgTheme = gConfig.hotbarBackgroundTheme or 'Plain';
@@ -181,7 +197,7 @@ function M.DrawWindow(settings)
         local titleY = imguiPosY - imgui.GetTextLineHeight() - 6;
         drawList:AddText({titleX, titleY}, imgui.GetColorU32({0.9, 0.9, 0.9, 1.0}), title);
 
-        -- Draw buttons inside the background using button. Draw in a HORIZONTAL_ROWS x HORIZONTAL_COLUMNS grid
+        -- Draw main hotbar (4 rows x 10 columns)
         local idx = 1;
         for row = 1, HORIZONTAL_ROWS do
             local btnX = imguiPosX + padding;
@@ -197,8 +213,8 @@ function M.DrawWindow(settings)
                 });
 
                 -- Draw keybind in top-left corner of button
-                local keybindX = btnX + 4;
-                local keybindY = btnY + 2;
+                local keybindX = btnX + buttonSize * KEYBIND_OFFSET;
+                local keybindY = btnY + buttonSize * KEYBIND_OFFSET;
 
                 if(idx <= KEYBIND_SHIFT) then
                     keybindDisplay = 'S-' .. tostring(column);
@@ -230,6 +246,42 @@ function M.DrawWindow(settings)
                 idx = idx + 1;
             end
         end
+        
+        -- Draw side hotbars (5, 6, 7) - each with 4 rows x 2 columns
+        local sideStartX = imguiPosX + padding + mainHotbarWidth + sideGap;
+        for hotbarNum = 1, SIDE_HOTBARS_COUNT do
+            local hotbarOffsetX = sideStartX + (hotbarNum - 1) * (sideHotbarWidth + buttonGap);
+            local sideIdx = 1;
+            for row = 1, SIDE_HOTBAR_ROWS do
+                local btnX = hotbarOffsetX;
+                local btnY = imguiPosY + padding + (row - 1) * (buttonSize + labelGap + textHeight + rowGap);
+                for column = 1, SIDE_HOTBAR_COLUMNS do
+                    local buttonIndex = (hotbarNum - 1) * (SIDE_HOTBAR_ROWS * SIDE_HOTBAR_COLUMNS) + sideIdx;
+                    local id = 'hotbar_side_btn_' .. buttonIndex;
+                    local labelText = 'Side' .. hotbarNum;
+                    local clicked, hovered = button.Draw(id, btnX, btnY, buttonSize, buttonSize, {
+                        colors = button.COLORS_NEUTRAL,
+                        rounding = 4,
+                        borderThickness = 1,
+                        tooltip = labelText,
+                    });
+
+                    -- Draw keybind in top-left corner of button
+                    local keybindX = btnX + buttonSize * KEYBIND_OFFSET;
+                    local keybindY = btnY + buttonSize * KEYBIND_OFFSET;
+                    local keybindDisplay = (4 + hotbarNum) .. '-' .. tostring(sideIdx);
+                    drawList:AddText({keybindX, keybindY}, imgui.GetColorU32({0.7, 0.7, 0.7, 1.0}), keybindDisplay);
+
+                    -- Draw label beneath each button
+                    local labelX = btnX;
+                    local labelY = btnY + buttonSize + labelGap;
+                    drawList:AddText({labelX, labelY}, imgui.GetColorU32({0.9, 0.9, 0.9, 1.0}), labelText);
+
+                    btnX = btnX + buttonSize + buttonGap;
+                    sideIdx = sideIdx + 1;
+                end
+            end
+        end
 
         -- Force window content size so the window background primitive matches
         imgui.Dummy({contentWidth, contentHeight});
@@ -248,9 +300,14 @@ function M.HideWindow()
         windowBg.hide(bgPrimHandle);
     end
 
-    -- Hide primitive-backed buttons
+    -- Hide main hotbar buttons
     for i = 1, HORIZONTAL_ROWS * HORIZONTAL_COLUMNS do
         button.HidePrim('hotbar_btn_' .. i);
+    end
+    
+    -- Hide side hotbar buttons
+    for i = 1, SIDE_HOTBARS_COUNT * SIDE_HOTBAR_ROWS * SIDE_HOTBAR_COLUMNS do
+        button.HidePrim('hotbar_side_btn_' .. i);
     end
 end
 
@@ -299,9 +356,14 @@ function M.Cleanup()
         bgPrimHandle = nil;
     end
 
-    -- Destroy primitive-backed buttons
+    -- Destroy main hotbar buttons
     for i = 1, HORIZONTAL_ROWS * HORIZONTAL_COLUMNS do
         button.DestroyPrim('hotbar_btn_' .. i);
+    end
+    
+    -- Destroy side hotbar buttons
+    for i = 1, SIDE_HOTBARS_COUNT * SIDE_HOTBAR_ROWS * SIDE_HOTBAR_COLUMNS do
+        button.DestroyPrim('hotbar_side_btn_' .. i);
     end
 end
 
