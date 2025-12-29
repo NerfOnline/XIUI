@@ -120,22 +120,29 @@ local function DrawHotbarButton(params)
     local drawList = params.drawList;
     local keybindDisplay = params.keybindDisplay;
     
+    local noCommand = not command or command == ''
+
+    if noCommand then
+       return false, false;
+    end
+
     -- Get slot background and frame textures
     local slotBgTexture = textures:Get('slot');
     local frameTexture = textures:Get('frame');
     
+    -- Draw layered button: slot background -> button (with icon) -> frame overlay
+    
+    -- Draw button with spell icon using button library (with transparent background)
+    
     -- Convert textures to pointers for ImGui
     local slotBgPtr = slotBgTexture and tonumber(ffi.cast("uint32_t", slotBgTexture.image));
     local framePtr = frameTexture and tonumber(ffi.cast("uint32_t", frameTexture.image));
-    
-    -- Draw layered button: slot background -> button (with icon) -> frame overlay
-    
-    -- Draw slot background first (behind everything)
+
+        -- Draw slot background first (behind everything)
     if slotBgPtr then
         drawList:AddImage(slotBgPtr, {btnX, btnY}, {btnX + buttonSize, btnY + buttonSize});
     end
-    
-    -- Draw button with spell icon using button library (with transparent background)
+
     local clicked, hovered = button.Draw(id, btnX, btnY, buttonSize, buttonSize, {
         colors = {
             normal = 0x00000000,   -- Fully transparent
@@ -151,7 +158,12 @@ local function DrawHotbarButton(params)
         drawList = drawList,
     });
     
-    -- Draw frame overlay on top
+    -- Draw label beneath each button
+    local labelX = btnX;
+    local labelY = btnY + buttonSize + (params.labelGap or 4);
+    drawList:AddText({labelX, labelY}, imgui.GetColorU32({0.9, 0.9, 0.9, 1.0}), labelText);
+
+        -- Draw frame overlay on top
     if framePtr then
         drawList:AddImage(framePtr, {btnX, btnY}, {btnX + buttonSize, btnY + buttonSize});
     end
@@ -160,12 +172,7 @@ local function DrawHotbarButton(params)
     local keybindX = btnX + buttonSize * KEYBIND_OFFSET;
     local keybindY = btnY + buttonSize * KEYBIND_OFFSET;
     drawList:AddText({keybindX, keybindY}, imgui.GetColorU32({0.7, 0.7, 0.7, 1.0}), keybindDisplay);
-
-    -- Draw label beneath each button
-    local labelX = btnX;
-    local labelY = btnY + buttonSize + (params.labelGap or 4);
-    drawList:AddText({labelX, labelY}, imgui.GetColorU32({0.9, 0.9, 0.9, 1.0}), labelText);
-
+   
     -- Execute command when button is clicked
     if clicked and command then
         AshitaCore:GetChatManager():QueueCommand(-1, command);
@@ -307,13 +314,6 @@ function M.DrawWindow(settings)
         -- Reserve window space IMMEDIATELY after Begin()
         -- This tells imgui about the window bounds before any button drawing
         imgui.Dummy({mainHotbarWidth + padding, horizontalContentHeight});
-
-        -- Draw title above the hotbar (centered)
-        local title = 'Hotbar';
-        local titleWidth = imgui.CalcTextSize(title) or 0;
-        local titleX = imguiPosX + ((mainHotbarWidth + (padding * 2)) / 2) - (titleWidth / 2);
-        local titleY = imguiPosY - imgui.GetTextLineHeight() - 6;
-        drawList:AddText({titleX, titleY}, imgui.GetColorU32({0.9, 0.9, 0.9, 1.0}), title);
 
         -- Draw main hotbar (4 rows x 10 columns)
         local idx = 1;
