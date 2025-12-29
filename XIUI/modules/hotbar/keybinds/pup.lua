@@ -1,14 +1,17 @@
 keybinds_job = {}
 
+-- Load and initialize the include file.
 keybinds_job['Base'] = {
      
   -- Hotbar #1
-    
-	{'battle 1 5', 'ja', 'Boost', 'me', 'Boost'},
-	{'battle 1 6', 'ja', 'Focus', 'me', 'Focus'},
-	{'battle 1 7', 'ja', 'Footwork', 'me', 'Footwork'},
-	{'battle 1 8', 'ja', 'Formless Strikes', 'me', 'Formless'},
-	
+    --{'battle 1 1', '', '', '', ''},
+	--{'battle 1 2', '', '', '', ''},
+	--{'battle 1 3', '', '', '', ''},
+	--{'battle 1 4', '', '', '', ''},
+	--{'battle 1 5', '', '', '', ''},
+	--{'battle 1 6', '', '', '', ''},
+	--{'battle 1 7', '', '', '', ''},
+	--{'battle 1 8', '', '', '', ''},
 	--{'battle 1 9', '', '', '', ''},
 	--{'battle 1 10', '', '', '', ''},
 	--{'battle 1 11', '', '', '', ''},
@@ -31,8 +34,8 @@ keybinds_job['Base'] = {
 
 
   -- Hotbar #3
-	{'battle 3 1', 'ja', 'Chi Blast', 't', 'Chi Blast'},
-	{'battle 3 2', 'ja', 'Perfect Counter', 'me', 'Perf Cntr'},
+	--{'battle 3 1', '', '', '', ''},
+	--{'battle 3 2', '', '', '', ''},
 	--{'battle 3 3', '', '', '', ''},
 	--{'battle 3 4', '', '', '', ''},
 	--{'battle 3 5', '', '', '', ''},
@@ -42,16 +45,17 @@ keybinds_job['Base'] = {
 	--{'battle 3 9', '', '', '', ''},
 	--{'battle 3 10', '', '', '', ''},
 	--{'battle 3 11', '', '', '', ''},
-	{'battle 3 12', 'ja', 'Hundred Fists', 'me', '100Fists',''},
+	--{'battle 3 12', '', '', '', ''},
   
   -- Hotbar #4
-	{'battle 4 1', 'ja', 'Dodge', 'me', 'Dodge'},
-	{'battle 4 2', 'ja', 'Chakra', 'me', 'Chakra'},
-	{'battle 4 3', 'ja', 'Counterstance', 'me', 'Counter'},
-	{'battle 4 4', 'ja', 'Mantra', 'me', 'Mantra'},
-	
-
-
+	--{'battle 4 1', '', '', '', ''},
+	--{'battle 4 2', '', '', '', ''},
+	--{'battle 4 3', '', '', '', ''},
+	--{'battle 4 4', '', '', '', ''},
+	--{'battle 4 5', '', '', '', ''},
+	--{'battle 4 6', '', '', '', ''},
+	--{'battle 4 7', '', '', '', ''},
+	--{'battle 4 8', '', '', '', ''},
 	--{'battle 4 9', '', '', '', ''},
 	--{'battle 4 10', '', '', '', ''},
 	--{'battle 4 11', '', '', '', ''},
@@ -89,25 +93,23 @@ keybinds_job['Base'] = {
 
 
 
-keybinds_job['WAR'] = {
+--keybinds_job['SUB'] = {
 	-- Hotbar #2 
-	{'battle 2 1', 'ja', 'Berserk', 'me', 'Berserk'},
-	{'battle 2 2', 'ja', 'Warcry', 'me', 'Warcry'},
-	{'battle 2 3', 'ja', 'Provoke', 't', 'Provoke'},
-	{'battle 2 4', 'ja', 'Provoke', 'st', 'Voke ST'},
-	{'battle 2 5', 'ja', 'Defender', 'me', 'Defender'},
-	
-  }
+	--{'battle 2 1', '', '', '', ''},
+	--{'battle 2 2', '', '', '', ''},
+	--{'battle 2 3', '', '', '', ''},
+	--{'battle 2 4', '', '', '', ''},
+	--{'battle 2 5', '', '', '', ''},
+	--{'battle 2 6', '', '', '', ''},
+	--{'battle 2 7', '', '', '', ''},
+	--{'battle 2 8', '', '', '', ''},
+	--{'battle 2 9', '', '', '', ''},
+	--{'battle 2 10', '', '', '', ''},
+	--{'battle 2 11', '', '', '', ''},
+	--{'battle 2 12', '', '', '', ''},
+  
+--}
 
-keybinds_job['Hand-to-hand'] = {
- 
-	-- Hotbar #1 (1-0)
-	{'battle 1 1', 'ws', 'Combo', 't', 'Combo'},
-	{'battle 1 2', 'ws', 'One Inch Punch', 't', 'One-Inch'},
-	{'battle 1 3', 'ws', 'Raging Fists', 't', 'Raging'},
-  
-  }
-  
 
 
 return keybinds_job

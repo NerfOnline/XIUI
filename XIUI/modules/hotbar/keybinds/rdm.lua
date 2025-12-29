@@ -1,10 +1,11 @@
+keybinds_job = {}
+
 -- Example:    {'battle 1 1', 'ja', 'Steal', 't', 'name/title'},  
 -- Once you make changes type "//htb reload" in game 
 -- If hotbar resets/duplicates or freaks out when switching characters. When you get back to main character. Type //lua unload xivhotbar2 and then //lua reload xihotbar
 
 --KEYS{1,2,3,4,5}
 
-keybinds_job = {}
 keybinds_job['Base'] = {
  
 

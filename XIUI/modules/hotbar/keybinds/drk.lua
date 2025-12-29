@@ -1,5 +1,4 @@
-
- --Load and initialize the include file.keybinds_job = {}
+keybinds_job = {}
 
 keybinds_job['Base'] = {
      
