@@ -66,12 +66,6 @@ end
 local SLOTS_PER_SIDE = 8;
 local COMBO_MODES = controller.COMBO_MODES;
 
--- Move anchor constants
-local ANCHOR_SIZE = 20;
-local ANCHOR_DOT_SIZE = 2;
-local ANCHOR_DOT_SPACING = 5;
-local ANCHOR_PADDING = 4; -- Distance from window edge
-
 -- ============================================
 -- Layout Calculation Functions
 -- ============================================
@@ -259,9 +253,6 @@ local function ClearCrossbarIconCache()
     iconCache = {};
 end
 
--- Move anchor state for crossbar
-local crossbarAnchorDragState = { dragging = false, offsetX = 0, offsetY = 0 };
-
 local state = {
     initialized = false,
 
@@ -391,92 +382,6 @@ local function GetDefaultPosition(settings)
     local y = screenHeight - height - 100;
 
     return x, y;
-end
-
--- ============================================
--- Move Anchor
--- ============================================
-
--- Draw a move anchor for repositioning the crossbar window
--- Returns new x, y position if dragged, or nil if not changed
-local function DrawMoveAnchor(windowX, windowY, width, height)
-    -- Only show when config menu is open
-    if not showConfig or not showConfig[1] then
-        return nil, nil;
-    end
-
-    local dragState = crossbarAnchorDragState;
-
-    -- Position anchor at top-left corner of the window
-    local anchorX = windowX - ANCHOR_SIZE - ANCHOR_PADDING;
-    local anchorY = windowY;
-
-    -- Get foreground draw list to draw on top
-    local drawList = imgui.GetForegroundDrawList();
-
-    -- Draw anchor background
-    local bgColor = dragState.dragging and 0xCC4488FF or 0xAA333333;
-    local borderColor = dragState.dragging and 0xFFFFFFFF or 0xAA888888;
-
-    drawList:AddRectFilled(
-        { anchorX, anchorY },
-        { anchorX + ANCHOR_SIZE, anchorY + ANCHOR_SIZE },
-        imgui.GetColorU32(bgColor),
-        3  -- rounding
-    );
-    drawList:AddRect(
-        { anchorX, anchorY },
-        { anchorX + ANCHOR_SIZE, anchorY + ANCHOR_SIZE },
-        imgui.GetColorU32(borderColor),
-        3,  -- rounding
-        0,  -- flags
-        1   -- thickness
-    );
-
-    -- Draw 3x3 dot grid
-    local dotColor = dragState.dragging and 0xFFFFFFFF or 0xFFAAAAAA;
-    local gridStartX = anchorX + (ANCHOR_SIZE - (2 * ANCHOR_DOT_SPACING)) / 2;
-    local gridStartY = anchorY + (ANCHOR_SIZE - (2 * ANCHOR_DOT_SPACING)) / 2;
-
-    for row = 0, 2 do
-        for col = 0, 2 do
-            local dotX = gridStartX + (col * ANCHOR_DOT_SPACING);
-            local dotY = gridStartY + (row * ANCHOR_DOT_SPACING);
-            drawList:AddCircleFilled(
-                { dotX, dotY },
-                ANCHOR_DOT_SIZE,
-                imgui.GetColorU32(dotColor)
-            );
-        end
-    end
-
-    -- Handle mouse interaction
-    local mouseX, mouseY = imgui.GetMousePos();
-    local isHovered = mouseX >= anchorX and mouseX <= anchorX + ANCHOR_SIZE
-                  and mouseY >= anchorY and mouseY <= anchorY + ANCHOR_SIZE;
-
-    local isMouseDown = imgui.IsMouseDown(0);
-
-    if isHovered and imgui.IsMouseClicked(0) then
-        -- Start dragging
-        dragState.dragging = true;
-        dragState.offsetX = mouseX - windowX;
-        dragState.offsetY = mouseY - windowY;
-    end
-
-    if dragState.dragging then
-        if isMouseDown then
-            -- Calculate new position
-            local newX = mouseX - dragState.offsetX;
-            local newY = mouseY - dragState.offsetY;
-            return newX, newY;
-        else
-            -- Stop dragging
-            dragState.dragging = false;
-        end
-    end
-
-    return nil, nil;
 end
 
 -- ============================================
@@ -1070,7 +975,7 @@ function M.DrawWindow(settings, moduleSettings)
     local posY = savedPos and savedPos.y or defaultY;
 
     -- Check if anchor is currently being dragged - if so, force position from saved config
-    local anchorDragging = crossbarAnchorDragState.dragging;
+    local anchorDragging = drawing.IsAnchorDragging('crossbar');
     local posCondition = anchorDragging and ImGuiCond_Always or ImGuiCond_FirstUseEver;
     imgui.SetNextWindowPos({posX, posY}, posCondition);
     imgui.SetNextWindowSize({width, height}, ImGuiCond_Always);
@@ -1217,7 +1122,7 @@ function M.DrawWindow(settings, moduleSettings)
     end
 
     -- Draw move anchor (only visible when config is open)
-    local anchorNewX, anchorNewY = DrawMoveAnchor(state.windowX, state.windowY, width, height);
+    local anchorNewX, anchorNewY = drawing.DrawMoveAnchor('crossbar', state.windowX, state.windowY);
     if anchorNewX ~= nil then
         state.windowX = anchorNewX;
         state.windowY = anchorNewY;

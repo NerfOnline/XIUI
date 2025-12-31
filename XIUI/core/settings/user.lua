@@ -56,9 +56,19 @@ function M.createUserSettingsDefaults()
         -- Per-bar hotbar settings (Bar 1-6 each have independent configurations)
         -- Bars 1-3 enabled by default, bars 4-6 disabled by default
         -- By default, useGlobalSettings = true, so bars use hotbarGlobal for visuals
-        hotbarBar1 = factories.createHotbarBarDefaults({ rows = 1, columns = 12 }),
-        hotbarBar2 = factories.createHotbarBarDefaults({ rows = 1, columns = 12 }),
-        hotbarBar3 = factories.createHotbarBarDefaults({ rows = 1, columns = 12 }),
+        -- Default keybindings: Bar1=1-0/-/=, Bar2=Ctrl+1-0/-/=, Bar3=Shift+1-0/-/=
+        hotbarBar1 = factories.createHotbarBarDefaults({
+            rows = 1, columns = 12,
+            keyBindings = factories.createNumberRowKeybindings(false, false, false),
+        }),
+        hotbarBar2 = factories.createHotbarBarDefaults({
+            rows = 1, columns = 12,
+            keyBindings = factories.createNumberRowKeybindings(true, false, false),  -- Ctrl modifier
+        }),
+        hotbarBar3 = factories.createHotbarBarDefaults({
+            rows = 1, columns = 12,
+            keyBindings = factories.createNumberRowKeybindings(false, false, true),  -- Shift modifier
+        }),
         hotbarBar4 = factories.createHotbarBarDefaults({ rows = 1, columns = 12, enabled = false }),
         hotbarBar5 = factories.createHotbarBarDefaults({ rows = 1, columns = 12, enabled = false }),
         hotbarBar6 = factories.createHotbarBarDefaults({ rows = 1, columns = 12, enabled = false }),

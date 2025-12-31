@@ -22,6 +22,8 @@ local M = {};
 
 local INPUT_BUFFER_SIZE = 64;
 local PALETTE_COLUMNS = 6;
+local PALETTE_ROWS = 6;
+local PALETTE_MACROS_PER_PAGE = PALETTE_COLUMNS * PALETTE_ROWS;  -- 36 macros per page
 local PALETTE_TILE_SIZE = 48;
 local PALETTE_TILE_GAP = 4;
 local PALETTE_PADDING = 8;
@@ -134,6 +136,7 @@ local paletteOpen = false;
 local selectedMacroIndex = nil;
 local editingMacro = nil;
 local isCreatingNew = false;
+local currentPalettePage = 1;  -- Current page in macro palette (1-indexed)
 
 -- Selected job for viewing/editing macros (nil = use current player job)
 local selectedPaletteJob = nil;
@@ -869,6 +872,7 @@ function M.ClosePalette()
     selectedMacroIndex = nil;
     editingMacro = nil;
     isCreatingNew = false;
+    currentPalettePage = 1;  -- Reset to page 1
 end
 
 function M.IsPaletteOpen()
@@ -988,10 +992,6 @@ local function PushWindowStyle()
     imgui.PushStyleColor(ImGuiCol_ScrollbarGrab, COLORS.bgLight);
     imgui.PushStyleColor(ImGuiCol_ScrollbarGrabHovered, COLORS.bgLighter);
     imgui.PushStyleColor(ImGuiCol_ScrollbarGrabActive, COLORS.gold);
-    -- Resize grip colors (gold tones to match main config)
-    imgui.PushStyleColor(ImGuiCol_ResizeGrip, COLORS.goldDarker);
-    imgui.PushStyleColor(ImGuiCol_ResizeGripHovered, COLORS.goldDark);
-    imgui.PushStyleColor(ImGuiCol_ResizeGripActive, COLORS.gold);
     imgui.PushStyleVar(ImGuiStyleVar_WindowRounding, 4);
     imgui.PushStyleVar(ImGuiStyleVar_FrameRounding, 3);
     imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, {10, 10});
@@ -1001,7 +1001,7 @@ end
 
 local function PopWindowStyle()
     imgui.PopStyleVar(5);
-    imgui.PopStyleColor(22);
+    imgui.PopStyleColor(19);  -- 15 base + 4 scrollbar colors
 end
 
 -- Build job list for dropdown
@@ -1031,14 +1031,35 @@ function M.DrawPalette()
     local currentPlayerJob = data.jobId or 1;
     local isViewingCurrentJob = (jobId == currentPlayerJob);
 
+    -- Calculate pagination
+    local totalMacros = #db;
+    local totalPages = math.max(1, math.ceil(totalMacros / PALETTE_MACROS_PER_PAGE));
+
+    -- Clamp current page to valid range
+    if currentPalettePage > totalPages then
+        currentPalettePage = totalPages;
+    end
+    if currentPalettePage < 1 then
+        currentPalettePage = 1;
+    end
+
+    -- Calculate how many macros/rows on this page
+    local startIdx = (currentPalettePage - 1) * PALETTE_MACROS_PER_PAGE + 1;
+    local endIdx = math.min(startIdx + PALETTE_MACROS_PER_PAGE - 1, totalMacros);
+    local macrosOnPage = math.max(0, endIdx - startIdx + 1);
+    local rowsOnPage = math.max(1, math.ceil(macrosOnPage / PALETTE_COLUMNS));
+
+    -- Calculate grid dimensions
+    local gridWidth = PALETTE_COLUMNS * PALETTE_TILE_SIZE + (PALETTE_COLUMNS - 1) * PALETTE_TILE_GAP;
+    local gridHeight = rowsOnPage * PALETTE_TILE_SIZE + (rowsOnPage - 1) * PALETTE_TILE_GAP;
+
     local windowFlags = bit.bor(
         ImGuiWindowFlags_NoCollapse,
-        ImGuiWindowFlags_AlwaysAutoResize
+        ImGuiWindowFlags_AlwaysAutoResize,
+        ImGuiWindowFlags_NoScrollbar
     );
 
     local isOpen = { true };
-
-    imgui.SetNextWindowSize({350, 400}, ImGuiCond_FirstUseEver);
 
     -- Apply XIUI styling
     PushWindowStyle();
@@ -1069,6 +1090,7 @@ function M.DrawPalette()
                 if imgui.Selectable(label, isSelected) then
                     selectedPaletteJob = job.id;
                     selectedMacroIndex = nil;  -- Clear selection when switching jobs
+                    currentPalettePage = 1;    -- Reset to page 1 when switching jobs
                     -- Clear spell cache when switching jobs
                     cachedSpells = nil;
                     cachedAbilities = nil;
@@ -1135,34 +1157,144 @@ function M.DrawPalette()
 
         -- Macro grid
         if #db == 0 then
-            imgui.Spacing();
             imgui.TextColored(COLORS.textDim, 'No macros yet.');
             imgui.TextColored(COLORS.textMuted, 'Click "+ New Macro" to create one.');
-            imgui.Spacing();
         else
-            local cursorStart = {imgui.GetCursorScreenPos()};
-            local startX = cursorStart[1];
-            local startY = cursorStart[2];
+            -- Draw grid row by row using standard ImGui layout
+            for row = 0, rowsOnPage - 1 do
+                for col = 0, PALETTE_COLUMNS - 1 do
+                    local idx = startIdx + row * PALETTE_COLUMNS + col;
+                    if idx <= endIdx then
+                        local macro = db[idx];
+                        if macro then
+                            if col > 0 then
+                                imgui.SameLine(0, PALETTE_TILE_GAP);
+                            end
 
-            for i, macro in ipairs(db) do
-                local col = ((i - 1) % PALETTE_COLUMNS);
-                local row = math.floor((i - 1) / PALETTE_COLUMNS);
+                            -- Draw the tile inline
+                            local isSelected = selectedMacroIndex == idx;
 
-                local tileX = startX + col * (PALETTE_TILE_SIZE + PALETTE_TILE_GAP);
-                local tileY = startY + row * (PALETTE_TILE_SIZE + PALETTE_TILE_GAP);
+                            if isSelected then
+                                imgui.PushStyleColor(ImGuiCol_Button, {0.15, 0.13, 0.08, 0.95});
+                                imgui.PushStyleColor(ImGuiCol_ButtonHovered, {0.2, 0.17, 0.1, 0.95});
+                                imgui.PushStyleColor(ImGuiCol_ButtonActive, COLORS.bgLighter);
+                            else
+                                imgui.PushStyleColor(ImGuiCol_Button, COLORS.bgDark);
+                                imgui.PushStyleColor(ImGuiCol_ButtonHovered, COLORS.bgMedium);
+                                imgui.PushStyleColor(ImGuiCol_ButtonActive, COLORS.bgLight);
+                            end
 
-                DrawMacroTile(macro, i, tileX, tileY, PALETTE_TILE_SIZE);
+                            imgui.PushStyleVar(ImGuiStyleVar_FrameRounding, 4);
+                            imgui.PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1);
+                            imgui.PushStyleColor(ImGuiCol_Border, isSelected and COLORS.gold or COLORS.border);
 
-                -- Handle layout
-                if col < PALETTE_COLUMNS - 1 and i < #db then
-                    imgui.SameLine();
+                            local buttonId = string.format('##macrotile%d', idx);
+                            local buttonPos = {imgui.GetCursorScreenPos()};
+
+                            if imgui.Button(buttonId, {PALETTE_TILE_SIZE, PALETTE_TILE_SIZE}) then
+                                selectedMacroIndex = idx;
+                            end
+
+                            imgui.PopStyleColor(4);
+                            imgui.PopStyleVar(2);
+
+                            -- Draw icon on top of button
+                            local icon = actions.GetBindIcon(macro);
+                            if icon and icon.image then
+                                local drawList = imgui.GetWindowDrawList();
+                                if drawList then
+                                    local iconSize = PALETTE_TILE_SIZE - 8;
+                                    local iconX = buttonPos[1] + 4;
+                                    local iconY = buttonPos[2] + 4;
+                                    local iconPtr = tonumber(ffi.cast("uint32_t", icon.image));
+                                    if iconPtr then
+                                        drawList:AddImage(iconPtr, {iconX, iconY}, {iconX + iconSize, iconY + iconSize});
+                                    end
+                                end
+                            end
+
+                            -- Handle drag
+                            if imgui.IsItemActive() and imgui.IsMouseDragging(0, 3) then
+                                if not dragdrop.IsDragging() and not dragdrop.IsDragPending() then
+                                    M.StartDragMacro(idx, macro);
+                                end
+                            end
+
+                            -- Tooltip
+                            if imgui.IsItemHovered() then
+                                imgui.PushStyleColor(ImGuiCol_PopupBg, COLORS.bgDark);
+                                imgui.PushStyleColor(ImGuiCol_Border, COLORS.border);
+                                imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, {8, 6});
+                                imgui.BeginTooltip();
+                                imgui.TextColored(COLORS.gold, macro.displayName or macro.action or 'Unknown');
+                                imgui.Spacing();
+                                imgui.TextColored(COLORS.textDim, 'Type: ' .. (ACTION_TYPE_LABELS[macro.actionType] or macro.actionType or '?'));
+                                if macro.target then
+                                    imgui.TextColored(COLORS.textDim, 'Target: <' .. macro.target .. '>');
+                                end
+                                imgui.Spacing();
+                                imgui.TextColored(COLORS.textMuted, 'Drag to hotbar slot');
+                                imgui.EndTooltip();
+                                imgui.PopStyleVar();
+                                imgui.PopStyleColor(2);
+                            end
+                        end
+                    end
                 end
             end
 
-            -- Reserve space for the grid
-            local totalRows = math.ceil(#db / PALETTE_COLUMNS);
-            local gridHeight = totalRows * (PALETTE_TILE_SIZE + PALETTE_TILE_GAP);
-            imgui.Dummy({1, gridHeight});
+            -- Reserve remaining space to always have full 6x6 grid height
+            if rowsOnPage < PALETTE_ROWS then
+                local remainingRows = PALETTE_ROWS - rowsOnPage;
+                local remainingHeight = remainingRows * (PALETTE_TILE_SIZE + PALETTE_TILE_GAP);
+                imgui.Dummy({gridWidth, remainingHeight});
+            end
+        end
+
+        -- Pagination controls (always visible, arrows disabled at boundaries)
+        imgui.Spacing();
+
+        -- Center the pagination controls
+        local paginationWidth = 200;
+        local winWidth = imgui.GetWindowWidth();
+        local paginationStartX = (winWidth - paginationWidth) / 2;
+        imgui.SetCursorPosX(paginationStartX);
+
+        -- Previous button (disabled when on first page)
+        local canGoPrev = currentPalettePage > 1;
+        if not canGoPrev then
+            imgui.PushStyleVar(ImGuiStyleVar_Alpha, 0.3);
+        end
+        if imgui.Button('<##PrevPage', {30, 22}) and canGoPrev then
+            currentPalettePage = currentPalettePage - 1;
+            selectedMacroIndex = nil;
+        end
+        if not canGoPrev then
+            imgui.PopStyleVar();
+        end
+
+        imgui.SameLine();
+
+        -- Page indicator
+        local pageText = string.format('Page %d / %d', currentPalettePage, totalPages);
+        local textWidth = imgui.CalcTextSize(pageText);
+        imgui.SetCursorPosX(paginationStartX + (paginationWidth - textWidth) / 2);
+        imgui.TextColored(COLORS.textDim, pageText);
+
+        imgui.SameLine();
+        imgui.SetCursorPosX(paginationStartX + paginationWidth - 30);
+
+        -- Next button (disabled when on last page)
+        local canGoNext = currentPalettePage < totalPages;
+        if not canGoNext then
+            imgui.PushStyleVar(ImGuiStyleVar_Alpha, 0.3);
+        end
+        if imgui.Button('>##NextPage', {30, 22}) and canGoNext then
+            currentPalettePage = currentPalettePage + 1;
+            selectedMacroIndex = nil;
+        end
+        if not canGoNext then
+            imgui.PopStyleVar();
         end
 
         imgui.End();
@@ -1951,6 +2083,9 @@ function M.DrawMacroEditor()
             if canSave then
                 if isCreatingNew then
                     M.AddMacro(editingMacro);
+                    -- Navigate to last page to show the new macro
+                    local db = M.GetMacroDatabase();
+                    currentPalettePage = math.max(1, math.ceil(#db / PALETTE_MACROS_PER_PAGE));
                 else
                     M.UpdateMacro(editingMacro.id, editingMacro);
                 end

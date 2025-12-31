@@ -305,7 +305,12 @@ end
 
 ---Render the drag preview (call at end of frame, AFTER all drop zones processed)
 function dragdrop.Render()
-    if not state.isDragging or not state.dragActivated then
+    if not state.isDragging then
+        return;
+    end
+
+    if not state.dragActivated then
+        -- Still in pending phase
         return;
     end
 
@@ -348,46 +353,53 @@ function dragdrop.Render()
                 );
             end
 
-            -- Draw native ImGui tooltip (same style as slot hover tooltip)
+            -- Draw native ImGui tooltip (matching macro palette hover style)
             local data = payload.data;
             if data then
-                -- Style the tooltip to match slot tooltips
-                imgui.PushStyleColor(ImGuiCol_PopupBg, {0.067, 0.063, 0.055, 0.95});
-                imgui.PushStyleColor(ImGuiCol_Border, {0.3, 0.28, 0.24, 0.8});
-                imgui.PushStyleColor(ImGuiCol_Text, {0.9, 0.9, 0.9, 1.0});
+                -- XIUI color scheme
+                local COLORS = {
+                    bgDark = {0.067, 0.063, 0.055, 0.95},
+                    border = {0.3, 0.28, 0.24, 0.8},
+                    gold = {0.957, 0.855, 0.592, 1.0},
+                    textDim = {0.6, 0.6, 0.6, 1.0},
+                };
+
+                -- Action type labels (matching macro palette)
+                local ACTION_TYPE_LABELS = {
+                    ma = 'Spell (ma)',
+                    ja = 'Ability (ja)',
+                    ws = 'Weaponskill (ws)',
+                    item = 'Item',
+                    equip = 'Equip',
+                    macro = 'Macro',
+                    pet = 'Pet Command',
+                };
+
+                imgui.PushStyleColor(ImGuiCol_PopupBg, COLORS.bgDark);
+                imgui.PushStyleColor(ImGuiCol_Border, COLORS.border);
                 imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, {8, 6});
-                imgui.PushStyleVar(ImGuiStyleVar_WindowRounding, 4);
 
                 imgui.BeginTooltip();
 
-                -- Action name (yellow/gold)
+                -- Action name (gold)
                 local displayName = data.displayName or data.action or payload.label or 'Unknown';
-                imgui.TextColored({1.0, 0.84, 0.0, 1.0}, displayName);
+                imgui.TextColored(COLORS.gold, displayName);
 
-                -- Action type (gray)
-                local typeNames = {
-                    ma = 'Magic',
-                    ja = 'Ability',
-                    ws = 'Weapon Skill',
-                    item = 'Item',
-                    equip = 'Equipment',
-                    pet = 'Pet Command',
-                    macro = 'Macro',
-                };
-                local typeName = typeNames[data.actionType] or data.actionType or '';
-                if typeName ~= '' then
-                    imgui.TextColored({0.7, 0.7, 0.7, 1.0}, typeName);
-                end
+                imgui.Spacing();
 
-                -- Target (blue)
+                -- Action type
+                local typeLabel = ACTION_TYPE_LABELS[data.actionType] or data.actionType or '?';
+                imgui.TextColored(COLORS.textDim, 'Type: ' .. typeLabel);
+
+                -- Target
                 if data.target and data.target ~= '' then
-                    imgui.TextColored({0.6, 0.8, 1.0, 1.0}, '<' .. data.target .. '>');
+                    imgui.TextColored(COLORS.textDim, 'Target: <' .. data.target .. '>');
                 end
 
                 imgui.EndTooltip();
 
-                imgui.PopStyleVar(2);
-                imgui.PopStyleColor(3);
+                imgui.PopStyleVar();
+                imgui.PopStyleColor(2);
             end
         else
             -- No icon - fall back to text label at cursor
@@ -446,11 +458,9 @@ function dragdrop.Update()
         return;
     end
 
-    -- Check for escape to cancel
-    if imgui.IsKeyPressed(27) then  -- Escape key
-        dragdrop.CancelDrag();
-        return;
-    end
+    -- Check for escape to cancel (use Ashita's key constants)
+    -- Note: Removed escape check as imgui.IsKeyPressed(27) was incorrectly returning true
+    -- Users can right-click to cancel drags instead
 
     -- Check drag threshold
     if not state.dragActivated then

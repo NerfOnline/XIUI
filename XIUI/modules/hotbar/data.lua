@@ -251,7 +251,7 @@ local function VKToShortString(vk)
     return '?';
 end
 
--- Format a keybind for short display (e.g., "C+A" for Ctrl+A)
+-- Format a keybind for short display (e.g., "C1" for Ctrl+1)
 local function FormatKeybindShort(binding)
     if not binding or not binding.key then return ''; end
     local prefix = '';
@@ -259,10 +259,7 @@ local function FormatKeybindShort(binding)
     if binding.alt then prefix = prefix .. 'A'; end
     if binding.shift then prefix = prefix .. 'S'; end
     local keyStr = VKToShortString(binding.key);
-    if prefix ~= '' then
-        return prefix .. '+' .. keyStr;
-    end
-    return keyStr;
+    return prefix .. keyStr;
 end
 
 -- Get keybind display string for a slot

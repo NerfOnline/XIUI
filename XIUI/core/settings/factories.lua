@@ -5,6 +5,42 @@
 
 local M = {};
 
+-- Virtual key codes for number row keys
+-- https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
+local VK_KEYS = {
+    ['1'] = 0x31,  -- 49
+    ['2'] = 0x32,  -- 50
+    ['3'] = 0x33,  -- 51
+    ['4'] = 0x34,  -- 52
+    ['5'] = 0x35,  -- 53
+    ['6'] = 0x36,  -- 54
+    ['7'] = 0x37,  -- 55
+    ['8'] = 0x38,  -- 56
+    ['9'] = 0x39,  -- 57
+    ['0'] = 0x30,  -- 48
+    ['-'] = 0xBD,  -- 189 (OEM_MINUS)
+    ['='] = 0xBB,  -- 187 (OEM_PLUS)
+};
+
+-- Helper to create default number row keybindings (1-9, 0, -, =) with optional modifiers
+-- @param ctrl boolean - require Ctrl modifier
+-- @param alt boolean - require Alt modifier
+-- @param shift boolean - require Shift modifier
+-- @return table - keyBindings table for 12 slots
+function M.createNumberRowKeybindings(ctrl, alt, shift)
+    local keys = {'1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '='};
+    local bindings = {};
+    for i, keyName in ipairs(keys) do
+        bindings[i] = {
+            key = VK_KEYS[keyName],
+            ctrl = ctrl or false,
+            alt = alt or false,
+            shift = shift or false,
+        };
+    end
+    return bindings;
+end
+
 -- Factory function to create party settings with overrides
 -- Reduces duplication since partyA/B/C are 95% identical
 function M.createPartyDefaults(overrides)
