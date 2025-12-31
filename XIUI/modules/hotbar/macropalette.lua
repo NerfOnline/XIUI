@@ -87,6 +87,9 @@ local EQUIP_SLOT_MASKS = {
 -- Special key for global (non-job-specific) slot storage
 local GLOBAL_SLOT_KEY = 'global';
 
+-- Special key for global macros (shared across all jobs)
+local GLOBAL_MACRO_KEY = 'global';
+
 -- Helper to normalize job ID to number (handles string keys from JSON)
 local function normalizeJobId(jobId)
     if type(jobId) == 'string' then
@@ -140,7 +143,7 @@ local isCreatingNew = false;
 local currentPalettePage = 1;  -- Current page in macro palette (1-indexed)
 
 -- Selected job for viewing/editing macros (nil = use current player job)
-local selectedPaletteJob = nil;
+local selectedPaletteType = nil;  -- Can be GLOBAL_MACRO_KEY or a job ID
 
 -- Cached spell/ability/weaponskill/item lists
 local cachedSpells = nil;
@@ -579,17 +582,29 @@ end
 -- Macro Database Functions
 -- ============================================
 
--- Get current effective job for the palette (selected job or player's current job)
-local function GetEffectivePaletteJob()
-    if selectedPaletteJob and selectedPaletteJob > 0 then
-        return selectedPaletteJob;
+-- Get current effective type for the palette (selected type or player's current job)
+-- Returns GLOBAL_MACRO_KEY for global macros, or a job ID for job-specific macros
+local function GetEffectivePaletteType()
+    if selectedPaletteType then
+        -- If Global is selected, return the global key
+        if selectedPaletteType == GLOBAL_MACRO_KEY then
+            return GLOBAL_MACRO_KEY;
+        end
+        -- If a valid job ID is selected, return it
+        if type(selectedPaletteType) == 'number' and selectedPaletteType > 0 then
+            return selectedPaletteType;
+        end
     end
+    -- Default to current player job
     return data.jobId or 1;
 end
 
 -- Sync palette to current player job (call on job change)
 function M.SyncToCurrentJob()
-    selectedPaletteJob = data.jobId or 1;
+    -- Only sync if not viewing Global - preserve Global selection across job changes
+    if selectedPaletteType ~= GLOBAL_MACRO_KEY then
+        selectedPaletteType = data.jobId or 1;
+    end
     -- Clear spell cache so it rebuilds for new job
     cachedSpells = nil;
     cachedAbilities = nil;
@@ -602,7 +617,7 @@ function M.SyncToCurrentJob()
         searchFilter[1] = '';
         iconPickerOpen = false;
     end
-    -- Clear macro selection (macros are per-job)
+    -- Clear macro selection (macros are per-type)
     selectedMacroIndex = nil;
     -- If palette is open, immediately refresh the caches
     if paletteOpen then
@@ -610,24 +625,24 @@ function M.SyncToCurrentJob()
     end
 end
 
--- Get the macro database for selected/current job
+-- Get the macro database for selected type (Global or job-specific)
 function M.GetMacroDatabase()
-    local jobId = GetEffectivePaletteJob();
+    local typeKey = GetEffectivePaletteType();
 
     if not gConfig.macroDB then
         gConfig.macroDB = {};
     end
 
-    if not gConfig.macroDB[jobId] then
-        gConfig.macroDB[jobId] = {};
+    if not gConfig.macroDB[typeKey] then
+        gConfig.macroDB[typeKey] = {};
     end
 
-    return gConfig.macroDB[jobId], jobId;
+    return gConfig.macroDB[typeKey], typeKey;
 end
 
 -- Add a new macro to the database
 function M.AddMacro(macroData)
-    local db, jobId = M.GetMacroDatabase();
+    local db, _ = M.GetMacroDatabase();
 
     -- Generate unique ID
     local maxId = 0;
@@ -661,21 +676,38 @@ function M.UpdateMacro(macroId, macroData)
 end
 
 -- Clear all hotbar/crossbar slots that reference a specific macro ID
-local function ClearSlotsReferencingMacro(macroId, jobId)
-    local numericJobId = normalizeJobId(jobId);
+-- For Global macros, clears from ALL jobs' slot actions
+local function ClearSlotsReferencingMacro(macroId, typeKey)
+    local isGlobalMacro = (typeKey == GLOBAL_MACRO_KEY);
 
     -- Clear from all hotbars (1-6)
     for barIndex = 1, 6 do
         local configKey = 'hotbarBar' .. barIndex;
         if gConfig[configKey] and gConfig[configKey].slotActions then
             local barSettings = gConfig[configKey];
-            local storageKey = getStorageKey(barSettings, numericJobId);
-            local jobSlotActions = barSettings.slotActions[storageKey];
 
-            if jobSlotActions then
-                for slotIndex, slotAction in pairs(jobSlotActions) do
-                    if slotAction and slotAction.macroRef == macroId then
-                        jobSlotActions[slotIndex] = { cleared = true };
+            if isGlobalMacro then
+                -- For Global macros, clear from ALL storage keys
+                for storageKey, jobSlotActions in pairs(barSettings.slotActions) do
+                    if jobSlotActions then
+                        for slotIndex, slotAction in pairs(jobSlotActions) do
+                            if slotAction and slotAction.macroRef == macroId then
+                                jobSlotActions[slotIndex] = { cleared = true };
+                            end
+                        end
+                    end
+                end
+            else
+                -- For job-specific macros, only clear from that job's storage
+                local numericJobId = normalizeJobId(typeKey);
+                local storageKey = getStorageKey(barSettings, numericJobId);
+                local jobSlotActions = barSettings.slotActions[storageKey];
+
+                if jobSlotActions then
+                    for slotIndex, slotAction in pairs(jobSlotActions) do
+                        if slotAction and slotAction.macroRef == macroId then
+                            jobSlotActions[slotIndex] = { cleared = true };
+                        end
                     end
                 end
             end
@@ -685,22 +717,44 @@ local function ClearSlotsReferencingMacro(macroId, jobId)
     -- Clear from crossbar (all combo modes)
     if gConfig.hotbarCrossbar and gConfig.hotbarCrossbar.slotActions then
         local crossbarSettings = gConfig.hotbarCrossbar;
-        local storageKey;
-        if crossbarSettings.jobSpecific == false then
-            storageKey = GLOBAL_SLOT_KEY;
-        else
-            storageKey = numericJobId;
-        end
 
-        local jobSlotActions = crossbarSettings.slotActions[storageKey];
-        if jobSlotActions then
-            local comboModes = { 'L2', 'R2', 'L2R2', 'R2L2', 'L2x2', 'R2x2' };
-            for _, comboMode in ipairs(comboModes) do
-                local comboSlots = jobSlotActions[comboMode];
-                if comboSlots then
-                    for slotIndex, slotAction in pairs(comboSlots) do
-                        if slotAction and slotAction.macroRef == macroId then
-                            comboSlots[slotIndex] = nil;
+        if isGlobalMacro then
+            -- For Global macros, clear from ALL storage keys
+            for storageKey, jobSlotActions in pairs(crossbarSettings.slotActions) do
+                if jobSlotActions then
+                    local comboModes = { 'L2', 'R2', 'L2R2', 'R2L2', 'L2x2', 'R2x2' };
+                    for _, comboMode in ipairs(comboModes) do
+                        local comboSlots = jobSlotActions[comboMode];
+                        if comboSlots then
+                            for slotIndex, slotAction in pairs(comboSlots) do
+                                if slotAction and slotAction.macroRef == macroId then
+                                    comboSlots[slotIndex] = nil;
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        else
+            -- For job-specific macros, only clear from that job's storage
+            local numericJobId = normalizeJobId(typeKey);
+            local storageKey;
+            if crossbarSettings.jobSpecific == false then
+                storageKey = GLOBAL_SLOT_KEY;
+            else
+                storageKey = numericJobId;
+            end
+
+            local jobSlotActions = crossbarSettings.slotActions[storageKey];
+            if jobSlotActions then
+                local comboModes = { 'L2', 'R2', 'L2R2', 'R2L2', 'L2x2', 'R2x2' };
+                for _, comboMode in ipairs(comboModes) do
+                    local comboSlots = jobSlotActions[comboMode];
+                    if comboSlots then
+                        for slotIndex, slotAction in pairs(comboSlots) do
+                            if slotAction and slotAction.macroRef == macroId then
+                                comboSlots[slotIndex] = nil;
+                            end
                         end
                     end
                 end
@@ -711,13 +765,13 @@ end
 
 -- Delete a macro from the database
 function M.DeleteMacro(macroId)
-    local db, jobId = M.GetMacroDatabase();
+    local db, typeKey = M.GetMacroDatabase();
 
     for i, macro in ipairs(db) do
         if macro.id == macroId then
             table.remove(db, i);
             -- Clear any hotbar/crossbar slots referencing this macro
-            ClearSlotsReferencingMacro(macroId, jobId);
+            ClearSlotsReferencingMacro(macroId, typeKey);
             SaveSettingsToDisk();
             return true;
         end
@@ -946,8 +1000,10 @@ function M.OpenPalette()
     editingMacro = nil;
     isCreatingNew = false;
 
-    -- Sync to current player job when opening
-    selectedPaletteJob = data.jobId or 1;
+    -- Sync to current player job when opening (unless Global was selected)
+    if selectedPaletteType ~= GLOBAL_MACRO_KEY then
+        selectedPaletteType = data.jobId or 1;
+    end
 
     -- Refresh spell/ability/weaponskill caches
     RefreshCachedLists();
@@ -1107,15 +1163,16 @@ function M.DrawPalette()
         return;
     end
 
-    -- Initialize selectedPaletteJob to current job if not set
-    if not selectedPaletteJob or selectedPaletteJob == 0 then
-        selectedPaletteJob = data.jobId or 1;
+    -- Initialize selectedPaletteType to current job if not set
+    if not selectedPaletteType then
+        selectedPaletteType = data.jobId or 1;
     end
 
-    local db, jobId = M.GetMacroDatabase();
-    local jobName = jobs[jobId] or 'Unknown';
+    local db, typeKey = M.GetMacroDatabase();
+    local isGlobal = (typeKey == GLOBAL_MACRO_KEY);
+    local typeName = isGlobal and 'Global' or (jobs[typeKey] or 'Unknown');
     local currentPlayerJob = data.jobId or 1;
-    local isViewingCurrentJob = (jobId == currentPlayerJob);
+    local isViewingCurrentJob = (not isGlobal and typeKey == currentPlayerJob);
 
     -- Calculate pagination
     local totalMacros = #db;
@@ -1155,29 +1212,65 @@ function M.DrawPalette()
         imgui.TextColored(COLORS.gold, 'Drag macros to your hotbar slots');
         imgui.Spacing();
 
-        -- Job selector row
-        imgui.TextColored(COLORS.textDim, 'Job:');
+        -- Type selector row
+        imgui.TextColored(COLORS.textDim, 'Type:');
         imgui.SameLine();
 
         -- Style the combo popup
         PushComboStyle();
         imgui.PushItemWidth(100);
 
-        -- Helper to get macro count for a job
-        local function getMacroCount(jid)
-            if gConfig.macroDB and gConfig.macroDB[jid] then
-                return #gConfig.macroDB[jid];
+        -- Helper to get macro count for a type (Global or job ID)
+        local function getMacroCount(key)
+            if gConfig.macroDB and gConfig.macroDB[key] then
+                return #gConfig.macroDB[key];
             end
             return 0;
         end
 
         -- Build display label with macro count
-        local macroCount = getMacroCount(jobId);
-        local displayLabel = macroCount > 0 and string.format('%s (%d)', jobName, macroCount) or jobName;
+        local macroCount = getMacroCount(typeKey);
+        local displayLabel = macroCount > 0 and string.format('%s (%d)', typeName, macroCount) or typeName;
 
-        if imgui.BeginCombo('##JobSelect', displayLabel, ImGuiComboFlags_None) then
+        if imgui.BeginCombo('##TypeSelect', displayLabel, ImGuiComboFlags_None) then
+            -- Global option first
+            local globalSelected = isGlobal;
+            local globalMacroCount = getMacroCount(GLOBAL_MACRO_KEY);
+            local globalLabel = 'Global';
+            if globalMacroCount > 0 then
+                globalLabel = string.format('Global (%d)', globalMacroCount);
+            end
+
+            -- Highlight Global if it has macros
+            if globalMacroCount > 0 and not globalSelected then
+                imgui.PushStyleColor(ImGuiCol_Text, COLORS.text);
+            elseif globalSelected then
+                imgui.PushStyleColor(ImGuiCol_Text, COLORS.gold);
+            else
+                imgui.PushStyleColor(ImGuiCol_Text, COLORS.textDim);
+            end
+
+            if imgui.Selectable(globalLabel, globalSelected) then
+                selectedPaletteType = GLOBAL_MACRO_KEY;
+                selectedMacroIndex = nil;
+                currentPalettePage = 1;
+                cachedSpells = nil;
+                cachedAbilities = nil;
+                cachedWeaponskills = nil;
+                cacheJobId = nil;
+            end
+            imgui.PopStyleColor();
+
+            if globalSelected then
+                imgui.SetItemDefaultFocus();
+            end
+
+            -- Separator between Global and jobs
+            imgui.Separator();
+
+            -- Job options
             for i, job in ipairs(JOB_LIST) do
-                local isSelected = (job.id == jobId);
+                local isSelected = (not isGlobal and job.id == typeKey);
                 local jobMacroCount = getMacroCount(job.id);
 
                 -- Build label with indicators
@@ -1208,10 +1301,10 @@ function M.DrawPalette()
                 end
 
                 if imgui.Selectable(label, isSelected) then
-                    selectedPaletteJob = job.id;
-                    selectedMacroIndex = nil;  -- Clear selection when switching jobs
-                    currentPalettePage = 1;    -- Reset to page 1 when switching jobs
-                    -- Clear spell cache when switching jobs
+                    selectedPaletteType = job.id;
+                    selectedMacroIndex = nil;  -- Clear selection when switching types
+                    currentPalettePage = 1;    -- Reset to page 1 when switching types
+                    -- Clear spell cache when switching types
                     cachedSpells = nil;
                     cachedAbilities = nil;
                     cachedWeaponskills = nil;
