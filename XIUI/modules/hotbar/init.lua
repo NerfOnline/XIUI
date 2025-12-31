@@ -76,7 +76,6 @@ M.visible = true;
 
 -- Initialize the hotbar module
 function M.Initialize(settings)
-    if _XIUI_DEV_ALPHA_HOTBAR == false then return; end
     if M.initialized then return; end
 
     -- Ensure global settings have defaults
@@ -90,8 +89,8 @@ function M.Initialize(settings)
         end
     end
 
-    -- Initialize keybinds
-    data.InitializeKeybinds();
+    -- Initialize data module (sets player job)
+    data.Initialize();
 
     -- Validate font settings
     local fontSettings = settings and settings.font_settings;

@@ -123,13 +123,8 @@ local categories = {
     { name = 'petBar', label = 'Pet Bar' },
     { name = 'notifications', label = 'Notifications' },
     { name = 'treasurePool', label = 'Treasure Pool' },
+    { name = 'hotbar', label = 'Hotbar' },
 };
-
-
--- Add hotbar category if dev flag is enabled
-if _XIUI_DEV_ALPHA_HOTBAR == true then
-    table.insert(categories, { name = 'hotbar', label = 'Hotbar' });
-end
 
 
 -- Build state object for modules that need tab state
@@ -312,12 +307,8 @@ local settingsDrawFunctions = {
     DrawPetBarSettings,
     DrawNotificationsSettings,
     DrawTreasurePoolSettings,
+    DrawHotbarSettings,
 };
-
--- Add hotbar draw function if dev flag is enabled
-if _XIUI_DEV_ALPHA_HOTBAR == true then
-    table.insert(settingsDrawFunctions, DrawHotbarSettings);
-end
 
 local colorSettingsDrawFunctions = {
     DrawGlobalColorSettings,
@@ -333,12 +324,8 @@ local colorSettingsDrawFunctions = {
     DrawPetBarColorSettings,
     DrawNotificationsColorSettings,
     DrawTreasurePoolColorSettings,
+    DrawHotbarColorSettings,
 };
-
--- Add hotbar color draw function if dev flag is enabled
-if _XIUI_DEV_ALPHA_HOTBAR == true then
-    table.insert(colorSettingsDrawFunctions, DrawHotbarColorSettings);
-end
 
 config.DrawWindow = function(us)
     -- Detect when config closes and clear treasure pool preview

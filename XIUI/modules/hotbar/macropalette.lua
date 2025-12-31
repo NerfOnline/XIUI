@@ -747,7 +747,6 @@ function M.HandleDropOnSlot(payload, targetBarIndex, targetSlotIndex)
                 customIconId = macroData.customIconId,
                 macroRef = macroData.id,  -- Store reference to source macro for live updates
             };
-            data.currentKeybinds = nil;  -- Invalidate cache
             SaveSettingsToDisk();
         end
 
@@ -758,7 +757,6 @@ function M.HandleDropOnSlot(payload, targetBarIndex, targetSlotIndex)
         local sourceConfigKey = 'hotbarBar' .. sourceBarIndex;
 
         -- Use the source data from payload (already contains the action info)
-        -- This handles both slotActions AND default keybinds from lua files
         local sourceBindData = payload.data;
         local sourceData = nil;
         if sourceBindData then
@@ -775,7 +773,7 @@ function M.HandleDropOnSlot(payload, targetBarIndex, targetSlotIndex)
             };
         end
 
-        -- Get target slot data (check slotActions first, then fall back to keybind files)
+        -- Get target slot data
         local targetBind = data.GetKeybindForSlot(targetBarIndex, targetSlotIndex);
         local targetData = nil;
         if targetBind then
@@ -791,7 +789,7 @@ function M.HandleDropOnSlot(payload, targetBarIndex, targetSlotIndex)
                 customIconId = targetBind.customIconId,
             };
         else
-            -- Target slot is empty - use "cleared" marker to prevent fallback to defaults
+            -- Target slot is empty - mark as cleared
             targetData = { cleared = true };
         end
 
@@ -803,11 +801,10 @@ function M.HandleDropOnSlot(payload, targetBarIndex, targetSlotIndex)
         local sourceStorageKey = getStorageKey(gConfig[sourceConfigKey], jobId);
         local sourceJobSlotActions = ensureSlotActionsStructure(gConfig[sourceConfigKey], sourceStorageKey);
 
-        -- Swap the slots (write to slotActions to override any default keybinds)
+        -- Swap the slots
         jobSlotActions[targetSlotIndex] = sourceData;
         sourceJobSlotActions[sourceSlotIndex] = targetData;
 
-        data.currentKeybinds = nil;  -- Invalidate cache
         SaveSettingsToDisk();
 
     elseif payload.type == 'crossbar_slot' then
@@ -825,7 +822,6 @@ function M.HandleDropOnSlot(payload, targetBarIndex, targetSlotIndex)
                 customIconType = sourceBindData.customIconType,
                 customIconId = sourceBindData.customIconId,
             };
-            data.currentKeybinds = nil;  -- Invalidate cache
             SaveSettingsToDisk();
         end
     end
@@ -846,9 +842,8 @@ function M.ClearSlot(barIndex, slotIndex)
     local storageKey = getStorageKey(gConfig[configKey], jobId);
     local jobSlotActions = ensureSlotActionsStructure(gConfig[configKey], storageKey);
 
-    -- Use "cleared" marker to override default keybinds from lua files
+    -- Mark slot as cleared
     jobSlotActions[slotIndex] = { cleared = true };
-    data.currentKeybinds = nil;
     SaveSettingsToDisk();
 end
 

@@ -39,7 +39,6 @@ local _XIUI_DEV_HOT_RELOADING_ENABLED = false;
 local _XIUI_DEV_HOT_RELOAD_POLL_TIME_SECONDS = 1;
 local _XIUI_DEV_HOT_RELOAD_LAST_RELOAD_TIME;
 local _XIUI_DEV_HOT_RELOAD_FILES = {};
-_XIUI_DEV_ALPHA_HOTBAR = true;
 
 require('common');
 local settings = require('settings');
@@ -239,15 +238,13 @@ uiModules.Register('treasurePool', {
     configKey = 'treasurePoolEnabled',
     hasSetHidden = true,
 });
-if _XIUI_DEV_ALPHA_HOTBAR == true then
-    uiModules.Register('hotbar', {
-        module = hotbar,
-        settingsKey = 'hotbarSettings',
-        configKey = 'showhotbar',
-        hideOnEventKey = 'hotbarHideDuringEvents',
-        hasSetHidden = true,
-    });
-end
+uiModules.Register('hotbar', {
+    module = hotbar,
+    settingsKey = 'hotbarSettings',
+    configKey = 'showhotbar',
+    hideOnEventKey = 'hotbarHideDuringEvents',
+    hasSetHidden = true,
+});
 
 -- Initialize settings from defaults
 local user_settings_container = T{
@@ -717,16 +714,12 @@ end);
         in-game button handling for things such as movement, menu interactions, etc.
 --]]
 ashita.events.register('key', 'key_cb', function (event)
-    if(_XIUI_DEV_ALPHA_HOTBAR == true) then
-        hotbar.HandleKey(event);
-    end
+    hotbar.HandleKey(event);
 end);
 
 -- XInput controller state event (for crossbar mode)
 ashita.events.register('xinput_state', 'xinput_state_cb', function (e)
-    if(_XIUI_DEV_ALPHA_HOTBAR == true) then
-        hotbar.HandleXInputState(e);
-    end
+    hotbar.HandleXInputState(e);
 end);
 
 -- ============================================

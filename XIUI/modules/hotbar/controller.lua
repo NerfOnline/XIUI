@@ -67,7 +67,7 @@ local DEFAULT_TRIGGER_THRESHOLD = 30;
 local DEFAULT_DOUBLE_TAP_WINDOW = 0.3;  -- 300ms
 
 -- Debug logging (set to true to enable)
-local DEBUG_ENABLED = true;
+local DEBUG_ENABLED = false;
 -- Verbose logging for raw input events (very spammy, use for troubleshooting only)
 local DEBUG_VERBOSE = false;
 

@@ -1,10 +1,9 @@
 --[[
 * XIUI hotbar - Data Module
-* Handles state, keybinds, font storage, and primitive handles
+* Handles state, font storage, and primitive handles
 ]]--
 
 require('common');
-local jobs = require('libs.jobs');
 
 local M = {};
 
@@ -64,12 +63,9 @@ M.hotbarNumberFonts = {};
 M.allFonts = nil;
 
 -- ============================================
--- Keybinds State (preserved from original)
+-- Job State
 -- ============================================
 
--- Keybinds cache (job -> keybind entries)
-M.allKeybinds = {};
-M.currentKeybinds = nil;  -- Cached parsed keybinds for current job/subjob
 M.jobId = nil;
 M.subjobId = nil;
 
@@ -285,75 +281,6 @@ function M.GetKeybindDisplay(barIndex, slotIndex)
     return '';
 end
 
--- Parse a keybind entry from array format to object format
-function M.ParseKeybindEntry(entry)
-    if type(entry) ~= 'table' or #entry < 2 then
-        return nil;
-    end
-
-    -- Parse the first element: 'battle 1 1' -> context, hotbar, slot
-    local battleStr = entry[1];
-    local context, hotbar, slot = battleStr:match('(%w+)%s+(%d+)%s+(%d+)');
-
-    local parsed = {
-        context = context or 'battle',
-        hotbar = tonumber(hotbar) or 1,
-        slot = tonumber(slot) or 1,
-        actionType = entry[2],           -- 'ma', 'ja', 'ws', 'macro', etc.
-        action = entry[3],                -- Spell/ability/ws name
-        target = entry[4],                -- 'stpc', 'stnpc', 'me', 't', etc.
-        displayName = entry[5] or entry[3],  -- Display name (defaults to action if not provided)
-        extraType = entry[6],             -- Optional: 'item', texture name, etc.
-        raw = entry                       -- Keep original array for reference
-    };
-
-    return parsed;
-end
-
--- Get current keybinds
-function M.GetCurrentKeybinds()
-    -- Return cached keybinds if available
-    if M.currentKeybinds then
-        return M.currentKeybinds;
-    end
-
-    local rawKeybinds = M.GetBaseKeybindsForJob(M.jobId);
-    if not rawKeybinds then
-        return nil;
-    end
-
-    -- Get subjob keybinds if available
-    local subjobKeybinds = M.GetSubjobKeybindsForJob(M.jobId, M.subjobId);
-
-    -- Combine base and subjob keybinds
-    local combinedKeybinds = {};
-    for i, entry in ipairs(rawKeybinds) do
-        table.insert(combinedKeybinds, entry);
-    end
-
-    if subjobKeybinds then
-        for i, entry in ipairs(subjobKeybinds) do
-            table.insert(combinedKeybinds, entry);
-        end
-    end
-
-    -- Parse raw array entries into object format
-    local parsedKeybinds = {};
-    for i, entry in ipairs(combinedKeybinds) do
-        local parsed = M.ParseKeybindEntry(entry);
-        if parsed then
-            table.insert(parsedKeybinds, parsed);
-        else
-            print(string.format("[XIUI hotbar] Failed to parse entry %d (has %d elements)", i, #entry));
-        end
-    end
-
-    -- Cache the parsed keybinds
-    M.currentKeybinds = parsedKeybinds;
-
-    return parsedKeybinds;
-end
-
 -- Helper to look up a macro from macroDB by id
 local function GetMacroById(macroId, jobId)
     if not gConfig or not gConfig.macroDB then return nil; end
@@ -414,67 +341,7 @@ function M.GetKeybindForSlot(barIndex, slotIndex)
         end
     end
 
-    -- Fall back to job keybinds from lua files
-    local keybinds = M.GetCurrentKeybinds();
-    if not keybinds then
-        return nil;
-    end
-
-    for _, bind in ipairs(keybinds) do
-        if bind.hotbar == barIndex and bind.slot == slotIndex then
-            return bind;
-        end
-    end
     return nil;
-end
-
--- Get keybinds for a specific job
-function M.GetBaseKeybindsForJob(jobId)
-    if not jobId then
-        return nil;
-    end
-
-    local jobKeybinds = M.allKeybinds[jobId];
-    if not jobKeybinds then
-        return nil;
-    end
-
-    if not jobKeybinds['Base'] then
-        return nil;
-    end
-
-    return jobKeybinds['Base'];
-end
-
--- Get subjob-specific keybinds for a job
-function M.GetSubjobKeybindsForJob(jobId, subjobId)
-    if not jobId or not subjobId or subjobId == 0 then
-        return nil;
-    end
-
-    local jobKeybinds = M.allKeybinds[jobId];
-    if not jobKeybinds then
-        return nil;
-    end
-
-    local subjobName = jobs[subjobId];
-    if not subjobName then
-        return nil;
-    end
-
-    local subjobKeybinds = jobKeybinds[subjobName];
-
-    return subjobKeybinds;
-end
-
--- Get all cached keybinds
-function M.GetAllKeybinds()
-    return M.allKeybinds;
-end
-
--- Check if keybinds are loaded
-function M.HasKeybinds()
-    return M.allKeybinds and next(M.allKeybinds) ~= nil;
 end
 
 -- ============================================
@@ -704,42 +571,9 @@ end
 -- Lifecycle
 -- ============================================
 
--- Initialize keybinds (called from init.lua)
-function M.InitializeKeybinds()
-    -- Clear any existing cache
-    M.allKeybinds = {};
-    M.currentKeybinds = nil;
-
-    -- Only load keybind lua files if explicitly enabled
-    -- By default, hotbar slots are empty until user configures them via macro palette
-    if gConfig and gConfig.hotbarLoadDefaultKeybinds then
-        -- Get the addon path
-        local addonPath = AshitaCore:GetInstallPath();
-
-        -- Loop over all jobs and load their keybinds
-        for jobId, jobName in ipairs(jobs) do
-            local jobNameLower = jobName:lower();
-            local keybindsPath = string.format('%saddons\\XIUI\\modules\\hotbar\\keybinds\\%s.lua', addonPath, jobNameLower);
-
-            -- Load the keybinds file for this job
-            local success, result = pcall(function()
-                local chunk, err = loadfile(keybindsPath);
-                if chunk then
-                    local keybinds = chunk();
-                    if keybinds and next(keybinds) ~= nil then
-                        M.allKeybinds[jobId] = keybinds;
-                    end
-                end
-            end);
-        end
-    end
-
-    M.SetPlayerJob();
-end
-
--- Legacy Initialize (for backwards compatibility)
+-- Initialize (called from init.lua)
 function M.Initialize()
-    M.InitializeKeybinds();
+    M.SetPlayerJob();
 end
 
 function M.SetPlayerJob()
@@ -750,19 +584,12 @@ function M.SetPlayerJob()
     end
     local currentSubjobId = player:GetSubJob();
 
-    -- Clear cached keybinds if job changed
-    if M.jobId ~= currentJobId or M.subjobId ~= currentSubjobId then
-        M.currentKeybinds = nil;
-    end
-
     M.jobId = currentJobId;
     M.subjobId = currentSubjobId;
 end
 
 -- Clear all state (call on zone change)
 function M.Clear()
-    -- Note: We keep keybindsCache intact on zone change
-    -- as keybinds don't need to be reloaded
 end
 
 -- Cleanup (call on addon unload)

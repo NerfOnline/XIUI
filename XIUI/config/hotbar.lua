@@ -348,9 +348,6 @@ local function SaveSlotAction(configKey, jobId, slotIndex, actionData)
     local jobSlotActions = ensureSlotActionsStructure(barSettings, jobId);
     jobSlotActions[slotIndex] = actionData;
     SaveSettingsOnly();
-
-    -- Reload keybinds in data module
-    data.currentKeybinds = nil;
 end
 
 -- Clear slot action for a slot
@@ -361,12 +358,9 @@ local function ClearSlotAction(configKey, jobId, slotIndex)
     -- Ensure structure exists (with key normalization)
     local jobSlotActions = ensureSlotActionsStructure(barSettings, jobId);
 
-    -- Use "cleared" marker to override default keybinds from lua files
+    -- Mark slot as cleared
     jobSlotActions[slotIndex] = { cleared = true };
     SaveSettingsOnly();
-
-    -- Reload keybinds in data module
-    data.currentKeybinds = nil;
 end
 
 -- Get keybind display text for modal
