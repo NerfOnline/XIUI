@@ -750,6 +750,9 @@ local function DrawVisualSettingsContent(settings, configKey)
         components.DrawPartyCheckbox(settings, 'Show Hotbar Number##' .. configKey, 'showHotbarNumber');
         imgui.ShowHelp('Show the bar number (1-6) on the left side of the hotbar.');
 
+        components.DrawPartyCheckbox(settings, 'Show Keybinds##' .. configKey, 'showKeybinds');
+        imgui.ShowHelp('Show keybind labels on slots (e.g., "1", "C2").');
+
         components.DrawPartyCheckbox(settings, 'Show MP Cost##' .. configKey, 'showMpCost');
         imgui.ShowHelp('Display MP cost in top-right corner of spell slots.');
 
@@ -764,21 +767,17 @@ local function DrawVisualSettingsContent(settings, configKey)
     end
 
     if components.CollapsingSection('Text Settings##' .. configKey, false) then
-        components.DrawPartySliderInt(settings, 'Keybind Font Size##' .. configKey, 'keybindFontSize', 6, 24, '%d', nil, 10);
-        imgui.ShowHelp('Font size for keybind labels (e.g., "C1", "A2").');
+        components.DrawPartySliderInt(settings, 'Keybind Text Size##' .. configKey, 'keybindFontSize', 6, 24, '%d', nil, 10);
+        imgui.ShowHelp('Text size for keybind labels.');
 
-        components.DrawPartySliderInt(settings, 'Label Font Size##' .. configKey, 'labelFontSize', 6, 24, '%d', nil, 10);
-        imgui.ShowHelp('Font size for action labels below buttons.');
+        components.DrawPartySliderInt(settings, 'Label Text Size##' .. configKey, 'labelFontSize', 6, 24, '%d', nil, 10);
+        imgui.ShowHelp('Text size for action labels below buttons.');
 
-        if settings.showMpCost then
-            components.DrawPartySliderInt(settings, 'MP Cost Font Size##' .. configKey, 'mpCostFontSize', 6, 24, '%d', nil, 10);
-            imgui.ShowHelp('Font size for MP cost display.');
-        end
+        components.DrawPartySliderInt(settings, 'MP Cost Text Size##' .. configKey, 'mpCostFontSize', 6, 24, '%d', nil, 10);
+        imgui.ShowHelp('Text size for MP cost display.');
 
-        if settings.showQuantity then
-            components.DrawPartySliderInt(settings, 'Quantity Font Size##' .. configKey, 'quantityFontSize', 6, 24, '%d', nil, 10);
-            imgui.ShowHelp('Font size for item quantity display.');
-        end
+        components.DrawPartySliderInt(settings, 'Quantity Text Size##' .. configKey, 'quantityFontSize', 6, 24, '%d', nil, 10);
+        imgui.ShowHelp('Text size for item quantity display.');
     end
 end
 
@@ -1009,24 +1008,20 @@ local function DrawCrossbarSettings()
 
     -- Text section
     if components.CollapsingSection('Text Settings##crossbar', false) then
-        components.DrawPartySliderInt(crossbarSettings, 'Keybind Font Size##crossbar', 'keybindFontSize', 6, 24, '%d', nil, 10);
-        imgui.ShowHelp('Font size for keybind labels.');
+        components.DrawPartySliderInt(crossbarSettings, 'Keybind Text Size##crossbar', 'keybindFontSize', 6, 24, '%d', nil, 10);
+        imgui.ShowHelp('Text size for keybind labels.');
 
-        components.DrawPartySliderInt(crossbarSettings, 'Label Font Size##crossbar', 'labelFontSize', 6, 24, '%d', nil, 10);
-        imgui.ShowHelp('Font size for action labels.');
+        components.DrawPartySliderInt(crossbarSettings, 'Label Text Size##crossbar', 'labelFontSize', 6, 24, '%d', nil, 10);
+        imgui.ShowHelp('Text size for action labels.');
 
-        components.DrawPartySliderInt(crossbarSettings, 'Trigger Label Font Size##crossbar', 'triggerLabelFontSize', 8, 24, '%d', nil, 14);
-        imgui.ShowHelp('Font size for combo mode labels (L2, R2, etc.).');
+        components.DrawPartySliderInt(crossbarSettings, 'Trigger Label Text Size##crossbar', 'triggerLabelFontSize', 6, 24, '%d', nil, 14);
+        imgui.ShowHelp('Text size for combo mode labels (L2, R2, etc.).');
 
-        if crossbarSettings.showMpCost then
-            components.DrawPartySliderInt(crossbarSettings, 'MP Cost Font Size##crossbar', 'mpCostFontSize', 6, 24, '%d', nil, 10);
-            imgui.ShowHelp('Font size for MP cost display.');
-        end
+        components.DrawPartySliderInt(crossbarSettings, 'MP Cost Text Size##crossbar', 'mpCostFontSize', 6, 24, '%d', nil, 10);
+        imgui.ShowHelp('Text size for MP cost display.');
 
-        if crossbarSettings.showQuantity then
-            components.DrawPartySliderInt(crossbarSettings, 'Quantity Font Size##crossbar', 'quantityFontSize', 6, 24, '%d', nil, 10);
-            imgui.ShowHelp('Font size for item quantity display.');
-        end
+        components.DrawPartySliderInt(crossbarSettings, 'Quantity Text Size##crossbar', 'quantityFontSize', 6, 24, '%d', nil, 10);
+        imgui.ShowHelp('Text size for item quantity display.');
     end
 
     -- Controller Input section
@@ -1168,7 +1163,9 @@ function M.DrawSettings(state)
         macropalette.OpenPalette();
     end
     imgui.SameLine();
-    local editBarIndex = selectedBarTab or 1;
+    -- selectedBarTab is index into BAR_TYPES where 1=Global, 2=Bar1, 3=Bar2, etc.
+    -- So actual bar index is selectedBarTab - 1 (default to 1 if Global is selected)
+    local editBarIndex = math.max(1, (selectedBarTab or 1) - 1);
     local editConfigKey = 'hotbarBar' .. editBarIndex;
     if imgui.Button('Keybinds', {100, 0}) then
         OpenKeybindModal(editBarIndex, editConfigKey);

@@ -270,6 +270,7 @@ function M.GetBarSettings(barIndex)
             slotBackgroundColor = 0x55000000,
             bgColor = 0xFFFFFFFF,
             borderColor = 0xFFFFFFFF,
+            showKeybinds = true,
             keybindFontSize = 10,
             keybindFontColor = 0xFFFFFFFF,
             labelFontSize = 10,

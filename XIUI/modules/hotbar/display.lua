@@ -191,13 +191,14 @@ local function DrawSlot(barIndex, slotIndex, x, y, buttonSize, bind, barSettings
 
         -- Visual Settings
         slotBgColor = barSettings and barSettings.slotBackgroundColor or 0xFFFFFFFF,
-        keybindText = data.GetKeybindDisplay(barIndex, slotIndex),
+        keybindText = (barSettings and barSettings.showKeybinds ~= false) and data.GetKeybindDisplay(barIndex, slotIndex) or nil,
         keybindFontSize = barSettings and barSettings.keybindFontSize or 10,
         keybindFontColor = barSettings and barSettings.keybindFontColor or 0xFFFFFFFF,
         showLabel = showActionLabels,
         labelText = labelText,
         labelOffsetX = barSettings and barSettings.actionLabelOffsetX or 0,
         labelOffsetY = (barSettings and barSettings.actionLabelOffsetY or 0) + data.LABEL_GAP,
+        labelFontSize = barSettings and barSettings.labelFontSize or 10,
         labelFontColor = barSettings and barSettings.labelFontColor or 0xFFFFFFFF,
         labelCooldownColor = barSettings and barSettings.labelCooldownColor or 0xFF888888,
         labelNoMpColor = barSettings and barSettings.labelNoMpColor or 0xFFFF4444,

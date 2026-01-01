@@ -475,6 +475,11 @@ function M.DrawSlot(resources, params)
     -- ========================================
     if resources.labelFont then
         if params.showLabel and params.labelText and params.labelText ~= '' then
+            -- Only update font size if changed
+            if params.labelFontSize and cache and cache.labelFontSize ~= params.labelFontSize then
+                resources.labelFont:set_font_height(params.labelFontSize);
+                cache.labelFontSize = params.labelFontSize;
+            end
             -- Only update text if changed
             if cache and cache.labelText ~= params.labelText then
                 resources.labelFont:set_text(params.labelText);

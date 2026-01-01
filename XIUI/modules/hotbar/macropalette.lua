@@ -601,18 +601,30 @@ local function RefreshCachedLists()
     -- This prevents the cache from being corrupted with job 0
     if not currentJobId or currentJobId == 0 then return; end
 
+    -- Check if data.jobId indicates a pending job change we haven't processed yet
+    -- This catches cases where the packet handler updated data.jobId but player API was slower
+    local dataJobId = data.jobId or currentJobId;
+    local dataSubjobId = data.subjobId or currentSubJobId;
+
     -- Refresh if main job, sub job changed, or cache is empty
-    if cacheJobId ~= currentJobId or cacheSubJobId ~= currentSubJobId or not cachedSpells then
+    -- Also refresh if data.jobId differs from cache (pending job change)
+    local jobChanged = cacheJobId ~= currentJobId or cacheSubJobId ~= currentSubJobId;
+    local pendingChange = cacheJobId ~= nil and (cacheJobId ~= dataJobId or cacheSubJobId ~= dataSubjobId);
+
+    if jobChanged or pendingChange or not cachedSpells then
         cachedSpells = GetPlayerSpells();
         cachedAbilities = GetPlayerAbilities();
         cachedWeaponskills = GetPlayerWeaponskills();
         cachedPetCommands = nil;  -- Clear pet commands to refresh for new job
+        cachedItems = nil;  -- Clear items cache to refresh
         cacheJobId = currentJobId;
         cacheSubJobId = currentSubJobId;
     end
 
-    -- Always refresh items (they don't depend on job)
-    cachedItems = GetPlayerItems();
+    -- Only refresh items if cache is empty (they don't depend on job but are expensive to scan)
+    if not cachedItems then
+        cachedItems = GetPlayerItems();
+    end
 end
 
 -- Get pet commands for the current job
@@ -912,14 +924,16 @@ function M.SyncToCurrentJob()
     if selectedPaletteType ~= GLOBAL_MACRO_KEY then
         selectedPaletteType = data.jobId or 1;
     end
-    -- Clear spell cache so it rebuilds for new job
+    -- Clear spell/ability/item caches so they rebuild for new job
     cachedSpells = nil;
     cachedAbilities = nil;
     cachedWeaponskills = nil;
     cachedPetCommands = nil;
+    cachedItems = nil;
     petAvatarFilter = 1;
     selectedAvatarPalette = nil;
     cacheJobId = nil;
+    cacheSubJobId = nil;
     -- Close editor window if open (spells/abilities are job-specific)
     if editingMacro then
         editingMacro = nil;
@@ -1477,6 +1491,10 @@ function M.DrawPalette()
         return;
     end
 
+    -- Continuously check for job changes while palette is open
+    -- This catches cases where job changed but cache wasn't refreshed properly
+    RefreshCachedLists();
+
     -- Initialize selectedPaletteType to current job if not set
     if not selectedPaletteType then
         selectedPaletteType = data.jobId or 1;
@@ -1571,12 +1589,15 @@ function M.DrawPalette()
                 selectedAvatarPalette = nil;
                 selectedMacroIndex = nil;
                 currentPalettePage = 1;
+                -- Clear caches to force refresh
                 cachedSpells = nil;
                 cachedAbilities = nil;
                 cachedWeaponskills = nil;
                 cachedPetCommands = nil;
+                cachedItems = nil;
                 petAvatarFilter = 1;
                 cacheJobId = nil;
+                cacheSubJobId = nil;
             end
             imgui.PopStyleColor();
 
@@ -1624,13 +1645,15 @@ function M.DrawPalette()
                     selectedAvatarPalette = nil;  -- Clear avatar selection when switching jobs
                     selectedMacroIndex = nil;  -- Clear selection when switching types
                     currentPalettePage = 1;    -- Reset to page 1 when switching types
-                    -- Clear spell cache when switching types
+                    -- Clear caches to force refresh
                     cachedSpells = nil;
                     cachedAbilities = nil;
                     cachedWeaponskills = nil;
                     cachedPetCommands = nil;
+                    cachedItems = nil;
                     petAvatarFilter = 1;
                     cacheJobId = nil;
+                    cacheSubJobId = nil;
                 end
 
                 imgui.PopStyleColor();
@@ -1730,13 +1753,20 @@ function M.DrawPalette()
             PopComboStyle();
         end
 
-        -- Pet Palette section (only show if any bar has petAware enabled)
+        -- Pet Palette section (only show if selected palette type is a pet job AND any bar has petAware enabled)
+        local isPetJob = false;
+        if selectedPaletteType and type(selectedPaletteType) == 'number' then
+            isPetJob = petregistry.IsPetJob(selectedPaletteType);
+        end
+
         local hasPetAwareBar = false;
-        for barIndex = 1, data.NUM_BARS do
-            local barSettings = data.GetBarSettings(barIndex);
-            if barSettings and barSettings.petAware then
-                hasPetAwareBar = true;
-                break;
+        if isPetJob then
+            for barIndex = 1, data.NUM_BARS do
+                local barSettings = data.GetBarSettings(barIndex);
+                if barSettings and barSettings.petAware then
+                    hasPetAwareBar = true;
+                    break;
+                end
             end
         end
 
