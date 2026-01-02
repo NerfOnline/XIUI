@@ -261,6 +261,8 @@ function M.Initialize(settings)
         if crossbarInitialized then
             crossbar.ClearIconCache();
         end
+        -- Clear macro palette's pet commands cache (for BST ready moves)
+        macropalette.ClearPetCommandsCache();
     end);
 
     -- Initialize crossbar if mode includes crossbar

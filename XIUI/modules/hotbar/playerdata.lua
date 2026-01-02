@@ -132,12 +132,35 @@ function M.GetPlayerSpells()
     return spells;
 end
 
--- Ability Type constant (from IAbility.Type & 7)
--- Based on observed data: weapon skills have Type 3
+-- Ability Type constants (from IAbility.Type & 7)
+-- Type 3: Weapon Skill
 local ABILITY_TYPE_WEAPON_SKILL = 3;
 
+-- Pet commands to filter out from ability list (these belong in Pet Command section)
+local PET_COMMAND_NAMES = {
+    ['Assault'] = true,
+    ['Retreat'] = true,
+    ['Stay'] = true,
+    ['Heel'] = true,
+    ['Release'] = true,
+    ['Leave'] = true,
+    ['Fight'] = true,
+    ['Sic'] = true,
+    ['Ready'] = true,
+    -- SMN commands
+    ['Assault'] = true,
+    ['Avatar\'s Favor'] = true,
+    -- DRG commands
+    ['Spirit Link'] = true,
+    -- PUP commands
+    ['Deploy'] = true,
+    ['Retrieve'] = true,
+    ['Activate'] = true,
+    ['Deactivate'] = true,
+};
+
 --- Get player's available job abilities (includes both main job and subjob abilities)
---- Filters out weapon skills (Type 3)
+--- Filters out weapon skills (Type 3) and pet commands
 ---@return table Array of {id, name, source} where source is 'main' or 'sub'
 function M.GetPlayerAbilities()
     local player = AshitaCore:GetMemoryManager():GetPlayer();
@@ -159,9 +182,9 @@ function M.GetPlayerAbilities()
             if ability and ability.Name and ability.Name[1] and ability.Name[1] ~= '' then
                 local abilityType = ability.Type and bit.band(ability.Type, 7) or 0;
 
-                -- Filter out weapon skills (Type 3)
-                if abilityType ~= ABILITY_TYPE_WEAPON_SKILL then
-                    local abilityName = ability.Name[1];
+                -- Filter out weapon skills (Type 3) and pet commands (by name)
+                local abilityName = ability.Name[1];
+                if abilityType ~= ABILITY_TYPE_WEAPON_SKILL and not PET_COMMAND_NAMES[abilityName] then
 
                     if not addedAbilities[abilityId] then
                         local source = 'main';

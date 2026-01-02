@@ -117,6 +117,11 @@ function M.GetCurrentPetDisplayName()
     return petregistry.GetDisplayNameForKey(state.currentPetKey);
 end
 
+-- Get the current pet entity name (e.g., "HareFamiliar", "Ifrit")
+function M.GetCurrentPetEntityName()
+    return state.lastKnownPetName;
+end
+
 -- Check if player currently has a pet
 function M.HasPet()
     return state.currentPetKey ~= nil;

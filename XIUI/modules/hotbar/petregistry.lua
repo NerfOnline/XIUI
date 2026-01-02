@@ -67,19 +67,32 @@ M.spirits = {
 -- ============================================
 
 M.jugPets = {
-    'FunguarFamiliar', 'CourierCarrie', 'SheepFamiliar', 'TigerFamiliar',
-    'FlytrapFamiliar', 'LizardFamiliar', 'MayflyFamiliar', 'EftFamiliar',
-    'BeetleFamiliar', 'AntlionFamiliar', 'MiteFamiliar', 'KeenearedSteffi',
-    'LullabyMelodia', 'FlowerpotBen', 'FlowerpotBill', 'Homunculus',
-    'VoraciousAudrey', 'AmbusherAllie', 'LifedrinkerLars', 'PanzerGalahad',
-    'ChopsueyChucky', 'AmigoSabotender', 'CraftyClyvonne', 'BloodclawShasra',
-    'GorefangHobs', 'DipperYuly', 'SunburstMalfik', 'WarlikePatrick',
-    'ScissorlegXerin', 'BouncingBertha', 'RhymingShizuna', 'AttentiveIbuki',
-    'SwoopingZhivago', 'GenerousArthur', 'ThreestarLynn', 'BrainyWaluis',
-    'FaithfulFalcorr', 'SharpwitHermes', 'HeadbreakerKen', 'RedolentCandi',
-    'AlluringHoney', 'CaringKiyomaro', 'VivaciousVickie', 'HurlerPercival',
-    'BlackbeardRandy', 'FleetReinhard', 'GooeyGerard', 'CrudeRaphie',
-    'DroopyDortwin', 'PonderingPeter', 'MosquitoFamilia', 'Left-HandedYoko',
+    -- Low level (23-75)
+    'Homunculus', 'HareFamiliar', 'KeenearedSteffi', 'CrabFamiliar',
+    'CourierCarrie', 'SheepFamiliar', 'LullabyMelodia', 'TigerFamiliar',
+    'SaberSiravarde', 'MayflyFamiliar', 'ShellbusterOrob', 'LizardFamiliar',
+    'ColdbloodComo', 'EftFamiliar', 'AmbusherAllie', 'FunguarFamiliar',
+    'FlytrapFamiliar', 'VoraciousAudrey', 'FlowerpotBill', 'FlowerpotBen',
+    'AntlionFamiliar', 'ChopsueyChucky', 'BeetleFamiliar', 'PanzerGalahad',
+    'MiteFamiliar', 'LifedrinkerLars', 'TurbidToloi', 'AmigoSabotender',
+    -- High level (76-119)
+    'DapperMac', 'CraftyClyvonne', 'NurseryNazuna', 'LuckyLulush',
+    'FlowerpotMerle', 'DipperYuly', 'DiscreetLouise', 'FatsoFargann',
+    'PrestoJulio', 'AudaciousAnna', 'MailbusterCetas', 'FaithfulFalcorr',
+    'SwiftSieghard', 'BloodclawShasra', 'BugeyedBroncha', 'GorefangHobs',
+    'GooeyGerard', 'CrudeRaphie', 'AmiableRoche', 'SweetCaroline',
+    'HeadbreakerKen', 'AnklebiterJedd', 'CursedAnnabelle', 'BrainyWaluis',
+    'RedolentCandi', 'AlluringHoney', 'CaringKiyomaro', 'VivaciousVickie',
+    'SuspiciousAlice', 'SurgingStorm', 'SubmergedIyo', 'WarlikePatrick',
+    'RhymingShizuna', 'BlackbeardRandy', 'ThreestarLynn', 'HurlerPercival',
+    'AcuexFamiliar', 'FluffyBredo', 'SlimeFamiliar', 'SultryPatrice',
+    'GenerousArthur', 'DaringRoland', 'AttentiveIbuki', 'SwoopingZhivago',
+    'ChoralLeera', 'ColibriFamiliar', 'HippogrypFamiliar', 'SunburstMalfik',
+    'AgedAngus', 'HeraldHenry', 'BraveHeroGlenn', 'PorterCrabFamiliar',
+    'JovialEdwin', 'ScissorlegXerin',
+    -- Legacy/alternate names (kept for backwards compatibility)
+    'BouncingBertha', 'SharpwitHermes', 'FleetReinhard', 'DroopyDortwin',
+    'PonderingPeter', 'MosquitoFamilia', 'Left-HandedYoko',
 };
 
 -- Build lookup table for jug pets
@@ -475,20 +488,272 @@ M.automatonCommands = {
     { name = 'Heady Artifice', category = 'Ability' },
 };
 
--- BST Ready abilities (Sic commands)
+-- BST pet commands (not job abilities - those go in Ability section)
 M.bstReadyCommands = {
     { name = 'Sic', category = 'Command' },
     { name = 'Ready', category = 'Command' },
-    { name = 'Reward', category = 'Ability' },
-    { name = 'Call Beast', category = 'Ability' },
-    { name = 'Bestial Loyalty', category = 'Ability' },
-    { name = 'Familiar', category = 'Ability' },
-    { name = 'Feral Howl', category = 'Ability' },
-    { name = 'Killer Instinct', category = 'Ability' },
-    { name = 'Spur', category = 'Ability' },
-    { name = 'Run Wild', category = 'Ability' },
-    { name = 'Unleash', category = 'Ability' },
+    { name = 'Reward', category = 'Command' },
 };
+
+-- ============================================
+-- BST Jug Pet Ready Moves by Family
+-- ============================================
+
+M.petFamilyReadyMoves = {
+    ['Rabbit'] = {
+        { name = 'Foot Kick', category = 'Ready' },
+        { name = 'Dust Cloud', category = 'Ready' },
+        { name = 'Whirl Claws', category = 'Ready' },
+        { name = 'Wild Carrot', category = 'Ready' },
+    },
+    ['Sheep'] = {
+        { name = 'Lamb Chop', category = 'Ready' },
+        { name = 'Rage', category = 'Ready' },
+        { name = 'Sheep Charge', category = 'Ready' },
+        { name = 'Sheep Song', category = 'Ready' },
+    },
+    ['Tiger'] = {
+        { name = 'Roar', category = 'Ready' },
+        { name = 'Razor Fang', category = 'Ready' },
+        { name = 'Claw Cyclone', category = 'Ready' },
+        { name = 'Crossthrash', category = 'Ready' },
+        { name = 'Predatory Glare', category = 'Ready' },
+    },
+    ['Crab'] = {
+        { name = 'Bubble Shower', category = 'Ready' },
+        { name = 'Bubble Curtain', category = 'Ready' },
+        { name = 'Big Scissors', category = 'Ready' },
+        { name = 'Scissor Guard', category = 'Ready' },
+        { name = 'Metallic Body', category = 'Ready' },
+    },
+    ['Lizard'] = {
+        { name = 'Tail Blow', category = 'Ready' },
+        { name = 'Fireball', category = 'Ready' },
+        { name = 'Blockhead', category = 'Ready' },
+        { name = 'Brain Crush', category = 'Ready' },
+        { name = 'Infrasonics', category = 'Ready' },
+        { name = 'Secretion', category = 'Ready' },
+    },
+    ['Eft'] = {
+        { name = 'Nimble Snap', category = 'Ready' },
+        { name = 'Cyclotail', category = 'Ready' },
+        { name = 'Geist Wall', category = 'Ready' },
+        { name = 'Numbing Noise', category = 'Ready' },
+        { name = 'Toxic Spit', category = 'Ready' },
+    },
+    ['Funguar'] = {
+        { name = 'Frogkick', category = 'Ready' },
+        { name = 'Spore', category = 'Ready' },
+        { name = 'Queasyshroom', category = 'Ready' },
+        { name = 'Numbshroom', category = 'Ready' },
+        { name = 'Shakeshroom', category = 'Ready' },
+        { name = 'Silence Gas', category = 'Ready' },
+        { name = 'Dark Spore', category = 'Ready' },
+    },
+    ['Flytrap'] = {
+        { name = 'Soporific', category = 'Ready' },
+        { name = 'Gloeosuccus', category = 'Ready' },
+        { name = 'Palsy Pollen', category = 'Ready' },
+    },
+    ['Fly'] = {
+        { name = 'Cursed Sphere', category = 'Ready' },
+        { name = 'Venom', category = 'Ready' },
+        { name = 'Somersault', category = 'Ready' },
+    },
+    ['Beetle'] = {
+        { name = 'Power Attack', category = 'Ready' },
+        { name = 'High-Frequency Field', category = 'Ready' },
+        { name = 'Rhino Attack', category = 'Ready' },
+        { name = 'Rhino Guard', category = 'Ready' },
+        { name = 'Spoil', category = 'Ready' },
+    },
+    ['Antlion'] = {
+        { name = 'Mandibular Bite', category = 'Ready' },
+        { name = 'Sandblast', category = 'Ready' },
+        { name = 'Sandpit', category = 'Ready' },
+        { name = 'Venom Spray', category = 'Ready' },
+    },
+    ['Diremite'] = {
+        { name = 'Double Claw', category = 'Ready' },
+        { name = 'Grapple', category = 'Ready' },
+        { name = 'Spinning Top', category = 'Ready' },
+        { name = 'Filamented Hold', category = 'Ready' },
+    },
+    ['Mandragora'] = {
+        { name = 'Head Butt', category = 'Ready' },
+        { name = 'Dream Flower', category = 'Ready' },
+        { name = 'Wild Oats', category = 'Ready' },
+        { name = 'Leaf Dagger', category = 'Ready' },
+        { name = 'Scream', category = 'Ready' },
+    },
+    ['Sabotender'] = {
+        { name = 'Needleshot', category = 'Ready' },
+        { name = '1000 Needles', category = 'Ready' },
+    },
+    ['Coeurl'] = {
+        { name = 'Chaotic Eye', category = 'Ready' },
+        { name = 'Blaster', category = 'Ready' },
+    },
+    ['Lynx'] = {
+        { name = 'Chaotic Eye', category = 'Ready' },
+        { name = 'Blaster', category = 'Ready' },
+        { name = 'Charged Whisker', category = 'Ready' },
+        { name = 'Frenzied Rage', category = 'Ready' },
+    },
+    ['Ladybug'] = {
+        { name = 'Sudden Lunge', category = 'Ready' },
+        { name = 'Spiral Spin', category = 'Ready' },
+        { name = 'Noisome Powder', category = 'Ready' },
+    },
+    ['Hippogryph'] = {
+        { name = 'Back Heel', category = 'Ready' },
+        { name = 'Jettatura', category = 'Ready' },
+        { name = 'Choke Breath', category = 'Ready' },
+        { name = 'Fantod', category = 'Ready' },
+        { name = 'Hoof Volley', category = 'Ready' },
+        { name = 'Nihility Song', category = 'Ready' },
+    },
+    ['Slug'] = {
+        { name = 'Purulent Ooze', category = 'Ready' },
+        { name = 'Corrosive Ooze', category = 'Ready' },
+    },
+    ['Tulfaire'] = {
+        { name = 'Molting Plumage', category = 'Ready' },
+        { name = 'Swooping Frenzy', category = 'Ready' },
+        { name = 'Pentapeck', category = 'Ready' },
+    },
+    ['Acuex'] = {
+        { name = 'Foul Waters', category = 'Ready' },
+        { name = 'Pestilent Plume', category = 'Ready' },
+    },
+    ['Colibri'] = {
+        { name = 'Pecking Flurry', category = 'Ready' },
+    },
+    ['Raaz'] = {
+        { name = 'Sweeping Gouge', category = 'Ready' },
+        { name = 'Zealous Snort', category = 'Ready' },
+    },
+};
+
+-- ============================================
+-- Jug Pet to Family Mapping
+-- ============================================
+
+M.jugPetFamilies = {
+    -- Rabbit family
+    ['HareFamiliar'] = 'Rabbit',
+    ['KeenearedSteffi'] = 'Rabbit',
+    ['LuckyLulush'] = 'Rabbit',
+    -- Sheep family
+    ['SheepFamiliar'] = 'Sheep',
+    ['LullabyMelodia'] = 'Sheep',
+    ['NurseryNazuna'] = 'Sheep',
+    -- Tiger family
+    ['TigerFamiliar'] = 'Tiger',
+    ['SaberSiravarde'] = 'Tiger',
+    ['GorefangHobs'] = 'Tiger',
+    ['DapperMac'] = 'Tiger',
+    -- Crab family
+    ['CrabFamiliar'] = 'Crab',
+    ['CourierCarrie'] = 'Crab',
+    ['ShellbusterOrob'] = 'Crab',
+    ['SunburstMalfik'] = 'Crab',
+    ['PorterCrabFamiliar'] = 'Crab',
+    -- Lizard/Hill Lizard family
+    ['LizardFamiliar'] = 'Lizard',
+    ['ColdbloodComo'] = 'Lizard',
+    ['WarlikePatrick'] = 'Lizard',
+    -- Eft family
+    ['EftFamiliar'] = 'Eft',
+    ['AmbusherAllie'] = 'Eft',
+    -- Funguar family
+    ['FunguarFamiliar'] = 'Funguar',
+    ['BrainyWaluis'] = 'Funguar',
+    ['AudaciousAnna'] = 'Funguar',
+    -- Flytrap family
+    ['FlytrapFamiliar'] = 'Flytrap',
+    ['VoraciousAudrey'] = 'Flytrap',
+    -- Fly family
+    ['MayflyFamiliar'] = 'Fly',
+    -- Beetle family
+    ['BeetleFamiliar'] = 'Beetle',
+    ['PanzerGalahad'] = 'Beetle',
+    ['HurlerPercival'] = 'Beetle',
+    ['SharpwitHermes'] = 'Beetle',
+    -- Antlion family
+    ['AntlionFamiliar'] = 'Antlion',
+    ['ChopsueyChucky'] = 'Antlion',
+    -- Diremite family
+    ['MiteFamiliar'] = 'Diremite',
+    ['LifedrinkerLars'] = 'Diremite',
+    -- Mandragora family
+    ['Homunculus'] = 'Mandragora',
+    ['FlowerpotBill'] = 'Mandragora',
+    ['FlowerpotBen'] = 'Mandragora',
+    ['FlowerpotMerle'] = 'Mandragora',
+    ['JovialEdwin'] = 'Mandragora',
+    -- Sabotender family
+    ['AmigoSabotender'] = 'Sabotender',
+    -- Coeurl family
+    ['CraftyClyvonne'] = 'Coeurl',
+    ['BouncingBertha'] = 'Coeurl',
+    -- Lynx family
+    ['BloodclawShasra'] = 'Lynx',
+    -- Ladybug family
+    ['DipperYuly'] = 'Ladybug',
+    -- Hippogryph family
+    ['FaithfulFalcorr'] = 'Hippogryph',
+    ['HippogrypFamiliar'] = 'Hippogryph',
+    ['SwiftSieghard'] = 'Hippogryph',
+    -- Slug family
+    ['GooeyGerard'] = 'Slug',
+    ['CrudeRaphie'] = 'Slug',
+    -- Tulfaire (Bird) family
+    ['SwoopingZhivago'] = 'Tulfaire',
+    ['AttentiveIbuki'] = 'Tulfaire',
+    -- Acuex family
+    ['AcuexFamiliar'] = 'Acuex',
+    ['FluffyBredo'] = 'Acuex',
+    -- Colibri family
+    ['ColibriFamiliar'] = 'Colibri',
+    ['ChoralLeera'] = 'Colibri',
+    -- Raaz family
+    ['CaringKiyomaro'] = 'Raaz',
+    -- Slime family (same as Slug)
+    ['SlimeFamiliar'] = 'Slug',
+};
+
+-- Get the family for a jug pet name
+function M.GetJugPetFamily(petName)
+    if petName == nil then return nil; end
+    return M.jugPetFamilies[petName];
+end
+
+-- Get ready moves for a jug pet by name
+function M.GetReadyMovesForPet(petName)
+    local family = M.GetJugPetFamily(petName);
+    if family and M.petFamilyReadyMoves[family] then
+        return M.petFamilyReadyMoves[family];
+    end
+    return nil;
+end
+
+-- Get all ready moves (for when no specific pet selected)
+function M.GetAllReadyMoves()
+    local moves = {};
+    local seen = {};
+    for _, familyMoves in pairs(M.petFamilyReadyMoves) do
+        for _, move in ipairs(familyMoves) do
+            if not seen[move.name] then
+                table.insert(moves, { name = move.name, category = 'Ready' });
+                seen[move.name] = true;
+            end
+        end
+    end
+    -- Sort alphabetically
+    table.sort(moves, function(a, b) return a.name < b.name; end);
+    return moves;
+end
 
 -- ============================================
 -- Pet Command Functions
@@ -547,7 +812,8 @@ end
 
 -- Get pet commands for a specific job
 -- avatarName is optional, for SMN to filter by specific avatar
-function M.GetPetCommandsForJob(jobId, avatarName)
+-- activePetName is optional, for BST to include ready moves for the active pet
+function M.GetPetCommandsForJob(jobId, avatarName, activePetName)
     local commands = {};
 
     -- Add generic commands first
@@ -581,9 +847,24 @@ function M.GetPetCommandsForJob(jobId, avatarName)
             table.insert(commands, { name = cmd.name, category = cmd.category });
         end
     elseif jobId == M.JOB_BST then
-        -- BST: Ready commands
+        -- BST: Ready commands (abilities)
         for _, cmd in ipairs(M.bstReadyCommands) do
             table.insert(commands, { name = cmd.name, category = cmd.category });
+        end
+        -- BST: Ready moves for the active pet
+        if activePetName then
+            local readyMoves = M.GetReadyMovesForPet(activePetName);
+            if readyMoves then
+                for _, move in ipairs(readyMoves) do
+                    table.insert(commands, { name = move.name, category = move.category });
+                end
+            end
+        else
+            -- No specific pet - add all ready moves
+            local allMoves = M.GetAllReadyMoves();
+            for _, move in ipairs(allMoves) do
+                table.insert(commands, move);
+            end
         end
     end
 

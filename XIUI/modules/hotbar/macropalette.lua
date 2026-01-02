@@ -372,8 +372,8 @@ local function GetCachedItems()
 end
 
 -- Get pet commands for the current job
-local function GetPetCommandsForJob(jobId, avatarName)
-    return petregistry.GetPetCommandsForJob(jobId, avatarName);
+local function GetPetCommandsForJob(jobId, avatarName, activePetName)
+    return petregistry.GetPetCommandsForJob(jobId, avatarName, activePetName);
 end
 
 -- Spell type sort order lookup for grouping
@@ -686,6 +686,11 @@ function M.SyncToCurrentJob()
     if paletteOpen then
         RefreshCachedLists();
     end
+end
+
+-- Clear pet commands cache (call on pet change for BST)
+function M.ClearPetCommandsCache()
+    cachedPetCommands = nil;
 end
 
 -- Get the macro database for selected type (Global or job-specific)
@@ -2816,6 +2821,7 @@ function M.DrawMacroEditor()
             -- Build pet commands cache if needed
             if not cachedPetCommands then
                 local avatarName = nil;
+                local activePetName = nil;
                 if viewedJobId == petregistry.JOB_SMN then
                     -- Prefer the macro palette's avatar selection, then the filter
                     if selectedAvatarPalette then
@@ -2823,8 +2829,11 @@ function M.DrawMacroEditor()
                     elseif petAvatarFilter > 1 then
                         avatarName = avatarList[petAvatarFilter - 1];
                     end
+                elseif viewedJobId == petregistry.JOB_BST then
+                    -- Get the active pet's entity name for BST ready moves
+                    activePetName = petpalette.GetCurrentPetEntityName();
                 end
-                cachedPetCommands = GetPetCommandsForJob(viewedJobId, avatarName);
+                cachedPetCommands = GetPetCommandsForJob(viewedJobId, avatarName, activePetName);
             end
 
             -- Pet command dropdown
