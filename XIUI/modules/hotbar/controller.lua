@@ -46,10 +46,20 @@ local DEFAULT_TRIGGER_THRESHOLD = 30;
 -- Default double-tap window (in seconds)
 local DEFAULT_DOUBLE_TAP_WINDOW = 0.3;  -- 300ms
 
--- Debug logging (set to true to enable)
+-- Debug logging (controlled via /xiui debug hotbar)
 local DEBUG_ENABLED = false;
 -- Verbose logging for raw input events (very spammy, use for troubleshooting only)
 local DEBUG_VERBOSE = false;
+
+--- Set debug mode for controller module
+--- @param enabled boolean
+--- @param verbose boolean|nil Optional verbose mode for raw input logging
+local function SetDebugEnabled(enabled, verbose)
+    DEBUG_ENABLED = enabled;
+    if verbose ~= nil then
+        DEBUG_VERBOSE = verbose;
+    end
+end
 
 local function DebugLog(msg)
     if DEBUG_ENABLED then
@@ -450,18 +460,36 @@ function Controller.HandleXInputState(e)
         return;
     end
 
-    local xinputState = ffi.cast('XINPUT_STATE*', e.state);
-    if not xinputState then
+    -- Wrap FFI operations in pcall for safety
+    local ok, xinputState = pcall(function()
+        return ffi.cast('XINPUT_STATE*', e.state);
+    end);
+    if not ok or not xinputState then
         DebugLogVerbose('Failed to cast xinput state');
         return;
     end
 
-    local gamepad = xinputState.Gamepad;
+    -- Safely access gamepad data
+    local gamepad;
+    ok, gamepad = pcall(function()
+        return xinputState.Gamepad;
+    end);
+    if not ok or not gamepad then
+        DebugLogVerbose('Failed to access gamepad');
+        return;
+    end
 
     -- Get trigger values (0-255)
-    local leftTrigger = gamepad.bLeftTrigger;
-    local rightTrigger = gamepad.bRightTrigger;
-    local currentButtons = gamepad.wButtons;
+    local leftTrigger, rightTrigger, currentButtons;
+    ok = pcall(function()
+        leftTrigger = gamepad.bLeftTrigger;
+        rightTrigger = gamepad.bRightTrigger;
+        currentButtons = gamepad.wButtons;
+    end);
+    if not ok then
+        DebugLogVerbose('Failed to read gamepad values');
+        return;
+    end
 
     if leftTrigger > 0 or rightTrigger > 0 or currentButtons ~= 0 then
         DebugLogVerbose(string.format('Raw input: L2=%d R2=%d buttons=0x%04X', leftTrigger, rightTrigger, currentButtons));
@@ -495,15 +523,27 @@ function Controller.HandleXInputState(e)
     );
 
     if shouldBlock then
+        DebugLog(string.format('Blocking triggers: blockingEnabled=%s, state_modified=%s, L2=%d, R2=%d',
+            tostring(blockingEnabled), tostring(e.state_modified ~= nil), leftTrigger, rightTrigger));
         if e.state_modified then
-            local modifiedState = ffi.cast('XINPUT_STATE*', e.state_modified);
-            if modifiedState then
-                local modifiedGamepad = modifiedState.Gamepad;
-                modifiedGamepad.bLeftTrigger = 0;
-                modifiedGamepad.bRightTrigger = 0;
-                local buttonsToKeep = bit.band(modifiedGamepad.wButtons, bit.bnot(xboxDevice.CrossbarButtonsMask));
-                modifiedGamepad.wButtons = buttonsToKeep;
+            -- Wrap FFI modification in pcall for safety
+            local modOk = pcall(function()
+                local modifiedState = ffi.cast('XINPUT_STATE*', e.state_modified);
+                if modifiedState then
+                    local modifiedGamepad = modifiedState.Gamepad;
+                    modifiedGamepad.bLeftTrigger = 0;
+                    modifiedGamepad.bRightTrigger = 0;
+                    local buttonsToKeep = bit.band(modifiedGamepad.wButtons, bit.bnot(xboxDevice.CrossbarButtonsMask));
+                    modifiedGamepad.wButtons = buttonsToKeep;
+                end
+            end);
+            if modOk then
+                DebugLog('Zeroed trigger values in state_modified');
+            else
+                DebugLog('WARNING: Failed to modify state_modified');
             end
+        else
+            DebugLog('WARNING: e.state_modified is nil - cannot block triggers!');
         end
     end
 end
@@ -770,5 +810,15 @@ end
 
 Controller.COMBO_MODES = COMBO_MODES;
 Controller.DetectGameControllerMode = DetectGameControllerMode;
+
+--- Set debug mode (called via /xiui debug hotbar)
+function Controller.SetDebugEnabled(enabled, verbose)
+    SetDebugEnabled(enabled, verbose);
+end
+
+--- Get debug mode state
+function Controller.IsDebugEnabled()
+    return DEBUG_ENABLED;
+end
 
 return Controller;

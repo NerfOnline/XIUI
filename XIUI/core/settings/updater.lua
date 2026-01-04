@@ -233,6 +233,7 @@ function M.UpdateUserSettings(gAdjustedSettings, default_settings, gConfig)
     -- Legacy compatibility
     gAdjustedSettings.partyListSettings.iconSize = ds.partyListSettings.iconSize * (us.partyA.buffScale or 1);
     gAdjustedSettings.partyListSettings.expandHeight = us.partyA.expandHeight or false;
+    gAdjustedSettings.partyListSettings.expandHeightInAlliance = us.partyA.expandHeightInAlliance or false;
     gAdjustedSettings.partyListSettings.alignBottom = us.partyA.alignBottom or false;
     gAdjustedSettings.partyListSettings.minRows = us.partyA.minRows or 1;
 

@@ -1225,17 +1225,20 @@ function display.DrawPartyWindow(settings, party, partyIndex)
 
         data.UpdateTextVisibility(true, partyIndex);
 
+        -- Expand height if expandHeight is always on, OR if expandHeightInAlliance is on and we're in an alliance
+        local shouldExpandHeight = settings.expandHeight or (settings.expandHeightInAlliance and data.isInAlliance());
+
         local lastVisibleMemberIdx = firstPlayerIndex;
         for i = firstPlayerIndex, lastPlayerIndex do
             local relIndex = i - firstPlayerIndex
-            if ((partyIndex == 1 and settings.expandHeight) or relIndex < partyMemberCount or relIndex < settings.minRows) then
+            if ((partyIndex == 1 and shouldExpandHeight) or relIndex < partyMemberCount or relIndex < settings.minRows) then
                 lastVisibleMemberIdx = i;
             end
         end
 
         for i = firstPlayerIndex, lastPlayerIndex do
             local relIndex = i - firstPlayerIndex
-            if ((partyIndex == 1 and settings.expandHeight) or relIndex < partyMemberCount or relIndex < settings.minRows) then
+            if ((partyIndex == 1 and shouldExpandHeight) or relIndex < partyMemberCount or relIndex < settings.minRows) then
                 display.DrawMember(i, settings, i == lastVisibleMemberIdx);
             else
                 data.UpdateTextVisibilityByMember(i, false);

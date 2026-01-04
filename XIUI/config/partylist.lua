@@ -97,6 +97,8 @@ local function DrawPartyTabContent(party, partyName)
         components.DrawPartyCheckbox(party, 'Show Title', 'showTitle');
         components.DrawPartyCheckbox(party, 'Align Bottom', 'alignBottom');
         components.DrawPartyCheckbox(party, 'Expand Height', 'expandHeight');
+        components.DrawPartyCheckbox(party, 'Expand Height In Alliance', 'expandHeightInAlliance');
+        imgui.ShowHelp('When enabled, Party A will use expanded height only while in an alliance.');
 
         -- HP Display Mode dropdown
         components.DrawDisplayModeDropdown('HP Display##party' .. partyName, party, 'hpDisplayMode',

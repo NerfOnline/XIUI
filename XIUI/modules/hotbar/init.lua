@@ -305,12 +305,6 @@ function M.Initialize(settings)
         petpalette.CheckPetState();
     end);
 
-    -- Register keybinds with Ashita's /bind system (only if hotbar is enabled)
-    -- This blocks native FFXI macros from firing on bound keys
-    if gConfig.hotbarEnabled ~= false then
-        actions.RegisterKeybinds();
-    end
-
     -- Initialize state tracking
     wasHotbarEnabled = (gConfig.hotbarEnabled ~= false);
 
@@ -422,19 +416,8 @@ function M.UpdateVisuals(settings)
     local disableMacroBars = gConfig.hotbarGlobal and gConfig.hotbarGlobal.disableMacroBars or false;
     macrobarpatch.Update(disableMacroBars);
 
-    -- Detect hotbar enable/disable transitions
-    local isHotbarEnabled = (gConfig and gConfig.hotbarEnabled ~= false);
-
-    if wasHotbarEnabled and not isHotbarEnabled then
-        -- Transitioning from enabled to disabled - clear all keybinds
-        actions.ClearAllBinds();
-    elseif isHotbarEnabled then
-        -- Hotbar is enabled - re-register keybinds in case they changed
-        actions.RegisterKeybinds();
-    end
-
-    -- Update state tracking
-    wasHotbarEnabled = isHotbarEnabled;
+    -- Update state tracking for hotbar enable/disable
+    wasHotbarEnabled = (gConfig and gConfig.hotbarEnabled ~= false);
 end
 
 -- Main render function - called every frame
@@ -636,9 +619,6 @@ function M.Cleanup()
     -- Remove macro bar patches to restore native behavior
     macrobarpatch.Remove();
 
-    -- Unregister Ashita keybinds to restore native behavior
-    actions.UnregisterKeybinds();
-
     M.initialized = false;
 end
 
@@ -771,6 +751,20 @@ end
 function M.ResetPositions()
     display.ResetPositions();
     crossbar.ResetPositions();
+end
+
+-- Toggle debug mode for hotbar module (actions + controller)
+-- Usage: /xiui debug hotbar
+function M.SetDebugEnabled(enabled)
+    actions.SetDebugEnabled(enabled);
+    controller.SetDebugEnabled(enabled);
+    local state = enabled and 'ON' or 'OFF';
+    print('[XIUI] Hotbar debug mode: ' .. state);
+end
+
+-- Check if debug is enabled
+function M.IsDebugEnabled()
+    return actions.IsDebugEnabled() or controller.IsDebugEnabled();
 end
 
 return M;

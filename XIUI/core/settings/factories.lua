@@ -84,6 +84,7 @@ function M.createPartyDefaults(overrides)
         buffScale = 1.0,
         -- Positioning
         expandHeight = false,
+        expandHeightInAlliance = false,
         alignBottom = false,
         minRows = 1,
         entrySpacing = 0,
@@ -464,12 +465,27 @@ function M.createCrossbarDefaults()
         labelFontSize = 10,
         triggerLabelFontSize = 14,
         triggerLabelColor = 0xFFFFCC00,     -- Gold color for trigger labels
+
+        -- MP cost display
+        showMpCost = true,                  -- Show MP cost on spell slots
+        mpCostFontSize = 10,                -- Font size for MP cost
         mpCostFontColor = 0xFFD4FF97,       -- MP cost text color
         mpCostNoMpColor = 0xFFFF4444,       -- MP cost color when not enough MP
+        mpCostOffsetX = 0,                  -- X offset for MP cost position
+        mpCostOffsetY = 0,                  -- Y offset for MP cost position
+
+        -- Item quantity display
+        showQuantity = true,                -- Show item quantity on item slots
+        quantityFontSize = 10,              -- Font size for item quantity
+        quantityFontColor = 0xFFFFFFFF,     -- Item quantity text color
+        quantityOffsetX = 0,                -- X offset for quantity position
+        quantityOffsetY = 0,                -- Y offset for quantity position
 
         -- Combo text (shows current mode in center for complex combos)
         showComboText = true,               -- Show combo mode text in center
         comboTextFontSize = 10,             -- Font size for combo text
+        comboTextOffsetX = 0,               -- X offset for combo text position
+        comboTextOffsetY = 0,               -- Y offset for combo text position
 
         -- Expanded crossbar (L2+R2 combos)
         enableExpandedCrossbar = true,      -- Enable L2+R2 and R2+L2 combos

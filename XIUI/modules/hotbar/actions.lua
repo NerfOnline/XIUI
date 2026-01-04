@@ -9,43 +9,107 @@ local data = require('modules.hotbar.data');
 local horizonSpells = require('modules.hotbar.database.horizonspells');
 local textures = require('modules.hotbar.textures');
 
-local M = {};
+-- Debug logging (controlled via /xiui debug hotbar)
+local DEBUG_ENABLED = false;
 
--- ============================================
--- Modifier Key Tracking (Event-based)
--- ============================================
--- Track modifier states via keyboard events.
--- This is reset on focus loss which prevents "stuck" keys.
-
-local modifierCtrl = false;
-local modifierAlt = false;
-local modifierShift = false;
-
---- Update modifier states from keyboard events
---- Called from HandleKey for every key event
-local function UpdateModifierStates(keyCode, isRelease)
-    -- Ctrl keys (17 = generic, 162 = left, 163 = right)
-    if keyCode == 17 or keyCode == 162 or keyCode == 163 then
-        modifierCtrl = not isRelease;
-    -- Alt keys (18 = generic, 164 = left, 165 = right)
-    elseif keyCode == 18 or keyCode == 164 or keyCode == 165 then
-        modifierAlt = not isRelease;
-    -- Shift keys (16 = generic, 160 = left, 161 = right)
-    elseif keyCode == 16 or keyCode == 160 or keyCode == 161 then
-        modifierShift = not isRelease;
+local function DebugLog(msg)
+    if DEBUG_ENABLED then
+        print('[XIUI Hotbar] ' .. msg);
     end
 end
 
---- Get current modifier states
-local function GetModifierStates()
-    return modifierCtrl, modifierAlt, modifierShift;
+--- Set debug mode for actions module
+--- @param enabled boolean
+local function SetDebugEnabled(enabled)
+    DEBUG_ENABLED = enabled;
 end
 
---- Reset all modifier states (call on focus loss or zone)
+-- Load macros library for stopping native macros (bundled copy from Ashita)
+local macrosLib = nil;
+local ok, err = pcall(function()
+    macrosLib = require('libs.ffxi.macros');
+end);
+if not ok then
+    print('[XIUI] Warning: Failed to load macros library: ' .. tostring(err));
+end
+
+local M = {};
+
+-- ============================================
+-- Modifier Key State (Direct Query)
+-- ============================================
+-- Queries actual key state from OS instead of tracking events.
+-- This prevents "stuck" modifier keys when alt-tabbing.
+-- Works on Windows natively and Linux/Mac via Wine's Win32 implementation.
+
+-- Virtual key codes for modifiers
+local VK_SHIFT = 0x10;
+local VK_CONTROL = 0x11;
+local VK_MENU = 0x12;  -- Alt key
+
+-- Try to declare GetAsyncKeyState FFI binding
+local getAsyncKeyStateAvailable = false;
+local ffiInitOk, ffiInitErr = pcall(function()
+    ffi.cdef[[
+        short __stdcall GetAsyncKeyState(int vKey);
+    ]];
+    getAsyncKeyStateAvailable = true;
+end);
+
+-- If cdef failed (already defined), try to use it anyway
+if not ffiInitOk then
+    -- Might already be defined by another addon, try to use it
+    local testOk = pcall(function()
+        ffi.C.GetAsyncKeyState(VK_CONTROL);
+    end);
+    getAsyncKeyStateAvailable = testOk;
+end
+
+if getAsyncKeyStateAvailable then
+    DebugLog('GetAsyncKeyState available for modifier detection');
+else
+    print('[XIUI] Warning: GetAsyncKeyState not available, modifier keys may get stuck on alt-tab');
+end
+
+--- Check if a key is currently held down
+--- Queries the actual OS key state - no event tracking needed
+--- @param vk number Virtual key code
+--- @return boolean True if key is currently pressed
+local function IsKeyDown(vk)
+    if not getAsyncKeyStateAvailable then
+        return false;
+    end
+
+    local ok, state = pcall(function()
+        return ffi.C.GetAsyncKeyState(vk);
+    end);
+
+    if ok and state then
+        -- High bit (0x8000) indicates key is currently down
+        return bit.band(state, 0x8000) ~= 0;
+    end
+    return false;
+end
+
+--- Get current modifier states by querying actual OS key state
+--- This avoids stuck keys from missed release events (e.g., alt-tab)
+local function GetModifierStates()
+    local ctrl = IsKeyDown(VK_CONTROL);
+    local alt = IsKeyDown(VK_MENU);
+    local shift = IsKeyDown(VK_SHIFT);
+
+    -- Debug: log when any modifier is detected
+    if ctrl or alt or shift then
+        DebugLog(string.format('Modifiers: Ctrl=%s Alt=%s Shift=%s',
+            tostring(ctrl), tostring(alt), tostring(shift)));
+    end
+
+    return ctrl, alt, shift;
+end
+
+--- No-op for backwards compatibility
 function M.ResetModifierStates()
-    modifierCtrl = false;
-    modifierAlt = false;
-    modifierShift = false;
+    -- Not needed - we query actual state directly
 end
 
 -- Cache for custom icons loaded from disk
@@ -793,17 +857,19 @@ local function FindMatchingKeybind(keyCode, ctrl, alt, shift)
 end
 
 function M.HandleKey(event)
-   --print("Key pressed wparam: " .. tostring(event.wparam) .. " lparam: " .. tostring(event.lparam));
    --https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
 
    local isRelease = parseKeyEventFlags(event)
    local keyCode = event.wparam;
 
-   -- Update modifier state tracking
-   UpdateModifierStates(keyCode, isRelease);
-
-   -- Get current modifier states
+   -- Get current modifier states (queries actual OS key state)
    local controlPressed, altPressed, shiftPressed = GetModifierStates();
+
+   -- Debug: log key event details
+   DebugLog(string.format('HandleKey: keyCode=%d (0x%02X) %s | Ctrl=%s Alt=%s Shift=%s',
+       keyCode, keyCode,
+       isRelease and 'RELEASE' or 'PRESS',
+       tostring(controlPressed), tostring(altPressed), tostring(shiftPressed)));
 
    -- Skip main keyboard minus (VK 189) WITHOUT modifiers - conflicts with native FFXI menus
    -- Ctrl+- and Alt+- are allowed for hotbar binds
@@ -824,19 +890,34 @@ function M.HandleKey(event)
 
    -- Find matching keybind from custom key assignments
    local hotbar, slot = FindMatchingKeybind(keyCode, controlPressed, altPressed, shiftPressed);
+   DebugLog(string.format('FindMatchingKeybind result: hotbar=%s slot=%s', tostring(hotbar), tostring(slot)));
 
    if hotbar and slot then
        if isRelease then
            -- Clear pressed state on release (only if it matches what was pressed)
            if currentPressedHotbar == hotbar and currentPressedSlot == slot then
+               DebugLog('Key released: hotbar=' .. tostring(hotbar) .. ', slot=' .. tostring(slot));
                currentPressedHotbar = nil;
                currentPressedSlot = nil;
            end
        else
+           -- Check if this is a key repeat (same hotbar/slot already pressed)
+           if currentPressedHotbar == hotbar and currentPressedSlot == slot then
+               -- Key repeat - keep pressed state but don't re-execute action
+               return;
+           end
+
+           DebugLog('Key pressed: hotbar=' .. tostring(hotbar) .. ', slot=' .. tostring(slot));
+
            -- Set pressed state and try to execute the keybind
            currentPressedHotbar = hotbar;
            currentPressedSlot = slot;
-           if M.HandleKeybind(hotbar, slot) then
+           -- Try to execute the hotbar action (may return false if slot is empty)
+           M.HandleKeybind(hotbar, slot);
+
+           -- Block native FFXI macros if "Disable XI Macros" is enabled
+           -- This applies even if the hotbar slot is empty
+           if M.StopNativeMacros() then
                event.blocked = true;
            end
        end
@@ -875,249 +956,49 @@ function M.ClearCustomIconCache()
     customIconCache = {};
 end
 
--- ============================================
--- Ashita Keybind Registration
--- Uses /bind to intercept keys at a lower level than addon keyboard events,
--- which properly blocks native FFXI macros from firing
--- ============================================
+-- Rate limiting for macros.stop() to prevent FFI spam
+local lastMacroStopTime = 0;
+local MACRO_STOP_COOLDOWN = 0.1; -- 100ms cooldown between calls
 
--- SAFETY: Set to false to completely disable /bind registration
--- This prevents native macro blocking but avoids potential crashes
-local ENABLE_ASHITA_BINDS = true;
+--- Stop native FFXI macros if "Disable XI Macros" is enabled
+--- Called by keyboard and controller input handlers
+--- @return boolean stopped Whether macros.stop() was called
+function M.StopNativeMacros()
+    local disableMacros = gConfig and gConfig.hotbarGlobal and gConfig.hotbarGlobal.disableMacroBars;
+    if not disableMacros then
+        return false;
+    end
 
--- Track registered binds so we can unbind them on cleanup/change
-local registeredBinds = {};
+    -- Rate limit FFI calls to prevent crashes
+    local currentTime = os.clock();
+    if currentTime - lastMacroStopTime < MACRO_STOP_COOLDOWN then
+        return true; -- Still return true to block event, but skip FFI call
+    end
 
--- Track if silent mode is enabled
-local silentModeEnabled = false;
-
--- Track if module is being cleaned up (prevents registration during unload)
-local isCleaningUp = false;
-
--- Convert modifier flags + key code to Ashita bind format
--- Ashita uses: ^ for Ctrl, ! for Alt, + for Shift
-local function FormatBindKey(keyCode, ctrl, alt, shift)
-    local prefix = '';
-    if ctrl then prefix = prefix .. '^'; end
-    if alt then prefix = prefix .. '!'; end
-    if shift then prefix = prefix .. '+'; end
-
-    -- Convert virtual key code to Ashita key name
-    -- Reference: https://wiki.ashitaxi.com/doku.php?id=ashitav3:keybinds
-    local keyName = nil;
-
-    -- Number keys 0-9 (VK 48-57)
-    if keyCode >= 48 and keyCode <= 57 then
-        keyName = tostring(keyCode - 48);
-    -- Letter keys A-Z (VK 65-90)
-    elseif keyCode >= 65 and keyCode <= 90 then
-        keyName = string.char(keyCode);
-    -- Function keys F1-F12 (VK 112-123)
-    elseif keyCode >= 112 and keyCode <= 123 then
-        keyName = 'F' .. tostring(keyCode - 111);
-    -- Numpad 0-9 (VK 96-105)
-    elseif keyCode >= 96 and keyCode <= 105 then
-        keyName = 'NUMPAD' .. tostring(keyCode - 96);
-    -- Main keyboard minus (VK 189) - only supported WITH modifiers (Ctrl/Alt/Shift)
-    -- Bare minus conflicts with native FFXI menus, but modifier combos are fine
-    elseif keyCode == 189 then
-        -- Only allow if a modifier is present (checked via prefix)
-        if ctrl or alt or shift then
-            keyName = '-';
+    if macrosLib and macrosLib.stop then
+        -- Wrap FFI call in pcall for safety
+        local ok, err = pcall(function()
+            macrosLib.stop();
+        end);
+        if ok then
+            lastMacroStopTime = currentTime;
+            DebugLog('macros.stop() called');
+            return true;
+        else
+            DebugLog('macros.stop() failed: ' .. tostring(err));
         end
-    -- Numpad minus (VK 109)
-    elseif keyCode == 109 then
-        keyName = 'NUMPAD-';
-    -- Main keyboard equals/plus (VK 187)
-    elseif keyCode == 187 then
-        keyName = '=';
-    -- Numpad plus (VK 107)
-    elseif keyCode == 107 then
-        keyName = 'NUMPAD+';
-    -- Numpad multiply (VK 106)
-    elseif keyCode == 106 then
-        keyName = 'NUMPAD*';
-    -- Numpad divide (VK 111)
-    elseif keyCode == 111 then
-        keyName = 'NUMPAD/';
-    -- Numpad decimal (VK 110)
-    elseif keyCode == 110 then
-        keyName = 'NUMPAD.';
-    -- Space (VK 32)
-    elseif keyCode == 32 then
-        keyName = 'SPACE';
-    -- Tab (VK 9)
-    elseif keyCode == 9 then
-        keyName = 'TAB';
-    -- Escape (VK 27)
-    elseif keyCode == 27 then
-        keyName = 'ESCAPE';
-    -- Backspace (VK 8)
-    elseif keyCode == 8 then
-        keyName = 'BACK';
-    -- Enter (VK 13)
-    elseif keyCode == 13 then
-        keyName = 'RETURN';
-    -- Backtick/tilde (VK 192)
-    elseif keyCode == 192 then
-        keyName = '`';
-    -- [ (VK 219)
-    elseif keyCode == 219 then
-        keyName = '[';
-    -- ] (VK 221)
-    elseif keyCode == 221 then
-        keyName = ']';
-    -- \ (VK 220)
-    elseif keyCode == 220 then
-        keyName = '\\';
-    -- ; (VK 186)
-    elseif keyCode == 186 then
-        keyName = ';';
-    -- ' (VK 222)
-    elseif keyCode == 222 then
-        keyName = "'";
-    -- , (VK 188)
-    elseif keyCode == 188 then
-        keyName = ',';
-    -- . (VK 190)
-    elseif keyCode == 190 then
-        keyName = '.';
-    -- / (VK 191)
-    elseif keyCode == 191 then
-        keyName = '/';
     end
-
-    if not keyName then
-        return nil;
-    end
-
-    return prefix .. keyName;
+    return false;
 end
 
---- Register all configured keybinds with Ashita's /bind system
---- This blocks native FFXI macros from firing on those keys
-function M.RegisterKeybinds()
-    -- Safety checks
-    if not ENABLE_ASHITA_BINDS then return; end
-    if isCleaningUp then return; end
-
-    -- Check if hotbar is globally disabled - clear binds instead of registering
-    if gConfig and gConfig.hotbarEnabled == false then
-        M.ClearAllBinds();
-        return;
-    end
-
-    -- Wrap everything in pcall for safety
-    local ok, err = pcall(function()
-        local chatManager = AshitaCore:GetChatManager();
-        if not chatManager then return; end
-
-        -- Enable silent mode once and leave it on permanently
-        -- This avoids timing issues with async command queue
-        if not silentModeEnabled then
-            chatManager:QueueCommand(-1, '/bind silent 1');
-            silentModeEnabled = true;
-
-            -- Explicitly unbind bare minus key to clear any stale binds
-            -- The minus key without modifiers conflicts with native FFXI menus
-            -- Ctrl+- and Alt+- are allowed
-            chatManager:QueueCommand(-1, '/unbind -');
-        end
-
-        -- Build list of new binds we want to register
-        local newBinds = {};
-
-        if gConfig then
-            for barIndex = 1, 6 do
-                local configKey = 'hotbarBar' .. barIndex;
-                local barSettings = gConfig[configKey];
-
-                if barSettings and barSettings.enabled and barSettings.keyBindings then
-                    for slotIndex, binding in pairs(barSettings.keyBindings) do
-                        if binding and binding.key then
-                            local bindKey = FormatBindKey(
-                                binding.key,
-                                binding.ctrl or false,
-                                binding.alt or false,
-                                binding.shift or false
-                            );
-
-                            if bindKey then
-                                table.insert(newBinds, {
-                                    key = bindKey,
-                                    barIndex = barIndex,
-                                    slotIndex = slotIndex,
-                                });
-                            end
-                        end
-                    end
-                end
-            end
-        end
-
-        -- Unbind old binds that aren't in the new set
-        local newBindSet = {};
-        for _, bind in ipairs(newBinds) do
-            newBindSet[bind.key] = true;
-        end
-
-        for _, bindKey in ipairs(registeredBinds) do
-            if not newBindSet[bindKey] then
-                chatManager:QueueCommand(-1, '/unbind ' .. bindKey);
-            end
-        end
-
-        -- Register new binds (overwrites existing binds with same key)
-        registeredBinds = {};
-        for _, bind in ipairs(newBinds) do
-            local bindCommand = string.format(
-                '/bind %s /xiui hotbar %d %d',
-                bind.key, bind.barIndex, bind.slotIndex
-            );
-            chatManager:QueueCommand(-1, bindCommand);
-            table.insert(registeredBinds, bind.key);
-        end
-    end);
-
-    if not ok then
-        print('[XIUI] Warning: Failed to register keybinds: ' .. tostring(err));
-    end
+--- Set debug mode (called via /xiui debug hotbar)
+function M.SetDebugEnabled(enabled)
+    SetDebugEnabled(enabled);
 end
 
---- Clear all registered keybinds (used when hotbar is disabled)
---- Sends /unbind commands for all registered binds
-function M.ClearAllBinds()
-    local ok, err = pcall(function()
-        local chatManager = AshitaCore:GetChatManager();
-        if not chatManager then return; end
-
-        for _, bindKey in ipairs(registeredBinds) do
-            chatManager:QueueCommand(-1, '/unbind ' .. bindKey);
-        end
-        registeredBinds = {};
-    end);
-
-    if not ok then
-        print('[XIUI] Warning: Failed to clear keybinds: ' .. tostring(err));
-    end
-end
-
---- Unregister all previously registered keybinds (called on addon unload)
---- NOTE: This is intentionally minimal to avoid command queue issues during reload.
---- The binds will either be overwritten by the next load or cleaned up manually.
-function M.UnregisterKeybinds()
-    -- Set cleanup flag to prevent re-registration during unload
-    isCleaningUp = true;
-
-    -- Clear local tracking only
-    -- We intentionally DON'T send /unbind commands here because:
-    -- 1. During addon reload, commands can interleave unpredictably
-    -- 2. The new module will overwrite binds with same keys anyway
-    -- 3. Sending many commands during unload can cause instability
-    registeredBinds = {};
-
-    -- Reset silent mode tracking so the next load will re-enable it
-    silentModeEnabled = false;
+--- Get debug mode state
+function M.IsDebugEnabled()
+    return DEBUG_ENABLED;
 end
 
 return M

@@ -585,6 +585,21 @@ ashita.events.register('command', 'command_cb', function (e)
             return;
         end
 
+        -- Debug commands: /xiui debug <module>
+        -- Toggles debug logging for specific modules
+        if (command_args[2] == 'debug') then
+            local moduleName = command_args[3];
+            if moduleName == 'hotbar' then
+                -- Toggle hotbar debug mode
+                local currentState = hotbar.IsDebugEnabled();
+                hotbar.SetDebugEnabled(not currentState);
+            else
+                print('[XIUI] Debug modules: hotbar');
+                print('[XIUI] Usage: /xiui debug <module>');
+            end
+            return;
+        end
+
         -- Reset gil per hour tracking: /xiui resetgil
         if (command_args[2] == 'resetgil') then
             gilTracker.ResetTracking();
@@ -799,6 +814,7 @@ end);
     e.injected  - (ReadOnly) Flag that states if the button was injected by Ashita or an addon/plugin.
 --]]
 ashita.events.register('xinput_button', 'xinput_button_cb', function (e)
+    -- Debug: print('[XIUI Debug] xinput_button event: button=' .. tostring(e.button) .. ' state=' .. tostring(e.state));
     local shouldBlock = hotbar.HandleXInputButton(e);
     if shouldBlock then
         e.blocked = true;
@@ -808,6 +824,7 @@ end);
 -- DirectInput controller button event (for crossbar mode with DirectInput controllers)
 -- Used by: DualSense, Switch Pro, Stadia controllers
 ashita.events.register('dinput_button', 'dinput_button_cb', function (e)
+    -- Debug: print('[XIUI Debug] dinput_button event: button=' .. tostring(e.button) .. ' state=' .. tostring(e.state));
     local shouldBlock = hotbar.HandleDInputButton(e);
     if shouldBlock then
         e.blocked = true;

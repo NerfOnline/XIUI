@@ -406,6 +406,7 @@ function M.createModuleDefaults()
             statusOffsetY = 0,
             entrySpacing = 8,
             expandHeight = false,
+            expandHeightInAlliance = false,
             alignBottom = false,
             minRows = 1,
 

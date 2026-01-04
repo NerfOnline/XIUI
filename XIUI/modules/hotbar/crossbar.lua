@@ -704,9 +704,13 @@ local function DrawSlot(comboMode, slotIndex, x, y, slotSize, settings, isActive
         mpCostFontSize = settings.mpCostFontSize or 10,
         mpCostFontColor = settings.mpCostFontColor or 0xFFD4FF97,
         mpCostNoMpColor = settings.mpCostNoMpColor or 0xFFFF4444,
+        mpCostOffsetX = settings.mpCostOffsetX or 0,
+        mpCostOffsetY = settings.mpCostOffsetY or 0,
         showQuantity = settings.showQuantity ~= false,
         quantityFontSize = settings.quantityFontSize or 10,
         quantityFontColor = settings.quantityFontColor or 0xFFFFFFFF,
+        quantityOffsetX = settings.quantityOffsetX or 0,
+        quantityOffsetY = settings.quantityOffsetY or 0,
 
         -- Interaction Config (use original Y for interaction, not animated Y)
         buttonId = string.format('##crossbar_%s_%d', comboMode, slotIndex),
@@ -915,15 +919,17 @@ local function DrawComboText(activeCombo, centerX, topY, settings)
         return;
     end
 
-    -- Get font size from settings
+    -- Get font size and offsets from settings
     local fontSize = settings.comboTextFontSize or 10;
+    local offsetX = settings.comboTextOffsetX or 0;
+    local offsetY = settings.comboTextOffsetY or 0;
 
     -- Update and show GDI font for text (centered)
     if state.comboTextFont then
         state.comboTextFont:set_font_height(fontSize);
         state.comboTextFont:set_text(comboText);
-        state.comboTextFont:set_position_x(centerX);
-        state.comboTextFont:set_position_y(topY);
+        state.comboTextFont:set_position_x(centerX + offsetX);
+        state.comboTextFont:set_position_y(topY + offsetY);
         state.comboTextFont:set_visible(true);
     end
 end
@@ -1422,6 +1428,10 @@ end
 -- Activate a slot (execute bound action)
 function M.ActivateSlot(comboMode, slotIndex)
     if not state.initialized then return; end
+
+    -- Stop native FFXI macros if "Disable XI Macros" is enabled
+    -- This must be called early, before checking if slot has action
+    actions.StopNativeMacros();
 
     -- Get player job for slot lookup
     local player = GetPlayerSafe();

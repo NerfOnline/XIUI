@@ -584,8 +584,6 @@ function M.DrawKeybindModal()
                         barSettings.keyBindings[selectedSlot] = nil;
                         barSettings.keyBindings[tostring(selectedSlot)] = nil;
                         SaveSettingsOnly();
-                        -- Re-register Ashita keybinds
-                        actions.RegisterKeybinds();
                     end
                 end
             end
@@ -670,9 +668,6 @@ function M.HandleKeybindCapture(keyCode, ctrl, alt, shift)
 
         SaveSettingsOnly();
         keybindModal.waitingForKey = false;
-
-        -- Re-register Ashita keybinds to apply the change
-        actions.RegisterKeybinds();
     end
 
     return true;
@@ -1018,11 +1013,29 @@ local function DrawCrossbarSettings()
         components.DrawPartyCheckbox(crossbarSettings, 'Show Divider##crossbar', 'showDivider');
         imgui.ShowHelp('Show a divider line between L2 and R2 groups.');
 
+        -- Show MP Cost with X/Y offsets
         components.DrawPartyCheckbox(crossbarSettings, 'Show MP Cost##crossbar', 'showMpCost');
-        imgui.ShowHelp('Display MP cost in top-right corner of spell slots.');
+        if crossbarSettings.showMpCost then
+            imgui.SameLine();
+            components.DrawInlineOffsets(crossbarSettings, 'crossbarmp', 'mpCostOffsetX', 'mpCostOffsetY', 35);
+        end
+        imgui.ShowHelp('Display MP cost on spell slots. X/Y offsets adjust position.');
 
+        -- Show Item Quantity with X/Y offsets
         components.DrawPartyCheckbox(crossbarSettings, 'Show Item Quantity##crossbar', 'showQuantity');
-        imgui.ShowHelp('Display item quantity in bottom-right corner of item slots.');
+        if crossbarSettings.showQuantity then
+            imgui.SameLine();
+            components.DrawInlineOffsets(crossbarSettings, 'crossbarqty', 'quantityOffsetX', 'quantityOffsetY', 35);
+        end
+        imgui.ShowHelp('Display item quantity on item slots. X/Y offsets adjust position.');
+
+        -- Show Combo Text with X/Y offsets
+        components.DrawPartyCheckbox(crossbarSettings, 'Show Combo Text##crossbar', 'showComboText');
+        if crossbarSettings.showComboText then
+            imgui.SameLine();
+            components.DrawInlineOffsets(crossbarSettings, 'crossbarcombo', 'comboTextOffsetX', 'comboTextOffsetY', 35);
+        end
+        imgui.ShowHelp('Show current combo mode text in center (L2+R2, R2+L2, L2x2, R2x2). X/Y offsets adjust position.');
     end
 
     -- Background section
@@ -1135,21 +1148,15 @@ local function DrawCrossbarSettings()
 
         components.DrawPartySliderInt(crossbarSettings, 'Quantity Text Size##crossbar', 'quantityFontSize', 6, 24, '%d', nil, 10);
         imgui.ShowHelp('Text size for item quantity display.');
+
+        components.DrawPartySliderInt(crossbarSettings, 'Combo Text Size##crossbar', 'comboTextFontSize', 8, 24, '%d', nil, 12);
+        imgui.ShowHelp('Font size for combo mode text (L2+R2, R2+L2, etc.).');
     end
 
     -- Visual Feedback section
     if components.CollapsingSection('Visual Feedback##crossbar', false) then
         components.DrawPartySlider(crossbarSettings, 'Inactive Dim##crossbar', 'inactiveSlotDim', 0.0, 1.0, '%.2f', nil, 0.5);
         imgui.ShowHelp('Dim factor for inactive trigger side (0 = black, 1 = full brightness).');
-
-        imgui.Spacing();
-        components.DrawPartyCheckbox(crossbarSettings, 'Show Combo Text##crossbar', 'showComboText');
-        imgui.ShowHelp('Show current combo mode text in center (L2+R2, R2+L2, L2x2, R2x2).');
-
-        if crossbarSettings.showComboText then
-            components.DrawPartySlider(crossbarSettings, 'Combo Text Size##crossbar', 'comboTextFontSize', 8, 20, '%d', nil, 12);
-            imgui.ShowHelp('Font size for combo text.');
-        end
     end
 end
 
