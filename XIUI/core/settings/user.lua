@@ -29,6 +29,22 @@ function M.createUserSettingsDefaults()
         showCastCost = true,
         showNotifications = true,
 
+        -- Hide when game menu is open (default off)
+        playerBarHideOnMenuFocus = false,
+        targetBarHideOnMenuFocus = false,
+        enemyListHideOnMenuFocus = false,
+        expBarHideOnMenuFocus = false,
+        gilTrackerHideOnMenuFocus = false,
+        inventoryTrackerHideOnMenuFocus = false,
+        partyListHideOnMenuFocus = false,
+        castBarHideOnMenuFocus = false,
+        petBarHideOnMenuFocus = false,
+        castCostHideOnMenuFocus = false,
+        notificationsHideOnMenuFocus = false,
+        treasurePoolHideOnMenuFocus = false,
+        hotbarHideOnMenuFocus = false,
+        mobInfoHideOnMenuFocus = false,
+
         -- Treasure Pool settings
         treasurePoolEnabled = true,           -- Show treasure pool when items in pool
         treasurePoolShowTimerBar = true,      -- Show countdown progress bar

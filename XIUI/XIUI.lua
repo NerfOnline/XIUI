@@ -133,6 +133,7 @@ uiModules.Register('playerBar', {
     settingsKey = 'playerBarSettings',
     configKey = 'showPlayerBar',
     hideOnEventKey = 'playerBarHideDuringEvents',
+    hideOnMenuFocusKey = 'playerBarHideOnMenuFocus',
     hasSetHidden = true,
 });
 uiModules.Register('targetBar', {
@@ -140,60 +141,70 @@ uiModules.Register('targetBar', {
     settingsKey = 'targetBarSettings',
     configKey = 'showTargetBar',
     hideOnEventKey = 'targetBarHideDuringEvents',
+    hideOnMenuFocusKey = 'targetBarHideOnMenuFocus',
     hasSetHidden = true,
 });
 uiModules.Register('enemyList', {
     module = enemyList,
     settingsKey = 'enemyListSettings',
     configKey = 'showEnemyList',
+    hideOnMenuFocusKey = 'enemyListHideOnMenuFocus',
     hasSetHidden = true,
 });
 uiModules.Register('expBar', {
     module = expBar,
     settingsKey = 'expBarSettings',
     configKey = 'showExpBar',
+    hideOnMenuFocusKey = 'expBarHideOnMenuFocus',
     hasSetHidden = true,
 });
 uiModules.Register('gilTracker', {
     module = gilTracker,
     settingsKey = 'gilTrackerSettings',
     configKey = 'showGilTracker',
+    hideOnMenuFocusKey = 'gilTrackerHideOnMenuFocus',
     hasSetHidden = true,
 });
 uiModules.Register('inventoryTracker', {
     module = inventoryTracker,
     settingsKey = 'inventoryTrackerSettings',
     configKey = 'showInventoryTracker',
+    hideOnMenuFocusKey = 'inventoryTrackerHideOnMenuFocus',
     hasSetHidden = true,
 });
 uiModules.Register('satchelTracker', {
     module = satchelTracker,
     settingsKey = 'satchelTrackerSettings',
     configKey = 'showSatchelTracker',
+    hideOnMenuFocusKey = 'inventoryTrackerHideOnMenuFocus',
     hasSetHidden = true,
 });
 uiModules.Register('lockerTracker', {
     module = lockerTracker,
     settingsKey = 'lockerTrackerSettings',
     configKey = 'showLockerTracker',
+    hideOnMenuFocusKey = 'inventoryTrackerHideOnMenuFocus',
     hasSetHidden = true,
 });
 uiModules.Register('safeTracker', {
     module = safeTracker,
     settingsKey = 'safeTrackerSettings',
     configKey = 'showSafeTracker',
+    hideOnMenuFocusKey = 'inventoryTrackerHideOnMenuFocus',
     hasSetHidden = true,
 });
 uiModules.Register('storageTracker', {
     module = storageTracker,
     settingsKey = 'storageTrackerSettings',
     configKey = 'showStorageTracker',
+    hideOnMenuFocusKey = 'inventoryTrackerHideOnMenuFocus',
     hasSetHidden = true,
 });
 uiModules.Register('wardrobeTracker', {
     module = wardrobeTracker,
     settingsKey = 'wardrobeTrackerSettings',
     configKey = 'showWardrobeTracker',
+    hideOnMenuFocusKey = 'inventoryTrackerHideOnMenuFocus',
     hasSetHidden = true,
 });
 uiModules.Register('partyList', {
@@ -201,24 +212,28 @@ uiModules.Register('partyList', {
     settingsKey = 'partyListSettings',
     configKey = 'showPartyList',
     hideOnEventKey = 'partyListHideDuringEvents',
+    hideOnMenuFocusKey = 'partyListHideOnMenuFocus',
     hasSetHidden = true,
 });
 uiModules.Register('castBar', {
     module = castBar,
     settingsKey = 'castBarSettings',
     configKey = 'showCastBar',
+    hideOnMenuFocusKey = 'castBarHideOnMenuFocus',
     hasSetHidden = true,
 });
 uiModules.Register('castCost', {
     module = castCost,
     settingsKey = 'castCostSettings',
     configKey = 'showCastCost',
+    hideOnMenuFocusKey = 'castCostHideOnMenuFocus',
     hasSetHidden = true,
 });
 uiModules.Register('mobInfo', {
     module = mobInfo.display,
     settingsKey = 'mobInfoSettings',
     configKey = 'showMobInfo',
+    hideOnMenuFocusKey = 'mobInfoHideOnMenuFocus',
     hasSetHidden = true,
 });
 uiModules.Register('petBar', {
@@ -226,6 +241,7 @@ uiModules.Register('petBar', {
     settingsKey = 'petBarSettings',
     configKey = 'showPetBar',
     hideOnEventKey = 'petBarHideDuringEvents',
+    hideOnMenuFocusKey = 'petBarHideOnMenuFocus',
     hasSetHidden = true,
 });
 uiModules.Register('notifications', {
@@ -233,12 +249,14 @@ uiModules.Register('notifications', {
     settingsKey = 'notificationsSettings',
     configKey = 'showNotifications',
     hideOnEventKey = 'notificationsHideDuringEvents',
+    hideOnMenuFocusKey = 'notificationsHideOnMenuFocus',
     hasSetHidden = true,
 });
 uiModules.Register('treasurePool', {
     module = treasurePool,
     settingsKey = 'treasurePoolSettings',
     configKey = 'treasurePoolEnabled',
+    hideOnMenuFocusKey = 'treasurePoolHideOnMenuFocus',
     hasSetHidden = true,
 });
 uiModules.Register('hotbar', {
@@ -246,6 +264,7 @@ uiModules.Register('hotbar', {
     settingsKey = 'hotbarSettings',
     configKey = 'showhotbar',
     hideOnEventKey = 'hotbarHideDuringEvents',
+    hideOnMenuFocusKey = 'hotbarHideOnMenuFocus',
     hasSetHidden = true,
 });
 
@@ -397,6 +416,7 @@ ashita.events.register('d3d_present', 'present_cb', function ()
     end
 
     local eventSystemActive = gameState.GetEventSystemActive();
+    local menuOpen = gameState.GetMenuName() ~= '';
 
     if not gameState.ShouldHideUI(gConfig.hideDuringEvents, bLoggedIn) then
         -- Sync treasure pool from memory (authoritative source of truth)
@@ -410,7 +430,7 @@ ashita.events.register('d3d_present', 'present_cb', function ()
 
         -- Render all registered modules
         for name, _ in pairs(uiModules.GetAll()) do
-            uiModules.RenderModule(name, gConfig, gAdjustedSettings, eventSystemActive);
+            uiModules.RenderModule(name, gConfig, gAdjustedSettings, eventSystemActive, menuOpen);
         end
 
         configMenu.DrawWindow();
@@ -454,6 +474,8 @@ ashita.events.register('unload', 'unload_cb', function ()
     ashita.events.unregister('key', 'key_cb');
     ashita.events.unregister('xinput_state', 'xinput_state_cb');
     ashita.events.unregister('xinput_button', 'xinput_button_cb');
+    ashita.events.unregister('dinput_button', 'dinput_button_cb');
+    ashita.events.unregister('dinput_state', 'dinput_state_cb');
 
     statusHandler.clear_cache();
     progressbar.ClearCache();
@@ -788,6 +810,20 @@ ashita.events.register('xinput_button', 'xinput_button_cb', function (e)
     if shouldBlock then
         e.blocked = true;
     end
+end);
+
+-- DirectInput controller button event (for crossbar mode with DirectInput controllers)
+-- Used by: DualSense, Switch Pro, Stadia controllers
+ashita.events.register('dinput_button', 'dinput_button_cb', function (e)
+    local shouldBlock = hotbar.HandleDInputButton(e);
+    if shouldBlock then
+        e.blocked = true;
+    end
+end);
+
+-- DirectInput controller state event (for D-pad POV on DirectInput controllers)
+ashita.events.register('dinput_state', 'dinput_state_cb', function (e)
+    hotbar.HandleDInputState(e);
 end);
 
 -- ============================================

@@ -712,7 +712,7 @@ end
 
 -- Anchor dropdown (left/right only, no center)
 -- Use for positioning elements relative to a container edge
-function components.DrawAnchorDropdown(label, parentTable, configKey, helpText)
+function components.DrawLeftRightAnchorDropdown(label, parentTable, configKey, helpText)
     local anchorLabels = {
         left = 'Left',
         right = 'Right'

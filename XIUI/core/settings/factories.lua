@@ -455,6 +455,7 @@ function M.createCrossbarDefaults()
         buttonIconGapV = 2,                 -- Vertical spacing between center icons
         buttonIconPosition = 'corner',      -- 'corner' or 'replace_keybind'
         controllerTheme = 'PlayStation',    -- 'PlayStation', 'Xbox', or 'Nintendo' button icons
+        controllerScheme = 'xbox',          -- Device mapping: 'xbox' (XInput), 'dualsense', 'switchpro', 'stadia' (DirectInput)
         triggerIconScale = 0.8,             -- Scale for L2/R2 trigger icons (base 49x28)
 
         -- Font settings

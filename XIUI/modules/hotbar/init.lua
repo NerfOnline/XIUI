@@ -281,6 +281,7 @@ function M.Initialize(settings)
             triggerThreshold = gConfig.hotbarCrossbar.triggerThreshold or 30,
             doubleTapEnabled = gConfig.hotbarCrossbar.enableDoubleTap or false,
             doubleTapWindow = gConfig.hotbarCrossbar.doubleTapWindow or 0.3,
+            controllerScheme = gConfig.hotbarCrossbar.controllerScheme or 'xbox',
         });
         controller.SetSlotActivateCallback(function(comboMode, slotIndex)
             crossbar.ActivateSlot(comboMode, slotIndex);
@@ -383,6 +384,7 @@ function M.UpdateVisuals(settings)
             triggerThreshold = gConfig.hotbarCrossbar.triggerThreshold or 30,
             doubleTapEnabled = gConfig.hotbarCrossbar.enableDoubleTap or false,
             doubleTapWindow = gConfig.hotbarCrossbar.doubleTapWindow or 0.3,
+            controllerScheme = gConfig.hotbarCrossbar.controllerScheme or 'xbox',
         });
         controller.SetSlotActivateCallback(function(comboMode, slotIndex)
             crossbar.ActivateSlot(comboMode, slotIndex);
@@ -404,6 +406,7 @@ function M.UpdateVisuals(settings)
         controller.SetTriggerThreshold(gConfig.hotbarCrossbar.triggerThreshold or 30);
         controller.SetDoubleTapEnabled(gConfig.hotbarCrossbar.enableDoubleTap or false);
         controller.SetDoubleTapWindow(gConfig.hotbarCrossbar.doubleTapWindow or 0.3);
+        controller.SetControllerScheme(gConfig.hotbarCrossbar.controllerScheme or 'xbox');
         -- Update blocking state
         local blockGameMacros = gConfig.hotbarCrossbar.blockGameMacros;
         if blockGameMacros == nil then blockGameMacros = true; end
@@ -715,6 +718,25 @@ function M.HandleXInputButton(e)
     local crossbarMode = gConfig and gConfig.hotbarCrossbar and gConfig.hotbarCrossbar.mode or 'hotbar';
     if crossbarMode ~= 'crossbar' and crossbarMode ~= 'both' then return false; end
     return controller.HandleXInputButton(e);
+end
+
+-- Handle DirectInput button event for blocking game macros
+-- Returns true if the button should be blocked
+function M.HandleDInputButton(e)
+    if not crossbarInitialized then return false; end
+    if gConfig and gConfig.hotbarEnabled == false then return false; end
+    local crossbarMode = gConfig and gConfig.hotbarCrossbar and gConfig.hotbarCrossbar.mode or 'hotbar';
+    if crossbarMode ~= 'crossbar' and crossbarMode ~= 'both' then return false; end
+    return controller.HandleDInputButton(e);
+end
+
+-- Handle DirectInput state event (for D-pad POV)
+function M.HandleDInputState(e)
+    if not crossbarInitialized then return; end
+    if gConfig and gConfig.hotbarEnabled == false then return; end
+    local crossbarMode = gConfig and gConfig.hotbarCrossbar and gConfig.hotbarCrossbar.mode or 'hotbar';
+    if crossbarMode ~= 'crossbar' and crossbarMode ~= 'both' then return; end
+    controller.HandleDInputState(e);
 end
 
 -- ============================================

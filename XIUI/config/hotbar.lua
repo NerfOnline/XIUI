@@ -1043,6 +1043,62 @@ local function DrawCrossbarSettings()
         imgui.ShowHelp('Opacity of the window borders.');
     end
 
+    -- Controller Input section
+    if components.CollapsingSection('Controller Input##crossbar', false) then
+        -- Device mapping dropdown (affects which input API is used)
+        local deviceSchemes = { 'xbox', 'dualsense', 'switchpro' };
+        local deviceDisplayNames = {
+            xbox = 'Xbox / XInput',
+            dualsense = 'DualSense / DualShock (PS5/PS4)',
+            switchpro = 'Switch Pro Controller',
+        };
+        local currentScheme = crossbarSettings.controllerScheme or 'xbox';
+        local currentDisplayName = deviceDisplayNames[currentScheme] or currentScheme;
+
+        if imgui.BeginCombo('Device Mapping##crossbar', currentDisplayName, ImGuiComboFlags_None) then
+            for _, scheme in ipairs(deviceSchemes) do
+                local isSelected = (currentScheme == scheme);
+                if imgui.Selectable(deviceDisplayNames[scheme], isSelected) then
+                    crossbarSettings.controllerScheme = scheme;
+                    DeferredUpdateVisuals();
+                end
+                if isSelected then
+                    imgui.SetItemDefaultFocus();
+                end
+            end
+            imgui.EndCombo();
+        end
+        imgui.ShowHelp('Select your controller type. XInput works for most controllers. DirectInput devices (PS, Switch) use different button mappings.');
+
+        imgui.Spacing();
+        imgui.Separator();
+        imgui.Spacing();
+
+        components.DrawPartySliderInt(crossbarSettings, 'Trigger Threshold##crossbar', 'triggerThreshold', 10, 200, '%d', nil, 30);
+        imgui.ShowHelp('Analog trigger threshold (0-255). Lower = more sensitive. Only applies to XInput controllers.');
+
+        -- Default to true if not set (for existing users upgrading)
+        if crossbarSettings.blockGameMacros == nil then
+            crossbarSettings.blockGameMacros = true;
+        end
+        components.DrawPartyCheckbox(crossbarSettings, 'Block Game Macros##crossbar', 'blockGameMacros', DeferredUpdateVisuals);
+        imgui.ShowHelp('Block native FFXI macros from firing when crossbar buttons are pressed. This prevents double-execution when using controller.');
+
+        imgui.Spacing();
+        imgui.TextColored({0.8, 0.8, 0.6, 1.0}, 'Expanded Crossbar');
+
+        components.DrawPartyCheckbox(crossbarSettings, 'Enable L2+R2 / R2+L2##crossbar', 'enableExpandedCrossbar');
+        imgui.ShowHelp('Enable L2+R2 and R2+L2 combo modes. Hold one trigger, then press the other to access expanded bars.');
+
+        components.DrawPartyCheckbox(crossbarSettings, 'Enable Double-Tap##crossbar', 'enableDoubleTap', DeferredUpdateVisuals);
+        imgui.ShowHelp('Enable L2x2 and R2x2 double-tap modes. Tap a trigger twice quickly (hold on second tap) to access double-tap bars.');
+
+        if crossbarSettings.enableDoubleTap then
+            components.DrawPartySlider(crossbarSettings, 'Double-Tap Window##crossbar', 'doubleTapWindow', 0.1, 0.6, '%.2f sec', DeferredUpdateVisuals, 0.3);
+            imgui.ShowHelp('Time window to register a double-tap (in seconds). Tap twice within this time to trigger double-tap mode.');
+        end
+    end
+
     -- Controller Icons section
     if components.CollapsingSection('Controller Icons##crossbar', false) then
         local controllerThemes = { 'PlayStation', 'Xbox', 'Nintendo' };
@@ -1090,33 +1146,6 @@ local function DrawCrossbarSettings()
 
         components.DrawPartySliderInt(crossbarSettings, 'Quantity Text Size##crossbar', 'quantityFontSize', 6, 24, '%d', nil, 10);
         imgui.ShowHelp('Text size for item quantity display.');
-    end
-
-    -- Controller Input section
-    if components.CollapsingSection('Controller Input##crossbar', false) then
-        components.DrawPartySliderInt(crossbarSettings, 'Trigger Threshold##crossbar', 'triggerThreshold', 10, 200, '%d', nil, 30);
-        imgui.ShowHelp('Analog trigger threshold (0-255). Lower = more sensitive.');
-
-        -- Default to true if not set (for existing users upgrading)
-        if crossbarSettings.blockGameMacros == nil then
-            crossbarSettings.blockGameMacros = true;
-        end
-        components.DrawPartyCheckbox(crossbarSettings, 'Block Game Macros##crossbar', 'blockGameMacros', DeferredUpdateVisuals);
-        imgui.ShowHelp('Block native FFXI macros from firing when crossbar buttons are pressed. This prevents double-execution when using controller.');
-
-        imgui.Spacing();
-        imgui.TextColored({0.8, 0.8, 0.6, 1.0}, 'Expanded Crossbar');
-
-        components.DrawPartyCheckbox(crossbarSettings, 'Enable L2+R2 / R2+L2##crossbar', 'enableExpandedCrossbar');
-        imgui.ShowHelp('Enable L2+R2 and R2+L2 combo modes. Hold one trigger, then press the other to access expanded bars.');
-
-        components.DrawPartyCheckbox(crossbarSettings, 'Enable Double-Tap##crossbar', 'enableDoubleTap', DeferredUpdateVisuals);
-        imgui.ShowHelp('Enable L2x2 and R2x2 double-tap modes. Tap a trigger twice quickly (hold on second tap) to access double-tap bars.');
-
-        if crossbarSettings.enableDoubleTap then
-            components.DrawPartySlider(crossbarSettings, 'Double-Tap Window##crossbar', 'doubleTapWindow', 0.1, 0.6, '%.2f sec', DeferredUpdateVisuals, 0.3);
-            imgui.ShowHelp('Time window to register a double-tap (in seconds). Tap twice within this time to trigger double-tap mode.');
-        end
     end
 
     -- Visual Feedback section
@@ -1224,6 +1253,8 @@ function M.DrawSettings(state)
 
     -- Global settings with action buttons on same row
     components.DrawCheckbox('Enabled', 'hotbarEnabled');
+    components.DrawCheckbox('Hide When Menu Open', 'hotbarHideOnMenuFocus');
+    imgui.ShowHelp('Hide hotbars when a game menu is open (equipment, map, etc.).');
     imgui.SameLine();
 
     -- Gold-styled action buttons
