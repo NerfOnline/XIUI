@@ -8,6 +8,7 @@ local d3d8 = require('d3d8');
 local data = require('modules.hotbar.data');
 local horizonSpells = require('modules.hotbar.database.horizonspells');
 local textures = require('modules.hotbar.textures');
+local macrosLib = require('libs.ffxi.macros');
 
 -- Debug logging (controlled via /xiui debug hotbar)
 local DEBUG_ENABLED = false;
@@ -24,13 +25,53 @@ local function SetDebugEnabled(enabled)
     DEBUG_ENABLED = enabled;
 end
 
--- Load macros library for stopping native macros (bundled copy from Ashita)
-local macrosLib = nil;
-local ok, err = pcall(function()
-    macrosLib = require('libs.ffxi.macros');
-end);
-if not ok then
-    print('[XIUI] Warning: Failed to load macros library: ' .. tostring(err));
+-- ============================================
+-- Native Macro Blocking
+-- ============================================
+-- When "Disable XI Macros" is enabled, we block native macro keys (Ctrl/Alt + number keys)
+-- by setting event.blocked = true. This prevents the game from seeing the input.
+-- Per atom0s: "Long as you are handling the keys/controller buttons to stop it from
+-- popping up it shouldn't need to be patched."
+
+-- Native FFXI macro number keys (0-9 are VK codes 48-57)
+local NATIVE_MACRO_NUMBER_KEYS = {
+    [48] = true, [49] = true, [50] = true, [51] = true, [52] = true,  -- 0-4
+    [53] = true, [54] = true, [55] = true, [56] = true, [57] = true,  -- 5-9
+};
+
+-- Arrow keys for macro set switching
+local VK_UP = 0x26;
+local VK_DOWN = 0x28;
+
+--- Check if a key press would trigger native FFXI macros
+--- Native macros are: Ctrl+0-9, Alt+0-9, Ctrl/Alt+Up/Down
+--- @param keyCode number Virtual key code
+--- @param ctrl boolean Ctrl modifier held
+--- @param alt boolean Alt modifier held
+--- @return boolean True if this key combo triggers native macros
+local function IsNativeMacroKey(keyCode, ctrl, alt)
+    -- Must have Ctrl OR Alt (not both, not neither)
+    local hasModifier = (ctrl and not alt) or (alt and not ctrl);
+    if not hasModifier then
+        return false;
+    end
+
+    -- Number keys 0-9 trigger macros
+    if NATIVE_MACRO_NUMBER_KEYS[keyCode] then
+        return true;
+    end
+
+    -- Up/Down arrows change macro sets
+    if keyCode == VK_UP or keyCode == VK_DOWN then
+        return true;
+    end
+
+    return false;
+end
+
+-- Macro block logging - ALWAYS prints (critical for verifying blocking works)
+local function MacroBlockLog(msg)
+    print('[Macro Block] ' .. msg);
 end
 
 local M = {};
@@ -833,13 +874,21 @@ end
 
 -- Find hotbar and slot that matches the pressed key + modifiers
 local function FindMatchingKeybind(keyCode, ctrl, alt, shift)
+    -- Defensive: ensure gConfig is a table
+    if not gConfig or type(gConfig) ~= 'table' then
+        return nil, nil;
+    end
+
     -- Search through all bars for a matching keybind
     for barIndex = 1, 6 do
         local configKey = 'hotbarBar' .. barIndex;
-        local barSettings = gConfig and gConfig[configKey];
-        if barSettings and barSettings.enabled and barSettings.keyBindings then
+        local barSettings = gConfig[configKey];
+        -- Validate barSettings and keyBindings are tables before iterating
+        if barSettings and type(barSettings) == 'table'
+           and barSettings.enabled
+           and barSettings.keyBindings and type(barSettings.keyBindings) == 'table' then
             for slotIndex, binding in pairs(barSettings.keyBindings) do
-                if binding and binding.key == keyCode then
+                if binding and type(binding) == 'table' and binding.key == keyCode then
                     -- Check modifiers match
                     local ctrlMatch = (binding.ctrl or false) == (ctrl or false);
                     local altMatch = (binding.alt or false) == (alt or false);
@@ -857,22 +906,19 @@ local function FindMatchingKeybind(keyCode, ctrl, alt, shift)
 end
 
 function M.HandleKey(event)
-   --https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
-
+   -- https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
    local isRelease = parseKeyEventFlags(event)
    local keyCode = event.wparam;
 
    -- Get current modifier states (queries actual OS key state)
    local controlPressed, altPressed, shiftPressed = GetModifierStates();
 
-   -- Debug: log key event details
    DebugLog(string.format('HandleKey: keyCode=%d (0x%02X) %s | Ctrl=%s Alt=%s Shift=%s',
        keyCode, keyCode,
        isRelease and 'RELEASE' or 'PRESS',
        tostring(controlPressed), tostring(altPressed), tostring(shiftPressed)));
 
    -- Skip main keyboard minus (VK 189) WITHOUT modifiers - conflicts with native FFXI menus
-   -- Ctrl+- and Alt+- are allowed for hotbar binds
    if keyCode == 189 and not controlPressed and not altPressed and not shiftPressed then
        return;
    end
@@ -886,6 +932,27 @@ function M.HandleKey(event)
            end
        end
        return;
+   end
+
+   -- Check if native macro blocking is enabled
+   local blockNativeMacros = gConfig and gConfig.hotbarGlobal and gConfig.hotbarGlobal.disableMacroBars;
+
+   -- Check if this is a native macro key combo (Ctrl/Alt + number or arrow)
+   local isNativeMacroKeyPress = IsNativeMacroKey(keyCode, controlPressed, altPressed);
+
+   -- Stop macro execution when native macro key is pressed
+   -- Note: Macro bar UI hiding is handled via memory patch in macrosLib.hide_macro_bar()
+   if blockNativeMacros and isNativeMacroKeyPress and not isRelease then
+       MacroBlockLog(string.format('Native macro key %d (0x%02X) Ctrl=%s Alt=%s - stopping macro',
+           keyCode, keyCode, tostring(controlPressed), tostring(altPressed)));
+
+       -- Stop macro execution via direct memory write (verbose for first call)
+       macrosLib.stop(false);
+
+       -- Also schedule stops for next few frames to catch delayed execution (silent)
+       ashita.tasks.once(0, function() macrosLib.stop(true); end);
+       ashita.tasks.once(0.01, function() macrosLib.stop(true); end);
+       ashita.tasks.once(0.02, function() macrosLib.stop(true); end);
    end
 
    -- Find matching keybind from custom key assignments
@@ -903,23 +970,15 @@ function M.HandleKey(event)
        else
            -- Check if this is a key repeat (same hotbar/slot already pressed)
            if currentPressedHotbar == hotbar and currentPressedSlot == slot then
-               -- Key repeat - keep pressed state but don't re-execute action
-               return;
+               return; -- Key repeat - don't re-execute
            end
 
            DebugLog('Key pressed: hotbar=' .. tostring(hotbar) .. ', slot=' .. tostring(slot));
 
-           -- Set pressed state and try to execute the keybind
+           -- Set pressed state and execute the keybind
            currentPressedHotbar = hotbar;
            currentPressedSlot = slot;
-           -- Try to execute the hotbar action (may return false if slot is empty)
            M.HandleKeybind(hotbar, slot);
-
-           -- Block native FFXI macros if "Disable XI Macros" is enabled
-           -- This applies even if the hotbar slot is empty
-           if M.StopNativeMacros() then
-               event.blocked = true;
-           end
        end
    elseif isRelease then
        -- Clear pressed state on any release when no match
@@ -954,41 +1013,6 @@ end
 -- Clear the custom icon cache (call when icons may have changed)
 function M.ClearCustomIconCache()
     customIconCache = {};
-end
-
--- Rate limiting for macros.stop() to prevent FFI spam
-local lastMacroStopTime = 0;
-local MACRO_STOP_COOLDOWN = 0.1; -- 100ms cooldown between calls
-
---- Stop native FFXI macros if "Disable XI Macros" is enabled
---- Called by keyboard and controller input handlers
---- @return boolean stopped Whether macros.stop() was called
-function M.StopNativeMacros()
-    local disableMacros = gConfig and gConfig.hotbarGlobal and gConfig.hotbarGlobal.disableMacroBars;
-    if not disableMacros then
-        return false;
-    end
-
-    -- Rate limit FFI calls to prevent crashes
-    local currentTime = os.clock();
-    if currentTime - lastMacroStopTime < MACRO_STOP_COOLDOWN then
-        return true; -- Still return true to block event, but skip FFI call
-    end
-
-    if macrosLib and macrosLib.stop then
-        -- Wrap FFI call in pcall for safety
-        local ok, err = pcall(function()
-            macrosLib.stop();
-        end);
-        if ok then
-            lastMacroStopTime = currentTime;
-            DebugLog('macros.stop() called');
-            return true;
-        else
-            DebugLog('macros.stop() failed: ' .. tostring(err));
-        end
-    end
-    return false;
 end
 
 --- Set debug mode (called via /xiui debug hotbar)

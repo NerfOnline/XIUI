@@ -48,9 +48,9 @@ local crossbar = require('modules.hotbar.crossbar');
 local controller = require('modules.hotbar.controller');
 local textures = require('modules.hotbar.textures');
 local hotbarConfig = require('config.hotbar');
-local macrobarpatch = require('modules.hotbar.macrobarpatch');
 local slotrenderer = require('modules.hotbar.slotrenderer');
 local petpalette = require('modules.hotbar.petpalette');
+local macrosLib = require('libs.ffxi.macros');
 
 local M = {};
 
@@ -276,15 +276,17 @@ function M.Initialize(settings)
     end);
 
     -- Initialize crossbar if mode includes crossbar
-    local crossbarMode = gConfig and gConfig.hotbarCrossbar and gConfig.hotbarCrossbar.mode or 'hotbar';
+    -- Defensive: validate gConfig.hotbarCrossbar is a table before accessing
+    local crossbarConfig = gConfig and type(gConfig.hotbarCrossbar) == 'table' and gConfig.hotbarCrossbar or nil;
+    local crossbarMode = crossbarConfig and crossbarConfig.mode or 'hotbar';
     local crossbarNeeded = crossbarMode == 'crossbar' or crossbarMode == 'both';
-    if crossbarNeeded then
-        crossbar.Initialize(gConfig.hotbarCrossbar, gAdjustedSettings.crossbarSettings);
+    if crossbarNeeded and crossbarConfig then
+        crossbar.Initialize(crossbarConfig, gAdjustedSettings.crossbarSettings);
         controller.Initialize({
-            expandedCrossbarEnabled = gConfig.hotbarCrossbar.enableExpandedCrossbar ~= false,
-            doubleTapEnabled = gConfig.hotbarCrossbar.enableDoubleTap or false,
-            doubleTapWindow = gConfig.hotbarCrossbar.doubleTapWindow or 0.3,
-            controllerScheme = gConfig.hotbarCrossbar.controllerScheme or 'xbox',
+            expandedCrossbarEnabled = crossbarConfig.enableExpandedCrossbar ~= false,
+            doubleTapEnabled = crossbarConfig.enableDoubleTap or false,
+            doubleTapWindow = crossbarConfig.doubleTapWindow or 0.3,
+            controllerScheme = crossbarConfig.controllerScheme or 'xbox',
         });
         controller.SetSlotActivateCallback(function(comboMode, slotIndex)
             crossbar.ActivateSlot(comboMode, slotIndex);
@@ -292,12 +294,14 @@ function M.Initialize(settings)
         -- Set blocking enabled state from global disableMacroBars setting
         local disableMacroBars = gConfig.hotbarGlobal and gConfig.hotbarGlobal.disableMacroBars or false;
         controller.SetBlockingEnabled(disableMacroBars);
+        -- Apply macro bar UI hiding via memory patch
+        if disableMacroBars then
+            print('[Macro Block] Enabled - blocking keyboard (Ctrl/Alt) and controller (L2/R2) macros');
+            macrosLib.hide_macro_bar();
+        else
+            macrosLib.show_macro_bar();
+        end
         crossbarInitialized = true;
-    end
-
-    -- Apply macro bar patch if setting is enabled
-    if gConfig.hotbarGlobal and gConfig.hotbarGlobal.disableMacroBars then
-        macrobarpatch.Apply();
     end
 
     -- Check pet state on initialization (detects existing pet after reload)
@@ -393,6 +397,13 @@ function M.UpdateVisuals(settings)
         -- Set blocking enabled state from global disableMacroBars setting
         local disableMacroBars = gConfig.hotbarGlobal and gConfig.hotbarGlobal.disableMacroBars or false;
         controller.SetBlockingEnabled(disableMacroBars);
+        -- Apply macro bar UI hiding via memory patch
+        if disableMacroBars then
+            print('[Macro Block] Enabled - blocking keyboard (Ctrl/Alt) and controller (L2/R2) macros');
+            macrosLib.hide_macro_bar();
+        else
+            macrosLib.show_macro_bar();
+        end
         crossbarInitialized = true;
     elseif not crossbarNeeded and crossbarInitialized then
         -- Cleanup crossbar when no longer needed
@@ -410,11 +421,19 @@ function M.UpdateVisuals(settings)
         -- Update blocking state from global disableMacroBars setting
         local disableMacroBars = gConfig.hotbarGlobal and gConfig.hotbarGlobal.disableMacroBars or false;
         controller.SetBlockingEnabled(disableMacroBars);
+        -- Apply macro bar UI hiding via memory patch
+        if disableMacroBars then
+            if not macrosLib.is_macro_bar_hidden() then
+                print('[Macro Block] Enabled - blocking keyboard (Ctrl/Alt) and controller (L2/R2) macros');
+            end
+            macrosLib.hide_macro_bar();
+        else
+            if macrosLib.is_macro_bar_hidden() then
+                print('[Macro Block] Disabled - native macros restored');
+            end
+            macrosLib.show_macro_bar();
+        end
     end
-
-    -- Update macro bar patch state based on setting
-    local disableMacroBars = gConfig.hotbarGlobal and gConfig.hotbarGlobal.disableMacroBars or false;
-    macrobarpatch.Update(disableMacroBars);
 
     -- Update state tracking for hotbar enable/disable
     wasHotbarEnabled = (gConfig and gConfig.hotbarEnabled ~= false);
@@ -616,8 +635,8 @@ function M.Cleanup()
     -- Reset pet palette state
     petpalette.Reset();
 
-    -- Remove macro bar patches to restore native behavior
-    macrobarpatch.Remove();
+    -- Restore native macro bar UI (undo memory patch)
+    macrosLib.show_macro_bar();
 
     M.initialized = false;
 end

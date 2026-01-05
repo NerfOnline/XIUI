@@ -19,6 +19,8 @@ function M.DrawSettings()
     if components.CollapsingSection('Display Options##playerBar') then
         components.DrawCheckbox('Show Bookends', 'showPlayerBarBookends');
         components.DrawCheckbox('Hide During Events', 'playerBarHideDuringEvents');
+        components.DrawCheckbox('Hide When In Party', 'playerBarHideWhenInParty');
+        imgui.ShowHelp('Hide the player bar when in a party or alliance (your info is already shown in the party list).');
         components.DrawCheckbox('Always Show MP Bar', 'alwaysShowMpBar');
         imgui.ShowHelp('Always display the MP Bar even if your current jobs cannot cast spells.');
         components.DrawCheckbox('TP Bar Flash Effects', 'playerBarTpFlashEnabled');

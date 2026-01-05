@@ -34,7 +34,9 @@ ffi.cdef[[
     typedef int32_t     (__thiscall*    FsMacroContainer_setBook_f)(uint32_t, uint32_t);
     typedef int32_t     (__thiscall*    FsMacroContainer_setPage_f)(uint32_t, uint32_t);
     typedef void        (__cdecl*       FsMacroContainer_setMacro_f)(uint32_t, const char*, const char*);
-    typedef void        (__thiscall*    FsMacroContainer_stopMacro_f)(uint32_t);
+    // stopMacro only takes 'this' pointer in ecx, no stack parameters (uses plain retn)
+    // Use __fastcall to explicitly put obj in ecx without stack manipulation
+    typedef void        (__fastcall*    FsMacroContainer_stopMacro_f)(uint32_t);
 ]];
 
 -- Ashita version compatibility wrapper for memory.find
@@ -103,7 +105,7 @@ end
 --]]
 macrolib.can_use = function ()
     local obj = macrolib.get_fscontroller();
-    if (obj == nil) then return false; end
+    if (obj == nil or obj == 0) then return false; end
 
     return ffi.cast('FsMacroController_canUseMacro_f', macrolib.ptrs.can_use)(obj);
 end
@@ -116,7 +118,7 @@ end
 --]]
 macrolib.clear = function (idx)
     local obj = macrolib.get_fsmacro();
-    if (obj == nil) then return false; end
+    if (obj == nil or obj == 0) then return false; end
 
     if (idx >= 20) then
         return false;
@@ -133,7 +135,7 @@ end
 --]]
 macrolib.get_name = function (idx)
     local obj = macrolib.get_fsmacro();
-    if (obj == nil) then return ''; end
+    if (obj == nil or obj == 0) then return ''; end
 
     if (idx >= 20) then
         return '';
@@ -160,7 +162,7 @@ end
 --]]
 macrolib.get_line = function (idx, line)
     local obj = macrolib.get_fsmacro();
-    if (obj == nil) then return ''; end
+    if (obj == nil or obj == 0) then return ''; end
 
     if (idx >= 20 or line >= 6) then
         return '';
@@ -185,7 +187,7 @@ end
 --]]
 macrolib.is_running = function ()
     local obj = macrolib.get_fsmacro();
-    if (obj == nil) then return false; end
+    if (obj == nil or obj == 0) then return false; end
 
     return ashita.memory.read_uint32(obj + ashita.memory.read_uint32(macrolib.ptrs.stop + 2)) ~= 0xFFFFFFFF;
 end
@@ -198,7 +200,7 @@ end
 --]]
 macrolib.run = function (mod, idx)
     local obj = macrolib.get_fscontroller();
-    if (obj == nil) then return; end
+    if (obj == nil or obj == 0) then return; end
 
     if ((mod ~= 1 and mod ~= 2) or idx >= 20) then
         return;
@@ -215,7 +217,7 @@ end
 --]]
 macrolib.set_book = function (idx)
     local obj = macrolib.get_fsmacro();
-    if (obj == nil) then return 0; end
+    if (obj == nil or obj == 0) then return 0; end
 
     if (idx >= 40) then
         return 0;
@@ -232,7 +234,7 @@ end
 --]]
 macrolib.set_page = function (idx)
     local obj = macrolib.get_fsmacro();
-    if (obj == nil) then return 0; end
+    if (obj == nil or obj == 0) then return 0; end
 
     if (idx >= 10) then
         return 0;
@@ -250,7 +252,7 @@ end
 --]]
 macrolib.set = function (idx, title, lines)
     local obj = macrolib.get_fsmacro();
-    if (obj == nil) then return; end
+    if (obj == nil or obj == 0) then return; end
 
     if (idx >= 20) then
         return;
@@ -284,13 +286,134 @@ macrolib.set = function (idx, title, lines)
 end
 
 --[[
-* Stops the current running macro.
+* Stops the current running macro via direct memory write.
+* This is safer than the FFI call which had calling convention issues.
+* The stop function writes 0xFFFFFFFF to a specific offset to mark macro as not running.
+* @param {boolean} silent - If true, suppress debug logging
 --]]
-macrolib.stop = function ()
+macrolib.stop = function (silent)
     local obj = macrolib.get_fsmacro();
-    if (obj == nil) then return; end
+    if (obj == nil or obj == 0) then
+        if not silent then
+            print('[Macro Block] stop: fsmacro object not available');
+        end
+        return;
+    end
 
-    ffi.cast('FsMacroContainer_stopMacro_f', macrolib.ptrs.stop)(obj);
+    -- Get the offset from the stop function's pattern (C7 81 [offset] FFFFFFFF C3)
+    -- The offset is at ptrs.stop + 2
+    local offset = ashita.memory.read_uint32(macrolib.ptrs.stop + 2);
+    if offset == nil or offset == 0 then
+        if not silent then
+            print('[Macro Block] stop: could not read offset');
+        end
+        return;
+    end
+
+    -- Check if a macro is actually running before stopping
+    local currentValue = ashita.memory.read_uint32(obj + offset);
+    local wasRunning = currentValue ~= 0xFFFFFFFF;
+
+    -- Write 0xFFFFFFFF to mark macro as not running (same as what the native function does)
+    ashita.memory.write_uint32(obj + offset, 0xFFFFFFFF);
+
+    if not silent and wasRunning then
+        print(string.format('[Macro Block] stop: halted macro execution (was 0x%08X)', currentValue));
+    end
+end
+
+-- ============================================
+-- Macro Bar UI Hiding (via memory patching)
+-- Based on nomacrobars addon by jquick
+-- Patches the timer check that triggers macro bar display
+-- ============================================
+
+local macroBarPatches = {
+    -- Ctrl timer pattern
+    ctrl = {
+        pattern = '2B46103BC3????????????68????????B9',
+        offset = 0x03,
+        patch = { 0xF9, 0x90 },
+        address = nil,
+        backup = nil,
+    },
+    -- Alt timer pattern
+    alt = {
+        pattern = '2B46103BC3????68????????B9',
+        offset = 0x03,
+        patch = { 0xF9, 0x90 },
+        address = nil,
+        backup = nil,
+    },
+};
+
+local macroBarHidden = false;
+
+--[[
+* Hides the native macro bar UI by patching memory.
+* This prevents the macro bar from appearing when Ctrl/Alt is held.
+--]]
+macrolib.hide_macro_bar = function ()
+    if macroBarHidden then
+        return true;  -- Already hidden
+    end
+
+    local success = true;
+
+    for name, patchInfo in pairs(macroBarPatches) do
+        -- Find the pattern
+        local addr = memory_find_compat(patchInfo.pattern, patchInfo.offset, 0);
+        if addr == nil or addr == 0 then
+            print(string.format('[Macro Block] hide_macro_bar: could not find %s pattern', name));
+            success = false;
+        else
+            patchInfo.address = addr;
+            -- Backup original bytes
+            patchInfo.backup = {
+                ashita.memory.read_uint8(addr),
+                ashita.memory.read_uint8(addr + 1),
+            };
+            -- Apply patch
+            ashita.memory.write_uint8(addr, patchInfo.patch[1]);
+            ashita.memory.write_uint8(addr + 1, patchInfo.patch[2]);
+            print(string.format('[Macro Block] hide_macro_bar: patched %s at 0x%08X', name, addr));
+        end
+    end
+
+    if success then
+        macroBarHidden = true;
+    end
+    return success;
+end
+
+--[[
+* Shows the native macro bar UI by restoring original memory.
+--]]
+macrolib.show_macro_bar = function ()
+    if not macroBarHidden then
+        return true;  -- Already showing
+    end
+
+    for name, patchInfo in pairs(macroBarPatches) do
+        if patchInfo.address and patchInfo.backup then
+            -- Restore original bytes
+            ashita.memory.write_uint8(patchInfo.address, patchInfo.backup[1]);
+            ashita.memory.write_uint8(patchInfo.address + 1, patchInfo.backup[2]);
+            print(string.format('[Macro Block] show_macro_bar: restored %s at 0x%08X', name, patchInfo.address));
+            patchInfo.address = nil;
+            patchInfo.backup = nil;
+        end
+    end
+
+    macroBarHidden = false;
+    return true;
+end
+
+--[[
+* Returns whether macro bar UI is currently hidden.
+--]]
+macrolib.is_macro_bar_hidden = function ()
+    return macroBarHidden;
 end
 
 return macrolib;

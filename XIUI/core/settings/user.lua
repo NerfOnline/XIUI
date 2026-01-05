@@ -190,6 +190,7 @@ function M.createUserSettingsDefaults()
         alwaysShowMpBar = true,
         playerBarTpFlashEnabled = true,
         playerBarHideDuringEvents = true,
+        playerBarHideWhenInParty = false,  -- Hide player bar when in party/alliance (info shown in party list)
         playerBarHpDisplayMode = 'number', -- 'number', 'percent', 'both', 'both_percent_first', 'current_max'
         playerBarMpDisplayMode = 'number', -- 'number', 'percent', 'both', 'both_percent_first', 'current_max'
         showMpCostPreview = true, -- Show spell MP cost preview on MP bars when hovering spells

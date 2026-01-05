@@ -73,6 +73,22 @@ playerbar.DrawWindow = function(settings)
         return;
 	end
 
+	-- Hide player bar when in party/alliance if setting is enabled
+	if gConfig.playerBarHideWhenInParty then
+		-- Check if any other party/alliance members are active (slots 1-17)
+		local inParty = false;
+		for i = 1, 17 do
+			if party:GetMemberIsActive(i) == 1 then
+				inParty = true;
+				break;
+			end
+		end
+		if inParty then
+			SetFontsVisible(allFonts, false);
+			return;
+		end
+	end
+
 	local SelfHP = party:GetMemberHP(0);
 	local SelfHPMax = player:GetHPMax();
 	local SelfHPPercent = math.clamp(party:GetMemberHPPercent(0), 0, 100);

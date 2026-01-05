@@ -993,8 +993,8 @@ local function DrawCrossbarSettings()
     imgui.Separator();
     imgui.Spacing();
 
-    -- Layout section
-    if components.CollapsingSection('Layout##crossbar', true) then
+    -- Slot Settings section
+    if components.CollapsingSection('Slot Settings##crossbar', true) then
         components.DrawPartySliderInt(crossbarSettings, 'Slot Size (px)##crossbar', 'slotSize', 32, 64, '%d', nil, 48);
         imgui.ShowHelp('Size of each slot in pixels.');
 
@@ -1036,6 +1036,14 @@ local function DrawCrossbarSettings()
             components.DrawInlineOffsets(crossbarSettings, 'crossbarcombo', 'comboTextOffsetX', 'comboTextOffsetY', 35);
         end
         imgui.ShowHelp('Show current combo mode text in center (L2+R2, R2+L2, L2x2, R2x2). X/Y offsets adjust position.');
+
+        -- Show Action Labels with X/Y offsets
+        components.DrawPartyCheckbox(crossbarSettings, 'Show Action Labels##crossbar', 'showActionLabels');
+        if crossbarSettings.showActionLabels then
+            imgui.SameLine();
+            components.DrawInlineOffsets(crossbarSettings, 'crossbarlbl', 'actionLabelOffsetX', 'actionLabelOffsetY', 35);
+        end
+        imgui.ShowHelp('Show spell/ability names below slots. X/Y offsets adjust position.');
     end
 
     -- Background section
@@ -1240,6 +1248,14 @@ local function DrawCrossbarColorSettings()
             SaveSettingsOnly();
         end
         imgui.ShowHelp('Color for item quantity display. Note: Shows red when quantity is 0.');
+
+        local labelColor = crossbarSettings.labelFontColor or 0xFFFFFFFF;
+        local labelColorTable = ARGBToImGui(labelColor);
+        if imgui.ColorEdit4('Label Color##crossbar', labelColorTable, colorFlags) then
+            crossbarSettings.labelFontColor = ImGuiToARGB(labelColorTable);
+            SaveSettingsOnly();
+        end
+        imgui.ShowHelp('Color for action labels below slots.');
     end
 end
 

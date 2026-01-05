@@ -8,6 +8,8 @@
 local ffi = require('ffi');
 local devices = require('modules.hotbar.devices');
 local buttondetect = require('modules.hotbar.buttondetect');
+local actions = require('modules.hotbar.actions');
+local macrosLib = require('libs.ffxi.macros');
 
 -- Define XINPUT structures for FFI access (only used for XInput devices)
 ffi.cdef[[
@@ -351,6 +353,7 @@ local function UpdateComboState(leftHeld, rightHeld)
                 state.activeCombo = COMBO_MODES.L2;
                 state.comboFirstTrigger = 'L2';
             end
+            -- Note: Native macro blocking is handled by zeroing trigger values in state_modified
         elseif state.activeCombo ~= COMBO_MODES.L2 and state.activeCombo ~= COMBO_MODES.L2_DOUBLE then
             -- Returning to L2 from expanded combo
             DebugLog('Returning to L2 (R2 released from expanded)');
@@ -379,6 +382,7 @@ local function UpdateComboState(leftHeld, rightHeld)
                 state.activeCombo = COMBO_MODES.R2;
                 state.comboFirstTrigger = 'R2';
             end
+            -- Note: Native macro blocking is handled by zeroing trigger values in state_modified
         elseif state.activeCombo ~= COMBO_MODES.R2 and state.activeCombo ~= COMBO_MODES.R2_DOUBLE then
             -- Returning to R2 from expanded combo
             DebugLog('Returning to R2 (L2 released from expanded)');
@@ -525,6 +529,10 @@ function Controller.HandleXInputState(e)
     if shouldBlock then
         DebugLog(string.format('Blocking triggers: blockingEnabled=%s, state_modified=%s, L2=%d, R2=%d',
             tostring(blockingEnabled), tostring(e.state_modified ~= nil), leftTrigger, rightTrigger));
+
+        -- Stop any native macro execution
+        macrosLib.stop(true);  -- silent mode
+
         if e.state_modified then
             -- Wrap FFI modification in pcall for safety
             local modOk = pcall(function()
@@ -651,6 +659,7 @@ function Controller.HandleDInputButton(e)
 
         -- Block trigger buttons from game when crossbar is active
         if blockingEnabled and state.activeCombo ~= COMBO_MODES.NONE then
+            macrosLib.stop(true);  -- Stop any native macro execution (silent)
             return true;
         end
         return false;

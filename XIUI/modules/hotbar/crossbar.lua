@@ -681,6 +681,7 @@ local function DrawSlot(comboMode, slotIndex, x, y, slotSize, settings, isActive
         timerFont = state.timerFonts[comboMode] and state.timerFonts[comboMode][slotIndex],
         mpCostFont = state.mpCostFonts[comboMode] and state.mpCostFonts[comboMode][slotIndex],
         quantityFont = state.quantityFonts[comboMode] and state.quantityFonts[comboMode][slotIndex],
+        labelFont = state.labelFonts[comboMode] and state.labelFonts[comboMode][slotIndex],
     };
 
     -- Render slot using shared renderer (handles ALL rendering and interactions)
@@ -711,6 +712,14 @@ local function DrawSlot(comboMode, slotIndex, x, y, slotSize, settings, isActive
         quantityFontColor = settings.quantityFontColor or 0xFFFFFFFF,
         quantityOffsetX = settings.quantityOffsetX or 0,
         quantityOffsetY = settings.quantityOffsetY or 0,
+        showLabel = settings.showActionLabels or false,
+        labelText = slotData and (slotData.displayName or slotData.action or '') or '',
+        labelOffsetX = settings.actionLabelOffsetX or 0,
+        labelOffsetY = (settings.actionLabelOffsetY or 0) + 2,
+        labelFontSize = settings.labelFontSize or 10,
+        labelFontColor = settings.labelFontColor or 0xFFFFFFFF,
+        labelCooldownColor = settings.labelCooldownColor or 0xFF888888,
+        labelNoMpColor = settings.labelNoMpColor or 0xFFFF4444,
 
         -- Interaction Config (use original Y for interaction, not animated Y)
         buttonId = string.format('##crossbar_%s_%d', comboMode, slotIndex),
@@ -1429,9 +1438,8 @@ end
 function M.ActivateSlot(comboMode, slotIndex)
     if not state.initialized then return; end
 
-    -- Stop native FFXI macros if "Disable XI Macros" is enabled
-    -- This must be called early, before checking if slot has action
-    actions.StopNativeMacros();
+    -- Note: Native macro blocking for controller is handled by zeroing trigger values
+    -- in state_modified in controller.lua, so no StopNativeMacros call needed here
 
     -- Get player job for slot lookup
     local player = GetPlayerSafe();
