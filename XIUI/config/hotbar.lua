@@ -31,6 +31,79 @@ local jobSpecificConfirmState = {
     isCrossbar = false,
 };
 
+-- Helper function to draw the job-specific confirmation popup
+local function DrawJobSpecificConfirmPopup()
+    if jobSpecificConfirmState.showPopup then
+        imgui.OpenPopup('Confirm Action Storage Change##jobSpecificConfirm');
+    end
+
+    if imgui.BeginPopupModal('Confirm Action Storage Change##jobSpecificConfirm', nil, ImGuiWindowFlags_AlwaysAutoResize) then
+        local targetName;
+        if jobSpecificConfirmState.isCrossbar then
+            targetName = jobSpecificConfirmState.targetBarIndex and ('Crossbar ' .. jobSpecificConfirmState.targetBarIndex) or 'Crossbar';
+        else
+            targetName = 'Bar ' .. (jobSpecificConfirmState.targetBarIndex or 1);
+        end
+        local newModeName = jobSpecificConfirmState.newValue and 'Job-Specific' or 'Global';
+
+        imgui.TextColored({1.0, 0.8, 0.3, 1.0}, 'Warning: This will clear all slot actions!');
+        imgui.Spacing();
+        imgui.TextWrapped('Switching ' .. targetName .. ' to ' .. newModeName .. ' mode will clear all existing slot actions for this bar.');
+        imgui.Spacing();
+        imgui.TextWrapped('This cannot be undone. Are you sure you want to continue?');
+        imgui.Spacing();
+        imgui.Separator();
+        imgui.Spacing();
+
+        -- Center the buttons
+        local buttonWidth = 100;
+        local spacing = 20;
+        local totalWidth = buttonWidth * 2 + spacing;
+        local windowWidth = imgui.GetWindowWidth();
+        imgui.SetCursorPosX((windowWidth - totalWidth) / 2);
+
+        imgui.PushStyleColor(ImGuiCol_Button, {0.6, 0.2, 0.2, 1.0});
+        imgui.PushStyleColor(ImGuiCol_ButtonHovered, {0.8, 0.3, 0.3, 1.0});
+        if imgui.Button('Confirm', {buttonWidth, 28}) then
+            -- Apply the change
+            if jobSpecificConfirmState.isCrossbar then
+                local barKey = jobSpecificConfirmState.targetBarIndex;
+                if barKey then
+                    -- Per-crossbar job-specific toggle
+                    local crossbarSettings = gConfig.hotbarCrossbar;
+                    if not crossbarSettings.bars then
+                        crossbarSettings.bars = {};
+                    end
+                    if not crossbarSettings.bars[barKey] then
+                        crossbarSettings.bars[barKey] = { enabled = true, jobSpecific = true, petAware = false };
+                    end
+                    crossbarSettings.bars[barKey].jobSpecific = jobSpecificConfirmState.newValue;
+                else
+                    -- Legacy: global crossbar toggle
+                    gConfig.hotbarCrossbar.jobSpecific = jobSpecificConfirmState.newValue;
+                end
+                data.ClearAllCrossbarSlotActions();
+            else
+                gConfig[jobSpecificConfirmState.targetConfigKey].jobSpecific = jobSpecificConfirmState.newValue;
+                data.ClearAllBarSlotActions(jobSpecificConfirmState.targetBarIndex);
+            end
+            SaveSettingsOnly();
+            jobSpecificConfirmState.showPopup = false;
+            imgui.CloseCurrentPopup();
+        end
+        imgui.PopStyleColor(2);
+
+        imgui.SameLine(0, spacing);
+
+        if imgui.Button('Cancel', {buttonWidth, 28}) then
+            jobSpecificConfirmState.showPopup = false;
+            imgui.CloseCurrentPopup();
+        end
+
+        imgui.EndPopup();
+    end
+end
+
 -- Action type options
 local ACTION_TYPES = { 'ma', 'ja', 'ws', 'item', 'equip', 'macro', 'pet' };
 local ACTION_TYPE_LABELS = {
@@ -226,6 +299,16 @@ local BAR_TYPES = {
     { key = 'Bar4', configKey = 'hotbarBar4', label = 'Bar 4' },
     { key = 'Bar5', configKey = 'hotbarBar5', label = 'Bar 5' },
     { key = 'Bar6', configKey = 'hotbarBar6', label = 'Bar 6' },
+};
+
+-- Crossbar bar type definitions (each combo mode is a separate bar)
+local CROSSBAR_TYPES = {
+    { key = 'L2', settingsKey = 'L2', label = 'L2' },
+    { key = 'R2', settingsKey = 'R2', label = 'R2' },
+    { key = 'L2R2', settingsKey = 'L2R2', label = 'L2+R2' },
+    { key = 'R2L2', settingsKey = 'R2L2', label = 'R2+L2' },
+    { key = 'L2x2', settingsKey = 'L2x2', label = 'L2x2' },
+    { key = 'R2x2', settingsKey = 'R2x2', label = 'R2x2' },
 };
 
 -- Copy settings between bars
@@ -962,37 +1045,78 @@ end
 -- Crossbar Settings Functions
 -- ============================================
 
-local function DrawCrossbarSettings()
-    local crossbarSettings = gConfig.hotbarCrossbar;
-    if not crossbarSettings then
-        imgui.TextColored({1.0, 0.5, 0.5, 1.0}, 'Crossbar settings not initialized.');
-        return;
+-- Helper: Get or initialize per-crossbar settings
+local function GetCrossbarBarSettings(crossbarSettings, barKey)
+    if not crossbarSettings.bars then
+        crossbarSettings.bars = {};
     end
+    if not crossbarSettings.bars[barKey] then
+        crossbarSettings.bars[barKey] = {
+            enabled = true,
+            jobSpecific = true,
+            petAware = false,
+        };
+    end
+    return crossbarSettings.bars[barKey];
+end
 
-    imgui.TextColored(components.TAB_STYLE.gold, 'Crossbar Settings');
-    imgui.TextColored({0.7, 0.7, 0.7, 1.0}, 'Controller-friendly layout with L2/R2 trigger groups.');
+-- Helper: Draw per-crossbar bar settings
+local function DrawCrossbarBarSettings(crossbarSettings, barType, barKey)
+    local barSettings = GetCrossbarBarSettings(crossbarSettings, barKey);
+
+    -- Enabled checkbox
+    local enabled = { barSettings.enabled ~= false };
+    if imgui.Checkbox('Enabled##crossbar' .. barKey, enabled) then
+        barSettings.enabled = enabled[1];
+        SaveSettingsOnly();
+    end
+    imgui.ShowHelp('Enable or disable this crossbar.');
+
     imgui.Spacing();
 
-    -- Job-Specific Actions toggle for crossbar
-    local jobSpecific = crossbarSettings.jobSpecific ~= false;  -- Default to true if nil
+    -- Job-Specific Actions toggle
+    local jobSpecific = barSettings.jobSpecific ~= false;
     local jobSpecificLabel = jobSpecific and 'Job-Specific Actions' or 'Global Actions (Shared)';
     imgui.TextColored({0.8, 0.8, 0.8, 1.0}, 'Action Storage:');
     imgui.SameLine();
     imgui.TextColored(jobSpecific and {0.5, 1.0, 0.5, 1.0} or {1.0, 0.8, 0.5, 1.0}, jobSpecificLabel);
 
-    if imgui.Button(jobSpecific and 'Switch to Global##crossbar' or 'Switch to Job-Specific##crossbar', {160, 22}) then
+    if imgui.Button(jobSpecific and 'Switch to Global##' .. barKey or 'Switch to Job-Specific##' .. barKey, {160, 22}) then
         -- Show confirmation popup
         jobSpecificConfirmState.showPopup = true;
         jobSpecificConfirmState.targetConfigKey = 'hotbarCrossbar';
-        jobSpecificConfirmState.targetBarIndex = nil;
+        jobSpecificConfirmState.targetBarIndex = barKey;
         jobSpecificConfirmState.newValue = not jobSpecific;
         jobSpecificConfirmState.isCrossbar = true;
     end
-    imgui.ShowHelp('Job-Specific: Each job has its own crossbar actions.\nGlobal: All jobs share the same crossbar actions.\n\nWARNING: Switching modes will clear all crossbar slot actions!');
+    imgui.ShowHelp('Job-Specific: Each job has its own actions for this crossbar.\nGlobal: All jobs share the same actions.\n\nWARNING: Switching modes will clear slot actions for this bar!');
 
     imgui.Spacing();
-    imgui.Separator();
-    imgui.Spacing();
+
+    -- Pet-Aware Palettes toggle (only when job-specific)
+    if jobSpecific then
+        local petAware = barSettings.petAware == true;
+        local petAwareLabel = petAware and 'Pet Palettes Enabled' or 'Pet Palettes Disabled';
+        imgui.TextColored({0.8, 0.8, 0.8, 1.0}, 'Pet Palettes:');
+        imgui.SameLine();
+        imgui.TextColored(petAware and {0.5, 1.0, 0.8, 1.0} or {0.6, 0.6, 0.6, 1.0}, petAwareLabel);
+
+        if imgui.Button(petAware and 'Disable Pet Palettes##' .. barKey or 'Enable Pet Palettes##' .. barKey, {160, 22}) then
+            barSettings.petAware = not petAware;
+            SaveSettingsOnly();
+        end
+        imgui.ShowHelp('Pet Palettes: Each summoned pet can have its own crossbar configuration.\nSMN: Per-avatar palettes\nDRG: Wyvern palette\nBST: Jug pet / Charm palettes\nPUP: Automaton palette');
+    end
+end
+
+local function DrawCrossbarSettings(selectedCrossbarTab)
+    local crossbarSettings = gConfig.hotbarCrossbar;
+    if not crossbarSettings then
+        imgui.TextColored({1.0, 0.5, 0.5, 1.0}, 'Crossbar settings not initialized.');
+        return selectedCrossbarTab;
+    end
+
+    selectedCrossbarTab = selectedCrossbarTab or 1;
 
     -- Controller Status (auto-detected)
     local devices = require('modules.hotbar.devices');
@@ -1012,31 +1136,22 @@ local function DrawCrossbarSettings()
     else
         imgui.TextColored({0.8, 0.8, 0.8, 1.0}, currentDisplayName);
     end
+    imgui.ShowHelp('Controller profile is auto-detected based on your game settings.\n\n- Green = Active (receiving input)\n- Yellow = Waiting for input\n\nXInput mode (game setting) = Xbox profile\nDirectInput mode = PlayStation profile');
 
-    -- Show auto/manual indicator
-    imgui.SameLine();
-    if isAutoDetected then
-        imgui.TextColored({0.5, 0.5, 0.5, 1.0}, '(auto)');
-    else
-        imgui.TextColored({0.6, 0.8, 1.0, 1.0}, '(manual)');
-    end
-
-    imgui.ShowHelp('Controller profile is auto-detected based on your game settings.\n\n- Green = Active (receiving input)\n- Yellow = Waiting for input\n\nXInput mode (game setting) = Xbox profile\nDirectInput mode = PlayStation profile\n\nUse the override below if auto-detection picked the wrong profile.');
-
-    -- Override dropdown (only show DirectInput alternatives when in DirectInput mode)
+    -- Controller dropdown (no "Override" label)
     local deviceSchemes = devices.GetSchemeNames();
     local deviceDisplayNames = devices.GetSchemeDisplayNames();
 
-    -- Build override options: "Auto" + all profiles
+    -- Build options: "Auto-detect" + all profiles
     local overrideOptions = { 'Auto-detect' };
-    local overrideValues = { nil };  -- nil = auto
+    local overrideValues = { nil };
     for _, scheme in ipairs(deviceSchemes) do
         table.insert(overrideOptions, deviceDisplayNames[scheme]);
         table.insert(overrideValues, scheme);
     end
 
     -- Find current selection index
-    local currentOverrideIndex = 1;  -- Default to Auto
+    local currentOverrideIndex = 1;
     if not isAutoDetected then
         for i, val in ipairs(overrideValues) do
             if val == currentScheme then
@@ -1047,17 +1162,15 @@ local function DrawCrossbarSettings()
     end
 
     imgui.SetNextItemWidth(200);
-    if imgui.BeginCombo('Override##controllerOverride', overrideOptions[currentOverrideIndex], ImGuiComboFlags_None) then
+    if imgui.BeginCombo('##controllerSelect', overrideOptions[currentOverrideIndex], ImGuiComboFlags_None) then
         for i, label in ipairs(overrideOptions) do
             local isSelected = (currentOverrideIndex == i);
             if imgui.Selectable(label, isSelected) then
                 local newScheme = overrideValues[i];
                 if newScheme then
-                    -- Set manual override
                     crossbarSettings.controllerSchemeOverride = newScheme;
                     controller.SetControllerSchemeOverride(newScheme);
                 else
-                    -- Clear override, use auto-detection
                     crossbarSettings.controllerSchemeOverride = nil;
                     controller.SetControllerSchemeOverride(nil);
                 end
@@ -1069,12 +1182,110 @@ local function DrawCrossbarSettings()
         end
         imgui.EndCombo();
     end
-    imgui.ShowHelp('Override auto-detection if needed:\n\n- Auto-detect: Uses game settings (recommended)\n- Xbox: Force XInput mode\n- PlayStation: Force DirectInput (DualSense/DualShock)\n- Switch Pro: Force DirectInput (Nintendo layout)\n- Generic: Force DirectInput (other controllers)');
+    imgui.ShowHelp('Select controller profile:\n\n- Auto-detect: Uses game settings (recommended)\n- Xbox: Force XInput mode\n- PlayStation: Force DirectInput (DualSense/DualShock)\n- Switch Pro: Force DirectInput (Nintendo layout)\n- Generic: Force DirectInput (other controllers)');
 
     imgui.Spacing();
 
-    -- Slot Settings section
-    if components.CollapsingSection('Slot Settings##crossbar', true) then
+    -- Controller Input settings (combo modes, double-tap) - directly under controller
+    components.DrawPartyCheckbox(crossbarSettings, 'Enable L2+R2 / R2+L2##crossbar', 'enableExpandedCrossbar');
+    imgui.ShowHelp('Enable L2+R2 and R2+L2 combo modes. Hold one trigger, then press the other to access expanded bars.');
+
+    components.DrawPartyCheckbox(crossbarSettings, 'Enable Double-Tap##crossbar', 'enableDoubleTap', DeferredUpdateVisuals);
+    imgui.ShowHelp('Enable L2x2 and R2x2 double-tap modes. Tap a trigger twice quickly (hold on second tap) to access double-tap bars.');
+
+    if crossbarSettings.enableDoubleTap then
+        components.DrawPartySlider(crossbarSettings, 'Double-Tap Window##crossbar', 'doubleTapWindow', 0.1, 0.6, '%.2f sec', function()
+            controller.SetDoubleTapWindow(crossbarSettings.doubleTapWindow);
+        end, 0.3);
+        imgui.ShowHelp('Time window to register a double-tap (in seconds).');
+    end
+
+    imgui.Spacing();
+
+    -- Edit Mode for setting up crossbars without holding triggers
+    local editModeEnabled = { crossbarSettings.editMode == true };
+    if imgui.Checkbox('Edit Mode##crossbar', editModeEnabled) then
+        crossbarSettings.editMode = editModeEnabled[1];
+        SaveSettingsOnly();
+    end
+    imgui.ShowHelp('Enable Edit Mode to preview and set up crossbars without holding triggers.');
+
+    if crossbarSettings.editMode then
+        -- Preview bar dropdown on same line as checkbox
+        imgui.SameLine();
+        local previewBarOptions = { 'L2', 'R2', 'L2+R2', 'R2+L2', 'L2x2', 'R2x2' };
+        local previewBarKeys = { 'L2', 'R2', 'L2R2', 'R2L2', 'L2x2', 'R2x2' };
+        local currentPreviewBar = crossbarSettings.editModeBar or 'L2';
+        local currentPreviewLabel = currentPreviewBar;
+        -- Convert key to label
+        for i, key in ipairs(previewBarKeys) do
+            if key == currentPreviewBar then
+                currentPreviewLabel = previewBarOptions[i];
+                break;
+            end
+        end
+
+        imgui.SetNextItemWidth(80);
+        if imgui.BeginCombo('##editModeBar', currentPreviewLabel) then
+            for i, label in ipairs(previewBarOptions) do
+                local isSelected = (previewBarKeys[i] == currentPreviewBar);
+                if imgui.Selectable(label, isSelected) then
+                    crossbarSettings.editModeBar = previewBarKeys[i];
+                    SaveSettingsOnly();
+                end
+                if isSelected then
+                    imgui.SetItemDefaultFocus();
+                end
+            end
+            imgui.EndCombo();
+        end
+        imgui.ShowHelp('Select which crossbar to preview in Edit Mode.');
+
+        -- Warning text on next line
+        imgui.TextColored({1.0, 1.0, 0.0, 1.0}, '(!) Disable before playing');
+    end
+
+    imgui.Spacing();
+    imgui.Separator();
+    imgui.Spacing();
+
+    -- Per-Crossbar tabs
+    imgui.TextColored(components.TAB_STYLE.gold, 'Per-Crossbar Settings');
+    imgui.Spacing();
+
+    for i, crossbarType in ipairs(CROSSBAR_TYPES) do
+        local clicked, _ = components.DrawStyledTab(
+            crossbarType.label,
+            'crossbarTab' .. crossbarType.key,
+            selectedCrossbarTab == i,
+            nil,
+            components.TAB_STYLE.smallHeight,
+            components.TAB_STYLE.smallPadding
+        );
+        if clicked then
+            selectedCrossbarTab = i;
+        end
+        if i < #CROSSBAR_TYPES then
+            imgui.SameLine();
+        end
+    end
+
+    imgui.Spacing();
+    imgui.Separator();
+    imgui.Spacing();
+
+    -- Draw settings for selected crossbar
+    local currentCrossbar = CROSSBAR_TYPES[selectedCrossbarTab];
+    if currentCrossbar then
+        DrawCrossbarBarSettings(crossbarSettings, currentCrossbar, currentCrossbar.settingsKey);
+    end
+
+    imgui.Spacing();
+    imgui.Separator();
+    imgui.Spacing();
+
+    -- Global crossbar visual settings (collapsing sections)
+    if components.CollapsingSection('Slot Settings##crossbar', false) then
         components.DrawPartySliderInt(crossbarSettings, 'Slot Size (px)##crossbar', 'slotSize', 32, 64, '%d', nil, 48);
         imgui.ShowHelp('Size of each slot in pixels.');
 
@@ -1145,24 +1356,6 @@ local function DrawCrossbarSettings()
         imgui.ShowHelp('Opacity of the window borders.');
     end
 
-    -- Controller Input section
-    if components.CollapsingSection('Controller Input##crossbar', false) then
-        imgui.TextColored({0.8, 0.8, 0.6, 1.0}, 'Expanded Crossbar');
-
-        components.DrawPartyCheckbox(crossbarSettings, 'Enable L2+R2 / R2+L2##crossbar', 'enableExpandedCrossbar');
-        imgui.ShowHelp('Enable L2+R2 and R2+L2 combo modes. Hold one trigger, then press the other to access expanded bars.');
-
-        components.DrawPartyCheckbox(crossbarSettings, 'Enable Double-Tap##crossbar', 'enableDoubleTap', DeferredUpdateVisuals);
-        imgui.ShowHelp('Enable L2x2 and R2x2 double-tap modes. Tap a trigger twice quickly (hold on second tap) to access double-tap bars.');
-
-        if crossbarSettings.enableDoubleTap then
-            components.DrawPartySlider(crossbarSettings, 'Double-Tap Window##crossbar', 'doubleTapWindow', 0.1, 0.6, '%.2f sec', function()
-                controller.SetDoubleTapWindow(crossbarSettings.doubleTapWindow);
-            end, 0.3);
-            imgui.ShowHelp('Time window to register a double-tap (in seconds). Tap twice within this time to trigger double-tap mode.');
-        end
-    end
-
     -- Controller Icons section
     if components.CollapsingSection('Controller Icons##crossbar', false) then
         local controllerThemes = { 'PlayStation', 'Xbox', 'Nintendo' };
@@ -1219,7 +1412,34 @@ local function DrawCrossbarSettings()
     if components.CollapsingSection('Visual Feedback##crossbar', false) then
         components.DrawPartySlider(crossbarSettings, 'Inactive Dim##crossbar', 'inactiveSlotDim', 0.0, 1.0, '%.2f', nil, 0.5);
         imgui.ShowHelp('Dim factor for inactive trigger side (0 = black, 1 = full brightness).');
+
+        -- Default to true if not set
+        if crossbarSettings.enableTransitionAnimations == nil then
+            crossbarSettings.enableTransitionAnimations = true;
+        end
+        local transAnimEnabled = { crossbarSettings.enableTransitionAnimations };
+        if imgui.Checkbox('Enable Transition Animations##crossbar', transAnimEnabled) then
+            crossbarSettings.enableTransitionAnimations = transAnimEnabled[1];
+            SaveSettingsOnly();
+        end
+        imgui.ShowHelp('Enable smooth animations when switching between crossbar modes (L2, R2, combos). Disable for instant transitions.');
+
+        -- Default to true if not set
+        if crossbarSettings.enablePressScale == nil then
+            crossbarSettings.enablePressScale = true;
+        end
+        local pressScaleEnabled = { crossbarSettings.enablePressScale };
+        if imgui.Checkbox('Enable Press Scale##crossbar', pressScaleEnabled) then
+            crossbarSettings.enablePressScale = pressScaleEnabled[1];
+            SaveSettingsOnly();
+        end
+        imgui.ShowHelp('Enable icon scaling animation when pressing an action slot. Disable for no visual feedback on press.');
     end
+
+    -- Draw confirmation popup for job-specific toggle
+    DrawJobSpecificConfirmPopup();
+
+    return selectedCrossbarTab;
 end
 
 local function DrawCrossbarColorSettings()
@@ -1316,6 +1536,8 @@ end
 -- Section: Hotbar Settings
 function M.DrawSettings(state)
     local selectedBarTab = state and state.selectedHotbarTab or 1;
+    local selectedModeTab = state and state.selectedModeTab or 'hotbar';  -- 'hotbar' or 'crossbar' when mode is 'both'
+    local selectedCrossbarTab = state and state.selectedCrossbarTab or 1;  -- 1=L2, 2=R2, 3=L2R2, etc.
 
     -- Global settings with action buttons on same row as Enabled
     components.DrawCheckbox('Enabled', 'hotbarEnabled');
@@ -1494,27 +1716,52 @@ function M.DrawSettings(state)
     imgui.Separator();
     imgui.Spacing();
 
-    -- Determine what to show based on mode
-    local showHotbar = currentMode == 'hotbar' or currentMode == 'both';
-    local showCrossbar = currentMode == 'crossbar' or currentMode == 'both';
-
-    -- Show crossbar settings if mode includes crossbar
-    if showCrossbar then
-        DrawCrossbarSettings();
-        if not showHotbar then
-            return { selectedHotbarTab = selectedBarTab };
+    -- When mode is 'both', show tabs to switch between hotbar and crossbar settings
+    if currentMode == 'both' then
+        -- Draw Hotbar/Crossbar tabs
+        local hotbarClicked = components.DrawStyledTab(
+            'Hotbar',
+            'modeTabHotbar',
+            selectedModeTab == 'hotbar',
+            nil,
+            components.TAB_STYLE.height,
+            components.TAB_STYLE.padding
+        );
+        if hotbarClicked then
+            selectedModeTab = 'hotbar';
         end
+
+        imgui.SameLine();
+
+        local crossbarClicked = components.DrawStyledTab(
+            'Crossbar',
+            'modeTabCrossbar',
+            selectedModeTab == 'crossbar',
+            nil,
+            components.TAB_STYLE.height,
+            components.TAB_STYLE.padding
+        );
+        if crossbarClicked then
+            selectedModeTab = 'crossbar';
+        end
+
         imgui.Spacing();
         imgui.Separator();
         imgui.Spacing();
+
+        -- Show content based on selected tab
+        if selectedModeTab == 'crossbar' then
+            selectedCrossbarTab = DrawCrossbarSettings(selectedCrossbarTab);
+            return { selectedHotbarTab = selectedBarTab, selectedModeTab = selectedModeTab, selectedCrossbarTab = selectedCrossbarTab };
+        end
+        -- Fall through to hotbar settings below
+    elseif currentMode == 'crossbar' then
+        -- Show crossbar settings only
+        selectedCrossbarTab = DrawCrossbarSettings(selectedCrossbarTab);
+        return { selectedHotbarTab = selectedBarTab, selectedModeTab = selectedModeTab, selectedCrossbarTab = selectedCrossbarTab };
     end
 
-    -- Show hotbar settings if mode includes hotbar
-    if not showHotbar then
-        return { selectedHotbarTab = selectedBarTab };
-    end
-
-    -- Standard hotbar settings below
+    -- Show hotbar settings (mode is 'hotbar' or 'both' with hotbar tab selected)
     imgui.Spacing();
 
     -- Per-Bar Visual Settings header
@@ -1555,58 +1802,9 @@ function M.DrawSettings(state)
     end
 
     -- Draw confirmation popup for job-specific toggle
-    if jobSpecificConfirmState.showPopup then
-        imgui.OpenPopup('Confirm Action Storage Change##jobSpecificConfirm');
-    end
+    DrawJobSpecificConfirmPopup();
 
-    if imgui.BeginPopupModal('Confirm Action Storage Change##jobSpecificConfirm', nil, ImGuiWindowFlags_AlwaysAutoResize) then
-        local targetName = jobSpecificConfirmState.isCrossbar and 'Crossbar' or ('Bar ' .. (jobSpecificConfirmState.targetBarIndex or 1));
-        local newModeName = jobSpecificConfirmState.newValue and 'Job-Specific' or 'Global';
-
-        imgui.TextColored({1.0, 0.8, 0.3, 1.0}, 'Warning: This will clear all slot actions!');
-        imgui.Spacing();
-        imgui.TextWrapped('Switching ' .. targetName .. ' to ' .. newModeName .. ' mode will clear all existing slot actions for this bar/crossbar.');
-        imgui.Spacing();
-        imgui.TextWrapped('This cannot be undone. Are you sure you want to continue?');
-        imgui.Spacing();
-        imgui.Separator();
-        imgui.Spacing();
-
-        -- Center the buttons
-        local buttonWidth = 100;
-        local spacing = 20;
-        local totalWidth = buttonWidth * 2 + spacing;
-        local windowWidth = imgui.GetWindowWidth();
-        imgui.SetCursorPosX((windowWidth - totalWidth) / 2);
-
-        imgui.PushStyleColor(ImGuiCol_Button, {0.6, 0.2, 0.2, 1.0});
-        imgui.PushStyleColor(ImGuiCol_ButtonHovered, {0.8, 0.3, 0.3, 1.0});
-        if imgui.Button('Confirm', {buttonWidth, 28}) then
-            -- Apply the change
-            if jobSpecificConfirmState.isCrossbar then
-                gConfig.hotbarCrossbar.jobSpecific = jobSpecificConfirmState.newValue;
-                data.ClearAllCrossbarSlotActions();
-            else
-                gConfig[jobSpecificConfirmState.targetConfigKey].jobSpecific = jobSpecificConfirmState.newValue;
-                data.ClearAllBarSlotActions(jobSpecificConfirmState.targetBarIndex);
-            end
-            SaveSettingsOnly();
-            jobSpecificConfirmState.showPopup = false;
-            imgui.CloseCurrentPopup();
-        end
-        imgui.PopStyleColor(2);
-
-        imgui.SameLine(0, spacing);
-
-        if imgui.Button('Cancel', {buttonWidth, 28}) then
-            jobSpecificConfirmState.showPopup = false;
-            imgui.CloseCurrentPopup();
-        end
-
-        imgui.EndPopup();
-    end
-
-    return { selectedHotbarTab = selectedBarTab };
+    return { selectedHotbarTab = selectedBarTab, selectedModeTab = selectedModeTab, selectedCrossbarTab = selectedCrossbarTab };
 end
 
 -- Helper: Draw color settings content (shared between global and per-bar)
@@ -1737,28 +1935,58 @@ end
 -- Section: Hotbar Color Settings
 function M.DrawColorSettings(state)
     local selectedBarTab = state and state.selectedHotbarTab or 1;
+    local selectedModeTab = state and state.selectedModeTab or 'hotbar';  -- 'hotbar' or 'crossbar' when mode is 'both'
+    local selectedCrossbarTab = state and state.selectedCrossbarTab or 1;  -- 1=L2, 2=R2, 3=L2R2, etc.
 
     -- Determine what to show based on mode
     local currentMode = gConfig.hotbarCrossbar and gConfig.hotbarCrossbar.mode or 'hotbar';
-    local showHotbar = currentMode == 'hotbar' or currentMode == 'both';
-    local showCrossbar = currentMode == 'crossbar' or currentMode == 'both';
 
-    -- Show crossbar color settings if mode includes crossbar
-    if showCrossbar then
-        DrawCrossbarColorSettings();
-        if not showHotbar then
-            return { selectedHotbarTab = selectedBarTab };
+    -- When mode is 'both', show tabs to switch between hotbar and crossbar color settings
+    if currentMode == 'both' then
+        -- Draw Hotbar/Crossbar tabs
+        local hotbarClicked = components.DrawStyledTab(
+            'Hotbar',
+            'colorModeTabHotbar',
+            selectedModeTab == 'hotbar',
+            nil,
+            components.TAB_STYLE.height,
+            components.TAB_STYLE.padding
+        );
+        if hotbarClicked then
+            selectedModeTab = 'hotbar';
         end
+
+        imgui.SameLine();
+
+        local crossbarClicked = components.DrawStyledTab(
+            'Crossbar',
+            'colorModeTabCrossbar',
+            selectedModeTab == 'crossbar',
+            nil,
+            components.TAB_STYLE.height,
+            components.TAB_STYLE.padding
+        );
+        if crossbarClicked then
+            selectedModeTab = 'crossbar';
+        end
+
         imgui.Spacing();
         imgui.Separator();
         imgui.Spacing();
+
+        -- Show content based on selected tab
+        if selectedModeTab == 'crossbar' then
+            DrawCrossbarColorSettings();
+            return { selectedHotbarTab = selectedBarTab, selectedModeTab = selectedModeTab, selectedCrossbarTab = selectedCrossbarTab };
+        end
+        -- Fall through to hotbar color settings below
+    elseif currentMode == 'crossbar' then
+        -- Show crossbar color settings only
+        DrawCrossbarColorSettings();
+        return { selectedHotbarTab = selectedBarTab, selectedModeTab = selectedModeTab, selectedCrossbarTab = selectedCrossbarTab };
     end
 
-    -- Show hotbar color settings if mode includes hotbar
-    if not showHotbar then
-        return { selectedHotbarTab = selectedBarTab };
-    end
-
+    -- Show hotbar color settings (mode is 'hotbar' or 'both' with hotbar tab selected)
     -- Per-Bar Color Settings header
     imgui.TextColored(components.TAB_STYLE.gold, 'Per-Bar Color Settings');
     imgui.Spacing();
@@ -1795,7 +2023,7 @@ function M.DrawColorSettings(state)
         end
     end
 
-    return { selectedHotbarTab = selectedBarTab };
+    return { selectedHotbarTab = selectedBarTab, selectedModeTab = selectedModeTab, selectedCrossbarTab = selectedCrossbarTab };
 end
 
 return M;

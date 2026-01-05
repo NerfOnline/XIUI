@@ -155,30 +155,8 @@ local GLOBAL_SLOT_KEY = 'global';
 -- Special key for global macros (shared across all jobs)
 local GLOBAL_MACRO_KEY = 'global';
 
--- Helper to normalize job ID to number (handles string keys from JSON)
-local function normalizeJobId(jobId)
-    if type(jobId) == 'string' then
-        return tonumber(jobId) or 1;
-    end
-    return jobId or 1;
-end
-
--- Helper to get the storage key based on jobSpecific setting
-local function getStorageKey(barSettings, jobId)
-    if barSettings.jobSpecific == false then
-        return GLOBAL_SLOT_KEY;
-    end
-    return normalizeJobId(jobId);
-end
-
--- Check if a storage key is a pet-aware composite key (e.g., "15:avatar:ifrit")
-local function isPetCompositeKey(key)
-    if type(key) ~= 'string' then return false; end
-    return key:find(':') ~= nil;
-end
-
 -- Helper to ensure slotActions structure exists for a storage key
--- Handles: 'global', numeric job IDs, and pet-aware composite keys
+-- Handles: 'global' and composite keys ('15:10', '15:10:avatar:ifrit')
 local function ensureSlotActionsStructure(barSettings, storageKey)
     if not barSettings.slotActions then
         barSettings.slotActions = {};
@@ -190,26 +168,11 @@ local function ensureSlotActionsStructure(barSettings, storageKey)
         end
         return barSettings.slotActions[GLOBAL_SLOT_KEY];
     end
-    -- Handle pet-aware composite keys (stored as strings, e.g., "15:avatar:ifrit")
-    if isPetCompositeKey(storageKey) then
-        if not barSettings.slotActions[storageKey] then
-            barSettings.slotActions[storageKey] = {};
-        end
-        return barSettings.slotActions[storageKey];
+    -- All job-specific keys are composite strings (job:subjob format)
+    if not barSettings.slotActions[storageKey] then
+        barSettings.slotActions[storageKey] = {};
     end
-    -- Handle regular job ID keys
-    local numericKey = normalizeJobId(storageKey);
-    if not barSettings.slotActions[numericKey] then
-        -- Also check for string key and migrate if found
-        local stringKey = tostring(numericKey);
-        if barSettings.slotActions[stringKey] then
-            barSettings.slotActions[numericKey] = barSettings.slotActions[stringKey];
-            barSettings.slotActions[stringKey] = nil;
-        else
-            barSettings.slotActions[numericKey] = {};
-        end
-    end
-    return barSettings.slotActions[numericKey];
+    return barSettings.slotActions[storageKey];
 end
 
 -- ============================================
@@ -1077,23 +1040,8 @@ local function ClearSlotsReferencingMacro(macroId, typeKey)
         if gConfig[configKey] and gConfig[configKey].slotActions then
             local barSettings = gConfig[configKey];
 
-            if isGlobalMacro then
-                -- For Global macros, clear from ALL storage keys
-                for storageKey, jobSlotActions in pairs(barSettings.slotActions) do
-                    if jobSlotActions then
-                        for slotIndex, slotAction in pairs(jobSlotActions) do
-                            if slotAction and slotAction.macroRef == macroId then
-                                jobSlotActions[slotIndex] = { cleared = true };
-                            end
-                        end
-                    end
-                end
-            else
-                -- For job-specific macros, only clear from that job's storage
-                local numericJobId = normalizeJobId(typeKey);
-                local storageKey = getStorageKey(barSettings, numericJobId);
-                local jobSlotActions = barSettings.slotActions[storageKey];
-
+            -- Clear from ALL storage keys (macro could be on any job:subjob combination)
+            for storageKey, jobSlotActions in pairs(barSettings.slotActions) do
                 if jobSlotActions then
                     for slotIndex, slotAction in pairs(jobSlotActions) do
                         if slotAction and slotAction.macroRef == macroId then
@@ -1105,40 +1053,13 @@ local function ClearSlotsReferencingMacro(macroId, typeKey)
         end
     end
 
-    -- Clear from crossbar (all combo modes)
+    -- Clear from crossbar (all combo modes, all storage keys)
     if gConfig.hotbarCrossbar and gConfig.hotbarCrossbar.slotActions then
         local crossbarSettings = gConfig.hotbarCrossbar;
+        local comboModes = { 'L2', 'R2', 'L2R2', 'R2L2', 'L2x2', 'R2x2' };
 
-        if isGlobalMacro then
-            -- For Global macros, clear from ALL storage keys
-            for storageKey, jobSlotActions in pairs(crossbarSettings.slotActions) do
-                if jobSlotActions then
-                    local comboModes = { 'L2', 'R2', 'L2R2', 'R2L2', 'L2x2', 'R2x2' };
-                    for _, comboMode in ipairs(comboModes) do
-                        local comboSlots = jobSlotActions[comboMode];
-                        if comboSlots then
-                            for slotIndex, slotAction in pairs(comboSlots) do
-                                if slotAction and slotAction.macroRef == macroId then
-                                    comboSlots[slotIndex] = nil;
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        else
-            -- For job-specific macros, only clear from that job's storage
-            local numericJobId = normalizeJobId(typeKey);
-            local storageKey;
-            if crossbarSettings.jobSpecific == false then
-                storageKey = GLOBAL_SLOT_KEY;
-            else
-                storageKey = numericJobId;
-            end
-
-            local jobSlotActions = crossbarSettings.slotActions[storageKey];
+        for storageKey, jobSlotActions in pairs(crossbarSettings.slotActions) do
             if jobSlotActions then
-                local comboModes = { 'L2', 'R2', 'L2R2', 'R2L2', 'L2x2', 'R2x2' };
                 for _, comboMode in ipairs(comboModes) do
                     local comboSlots = jobSlotActions[comboMode];
                     if comboSlots then

@@ -24,6 +24,38 @@ local availabilityCache = {};
 -- Containers to search for item quantities
 local ITEM_CONTAINERS = { 0, 8, 10, 11, 12, 13, 14, 15, 16 };  -- Inventory, wardrobes, satchel, etc.
 
+-- Ninja spell to tool mapping
+-- Maps spell name prefixes to required tool names
+local NINJA_TOOL_MAPPING = {
+    -- Elemental Ninjutsu (damage)
+    ['Katon'] = 'Uchitake',       -- Fire
+    ['Hyoton'] = 'Tsurara',       -- Ice
+    ['Huton'] = 'Kawahori-Ogi',   -- Wind
+    ['Doton'] = 'Makibishi',      -- Earth
+    ['Suiton'] = 'Mizu-Deppo',    -- Water
+    ['Raiton'] = 'Hiraishin',     -- Lightning
+    -- Utility Ninjutsu
+    ['Utsusemi'] = 'Shihei',      -- Shadows
+    ['Tonko'] = 'Shinobi-Tabi',   -- Invisible
+    ['Monomi'] = 'Sanjaku-Tenugui', -- Sneak
+    -- Debuff Ninjutsu
+    ['Kurayami'] = 'Soshi',       -- Blind
+    ['Hojo'] = 'Kaginawa',        -- Slow
+    ['Jubaku'] = 'Jusatsu',       -- Paralyze
+    ['Dokumori'] = 'Kodoku',      -- Poison
+    ['Aisha'] = 'Kodoku',         -- Gravity (same as Dokumori)
+    -- High-level Ninjutsu
+    ['Migawari'] = 'Mokujin',     -- Substitute
+    ['Yurin'] = 'Ryuno',          -- Intimidate
+    ['Myoshu'] = 'Kabenro',       -- Acc boost
+    ['Gekka'] = 'Shikanofuda',    -- Store TP
+    ['Yain'] = 'Jinko',           -- Subtle Blow
+    ['Kakka'] = 'Shikanofuda',    -- Attack boost (same as Gekka)
+};
+
+-- Cache for ninjutsu spell type lookups
+local ninjutsuCache = {};
+
 local M = {};
 
 -- Get abbreviated text for an action (used when no icon available)
@@ -151,6 +183,38 @@ function M.GetItemQuantity(itemId, itemName)
     return totalCount > 0 and totalCount or nil;
 end
 
+-- Get the ninja tool name required for a ninjutsu spell
+-- @param spellName: The spell name (e.g., "Utsusemi: Ni", "Katon: San")
+-- @return: Tool name or nil if not a ninjutsu spell
+local function GetNinjutsuToolName(spellName)
+    if not spellName then return nil; end
+
+    -- Check cache first
+    if ninjutsuCache[spellName] ~= nil then
+        return ninjutsuCache[spellName];
+    end
+
+    -- Extract the spell base name (before the colon, e.g., "Utsusemi" from "Utsusemi: Ni")
+    local baseName = spellName:match('^([^:]+)');
+    if baseName then
+        baseName = baseName:gsub('%s+$', ''); -- Trim trailing whitespace
+    end
+
+    local toolName = NINJA_TOOL_MAPPING[baseName];
+    ninjutsuCache[spellName] = toolName or false; -- Cache nil as false to distinguish from uncached
+    return toolName;
+end
+
+-- Get the quantity of ninja tools for a ninjutsu spell
+-- @param spellName: The spell name (e.g., "Utsusemi: Ni")
+-- @return: Tool quantity (0+) if ninjutsu spell with tool, nil if not a ninjutsu spell
+function M.GetNinjutsuToolQuantity(spellName)
+    local toolName = GetNinjutsuToolName(spellName);
+    if not toolName then return nil; end
+    -- Return 0 if no tools found (instead of nil) so we can show "x0" in red
+    return M.GetItemQuantity(nil, toolName) or 0;
+end
+
 -- Cached asset path
 local assetsPath = nil;
 
@@ -184,6 +248,7 @@ function M.ClearAllCache()
     availabilityCache = {};
     mpCostCache = {};
     equipmentCheckCache = {};
+    ninjutsuCache = {};
 end
 
 -- Clear availability cache (call on job change, level sync, etc.)
@@ -408,11 +473,23 @@ function M.DrawSlot(resources, params)
     local isUnavailable = false;
     local unavailableReason = nil;
     if bind and (bind.actionType == 'ma' or bind.actionType == 'ja' or bind.actionType == 'ws') then
-        local cached = availabilityCache[bindKey];
+        -- Include job/subjob in cache key so cache invalidates on job change
+        local player = AshitaCore:GetMemoryManager():GetPlayer();
+        local jobId = player and player:GetMainJob() or 0;
+        local subjobId = player and player:GetSubJob() or 0;
+        local availKey = bindKey .. ':' .. jobId .. ':' .. subjobId;
+
+        local cached = availabilityCache[availKey];
         if cached == nil then
             local available, reason = actions.IsActionAvailable(bind);
-            availabilityCache[bindKey] = { isAvailable = available, reason = reason };
-            cached = availabilityCache[bindKey];
+            -- Don't cache if reason is "pending" (player state invalid, e.g., during zoning)
+            if reason ~= "pending" then
+                availabilityCache[availKey] = { isAvailable = available, reason = reason };
+                cached = availabilityCache[availKey];
+            else
+                -- Use temp result but don't cache
+                cached = { isAvailable = available, reason = nil };
+            end
         end
         isUnavailable = not cached.isAvailable;
         unavailableReason = cached.reason;
@@ -738,8 +815,8 @@ function M.DrawSlot(resources, params)
                     resources.mpCostFont:set_font_height(params.mpCostFontSize);
                     cache.mpCostFontSize = params.mpCostFontSize;
                 end
-                -- Grey color for unavailable "X"
-                local xColor = 0xFF888888;
+                -- Red color for unavailable "X"
+                local xColor = 0xFFFF4444;
                 if cache and cache.mpCostFontColor ~= xColor then
                     resources.mpCostFont:set_font_color(xColor);
                     cache.mpCostFontColor = xColor;
@@ -793,38 +870,49 @@ function M.DrawSlot(resources, params)
     end
 
     -- ========================================
-    -- 9. Item Quantity Font (GDI - anchored position)
-    -- Only show for consumable items, not equipment
+    -- 9. Item/Tool Quantity Font (GDI - anchored position)
+    -- Shows quantity for: consumable items, ninjutsu tools
     -- ========================================
     if resources.quantityFont then
         local showQuantity = params.showQuantity ~= false;
-        -- Skip quantity display for equipment items (armor, weapons, accessories)
-        -- IsEquipmentItem returns: true = equipment, false = consumable, nil = unknown (no itemId)
-        local isEquipment = nil;
-        if showQuantity and bind and bind.actionType == 'item' then
-            if bind.itemId then
-                -- Check cache first, but invalidate if itemId changed (slot was reassigned)
-                if cache and cache.isEquipment ~= nil and cache.equipmentCheckItemId == bind.itemId then
-                    isEquipment = cache.isEquipment;
-                else
-                    isEquipment = IsEquipmentItem(bind.itemId);
-                    if cache then
-                        cache.isEquipment = isEquipment;
-                        cache.equipmentCheckItemId = bind.itemId;
+        local quantity = nil;
+        local shouldShowQty = false;
+
+        if showQuantity and bind and animOpacity > 0.5 then
+            if bind.actionType == 'item' then
+                -- Skip quantity display for equipment items (armor, weapons, accessories)
+                -- IsEquipmentItem returns: true = equipment, false = consumable, nil = unknown (no itemId)
+                local isEquipment = nil;
+                if bind.itemId then
+                    -- Check cache first, but invalidate if itemId changed (slot was reassigned)
+                    if cache and cache.isEquipment ~= nil and cache.equipmentCheckItemId == bind.itemId then
+                        isEquipment = cache.isEquipment;
+                    else
+                        isEquipment = IsEquipmentItem(bind.itemId);
+                        if cache then
+                            cache.isEquipment = isEquipment;
+                            cache.equipmentCheckItemId = bind.itemId;
+                        end
                     end
                 end
-            else
-                -- No itemId - can't determine equipment status
+                -- Show quantity for consumables (isEquipment == false) or when we can't determine (isEquipment == nil)
+                -- Hide quantity only when we're certain it's equipment (isEquipment == true)
+                if isEquipment ~= true then
+                    quantity = M.GetItemQuantity(bind.itemId, bind.action) or 0;
+                    shouldShowQty = true;
+                end
+            elseif bind.actionType == 'ma' then
+                -- Check if this is a ninjutsu spell that requires a tool
+                local toolQty = M.GetNinjutsuToolQuantity(bind.action);
+                if toolQty ~= nil then
+                    quantity = toolQty;
+                    shouldShowQty = true;
+                end
             end
         end
 
-        -- Show quantity for consumables (isEquipment == false) or when we can't determine (isEquipment == nil)
-        -- Hide quantity only when we're certain it's equipment (isEquipment == true)
-        if showQuantity and bind and animOpacity > 0.5 and (bind.actionType == 'item') and isEquipment ~= true then
-            -- Get item quantity from inventory
-            local quantity = M.GetItemQuantity(bind.itemId, bind.action) or 0;
-
-            -- Always show quantity for consumable items (x0 in red, x1+)
+        if shouldShowQty and quantity ~= nil then
+            -- Format quantity text
             local qtyText = 'x' .. tostring(quantity);
             -- Only update text if changed
             if cache and cache.quantityText ~= qtyText then
@@ -912,7 +1000,7 @@ function M.DrawSlot(resources, params)
     end
 
     -- ========================================
-    -- 9. ImGui: Hover/Pressed Visual Effects
+    -- 11. ImGui: Hover/Pressed Visual Effects
     -- Use foreground draw list to avoid window clipping issues
     -- ========================================
     local fgDrawList = imgui.GetForegroundDrawList();
@@ -1016,6 +1104,7 @@ function M.DrawTooltip(bind)
         bgDark = {0.067, 0.063, 0.055, 0.95},
         border = {0.3, 0.28, 0.24, 0.8},
         textDim = {0.6, 0.6, 0.6, 1.0},
+        red = {1.0, 0.3, 0.3, 1.0},
     };
 
     -- Action type labels (matching macro palette)
@@ -1028,6 +1117,27 @@ function M.DrawTooltip(bind)
         macro = 'Macro',
         pet = 'Pet Command',
     };
+
+    -- Check if action is unavailable for current job/subjob (cached lookup)
+    local isUnavailable = false;
+    if bind.actionType == 'ma' or bind.actionType == 'ja' or bind.actionType == 'ws' then
+        local bindKey = (bind.actionType or '') .. ':' .. (bind.action or '');
+        local player = AshitaCore:GetMemoryManager():GetPlayer();
+        local jobId = player and player:GetMainJob() or 0;
+        local subjobId = player and player:GetSubJob() or 0;
+        local availKey = bindKey .. ':' .. jobId .. ':' .. subjobId;
+
+        local cached = availabilityCache[availKey];
+        if cached then
+            isUnavailable = not cached.isAvailable;
+        else
+            -- Not cached yet, do a quick check
+            local available, reason = actions.IsActionAvailable(bind);
+            if reason ~= "pending" then
+                isUnavailable = not available;
+            end
+        end
+    end
 
     -- Style the tooltip
     imgui.PushStyleColor(ImGuiCol_PopupBg, COLORS.bgDark);
@@ -1055,6 +1165,12 @@ function M.DrawTooltip(bind)
     if bind.actionType == 'macro' and bind.macroText then
         imgui.Spacing();
         imgui.TextColored(COLORS.textDim, bind.macroText);
+    end
+
+    -- Unavailable warning (red text)
+    if isUnavailable then
+        imgui.Spacing();
+        imgui.TextColored(COLORS.red, 'Unavailable for your current Job/Subjob');
     end
 
     imgui.EndTooltip();

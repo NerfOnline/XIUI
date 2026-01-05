@@ -107,6 +107,8 @@ local selectedPetTypeTab = 1;  -- 1 = Avatar, 2 = Charm, 3 = Jug, 4 = Automaton,
 local selectedPetTypeColorTab = 1;  -- Pet type color sub-tab
 local selectedPetBarColorTab = 1;  -- 1 = Pet Bar, 2 = Pet Target (for color settings)
 local selectedHotbarTab = 1;  -- 1 = Bar 1, 2 = Bar 2, etc. (for hotbar settings)
+local selectedModeTab = 'hotbar';  -- 'hotbar' or 'crossbar' (for hotbar/crossbar toggle in 'both' mode)
+local selectedCrossbarTab = 1;  -- 1=L2, 2=R2, 3=L2R2, 4=R2L2, 5=L2x2, 6=R2x2
 
 -- Category definitions
 local categories = {
@@ -141,6 +143,8 @@ local function buildState()
         selectedPetTypeTab = selectedPetTypeTab,
         selectedPetTypeColorTab = selectedPetTypeColorTab,
         selectedHotbarTab = selectedHotbarTab,
+        selectedModeTab = selectedModeTab,
+        selectedCrossbarTab = selectedCrossbarTab,
         githubTexture = githubTexture,
     };
 end
@@ -154,6 +158,8 @@ local function applySettingsState(newState)
         if newState.selectedPetBarTab then selectedPetBarTab = newState.selectedPetBarTab; end
         if newState.selectedPetTypeTab then selectedPetTypeTab = newState.selectedPetTypeTab; end
         if newState.selectedHotbarTab then selectedHotbarTab = newState.selectedHotbarTab; end
+        if newState.selectedModeTab then selectedModeTab = newState.selectedModeTab; end
+        if newState.selectedCrossbarTab then selectedCrossbarTab = newState.selectedCrossbarTab; end
     end
 end
 
@@ -165,6 +171,8 @@ local function applyColorState(newState)
         if newState.selectedPetBarColorTab then selectedPetBarColorTab = newState.selectedPetBarColorTab; end
         if newState.selectedPetTypeColorTab then selectedPetTypeColorTab = newState.selectedPetTypeColorTab; end
         if newState.selectedHotbarTab then selectedHotbarTab = newState.selectedHotbarTab; end
+        if newState.selectedModeTab then selectedModeTab = newState.selectedModeTab; end
+        if newState.selectedCrossbarTab then selectedCrossbarTab = newState.selectedCrossbarTab; end
     end
 end
 

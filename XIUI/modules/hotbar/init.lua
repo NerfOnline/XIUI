@@ -643,6 +643,8 @@ end
 function M.HandleZonePacket()
     data.Clear();
     petpalette.ClearPetState();
+    -- Clear availability cache since player state is invalid during zone
+    slotrenderer.ClearAvailabilityCache();
 end
 
 function M.HandleJobChangePacket(e)

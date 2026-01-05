@@ -228,11 +228,12 @@ end
 -- ============================================
 local function CreateSwitchProDevice()
     local buttons = {
-        -- Face buttons (Nintendo layout: B/A/Y/X - different from PlayStation!)
-        B = 48,      -- Bottom (like Cross)
-        A = 49,      -- Right (like Circle)
-        Y = 50,      -- Left (like Square)
-        X = 51,      -- Top (like Triangle)
+        -- Face buttons (Nintendo layout - DirectInput button IDs)
+        -- Physical position -> DirectInput ID
+        A = 48,      -- Right button (like Circle on PS)
+        Y = 49,      -- Left button (like Square on PS)
+        B = 50,      -- Bottom button (like Cross on PS)
+        X = 51,      -- Top button (like Triangle on PS)
         -- Shoulder buttons
         L = 52,
         R = 53,

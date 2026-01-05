@@ -102,42 +102,32 @@ local function normalizeJobId(jobId)
 end
 
 -- Helper to get the storage key based on jobSpecific setting
--- Returns 'global' for global mode, or numeric job ID for job-specific mode
-local function getStorageKey(barSettings, jobId)
+-- Returns 'global' for global mode, or '{jobId}:{subjobId}' for job-specific mode
+local function getStorageKey(barSettings, jobId, subjobId)
     if barSettings.jobSpecific == false then
         return GLOBAL_SLOT_KEY;
     end
-    return normalizeJobId(jobId);
+    -- Always return composite key with job:subjob
+    local normalizedJobId = normalizeJobId(jobId);
+    local normalizedSubjobId = normalizeJobId(subjobId or 0);
+    return string.format('%d:%d', normalizedJobId, normalizedSubjobId);
 end
 
--- Check if a storage key is a pet-aware composite key (e.g., "15:avatar:ifrit")
-local function isPetCompositeKey(key)
-    if type(key) ~= 'string' then return false; end
-    return key:find(':') ~= nil;
-end
 
--- Helper to get slotActions with normalized job ID key
--- JSON serialization converts numeric keys to strings, so we need to check both
--- Also handles pet-aware composite keys (e.g., "15:avatar:ifrit")
+-- Helper to get slotActions with storage key
+-- Handles: 'global' and composite keys ('15:10', '15:10:avatar:ifrit')
 local function getSlotActionsForJob(slotActions, storageKey)
     if not slotActions then return nil; end
     -- Handle 'global' key specially
     if storageKey == GLOBAL_SLOT_KEY then
         return slotActions[GLOBAL_SLOT_KEY];
     end
-    -- Handle pet-aware composite keys (stored as strings)
-    if isPetCompositeKey(storageKey) then
-        return slotActions[storageKey];
-    end
-    -- Handle regular job ID keys (numeric or string)
-    local numericKey = normalizeJobId(storageKey);
-    local stringKey = tostring(numericKey);
-    -- Check numeric key first (preferred), then string key (from JSON)
-    return slotActions[numericKey] or slotActions[stringKey];
+    -- All job-specific keys are composite strings (job:subjob format)
+    return slotActions[storageKey];
 end
 
 -- Helper to ensure slotActions structure exists for a storage key
--- Handles: 'global', numeric job IDs, and pet-aware composite keys
+-- Handles: 'global' and composite keys ('15:10', '15:10:avatar:ifrit')
 local function ensureSlotActionsStructure(barSettings, storageKey)
     if not barSettings.slotActions then
         barSettings.slotActions = {};
@@ -149,27 +139,11 @@ local function ensureSlotActionsStructure(barSettings, storageKey)
         end
         return barSettings.slotActions[GLOBAL_SLOT_KEY];
     end
-    -- Handle pet-aware composite keys (stored as strings, e.g., "15:avatar:ifrit")
-    if isPetCompositeKey(storageKey) then
-        if not barSettings.slotActions[storageKey] then
-            barSettings.slotActions[storageKey] = {};
-        end
-        return barSettings.slotActions[storageKey];
+    -- All job-specific keys are composite strings (job:subjob format)
+    if not barSettings.slotActions[storageKey] then
+        barSettings.slotActions[storageKey] = {};
     end
-    -- Handle regular job ID keys
-    local numericKey = normalizeJobId(storageKey);
-    if not barSettings.slotActions[numericKey] then
-        -- Also check for string key and migrate if found
-        local stringKey = tostring(numericKey);
-        if barSettings.slotActions[stringKey] then
-            -- Migrate string key to numeric key
-            barSettings.slotActions[numericKey] = barSettings.slotActions[stringKey];
-            barSettings.slotActions[stringKey] = nil;
-        else
-            barSettings.slotActions[numericKey] = {};
-        end
-    end
-    return barSettings.slotActions[numericKey];
+    return barSettings.slotActions[storageKey];
 end
 
 -- Keys that are always per-bar (never pulled from global)
@@ -186,18 +160,22 @@ local PER_BAR_ONLY_KEYS = {
 };
 
 -- ============================================
--- Pet-Aware Storage Key Resolution
+-- Job/Subjob Storage Key Resolution
 -- ============================================
 
--- Build full storage key for a bar, considering pet awareness
--- Returns: 'global', '{jobId}', or '{jobId}:{petKey}' (e.g., '15:avatar:ifrit')
+-- Build full storage key for a bar, considering job, subjob, and pet awareness
+-- Returns: 'global', '{jobId}:{subjobId}', or '{jobId}:{subjobId}:{petKey}' (e.g., '15:10:avatar:ifrit')
 function M.GetStorageKeyForBar(barIndex)
     local configKey = 'hotbarBar' .. barIndex;
     local barSettings = gConfig and gConfig[configKey];
     local jobId = M.jobId or 1;
+    local subjobId = M.subjobId or 0;
+
+    -- Build base job:subjob key
+    local baseKey = string.format('%d:%d', normalizeJobId(jobId), normalizeJobId(subjobId));
 
     if not barSettings then
-        return normalizeJobId(jobId);
+        return baseKey;
     end
 
     -- Global mode (non-job-specific)
@@ -207,23 +185,23 @@ function M.GetStorageKeyForBar(barIndex)
 
     -- Check if pet-aware mode is enabled for this bar
     if not barSettings.petAware then
-        return normalizeJobId(jobId);
+        return baseKey;
     end
 
     -- Get pet palette module (lazy load)
     local pp = getPetPalette();
     if not pp then
-        return normalizeJobId(jobId);
+        return baseKey;
     end
 
     -- Check for manual override first
     local effectivePetKey = pp.GetEffectivePetKey(barIndex);
     if effectivePetKey then
-        return string.format('%d:%s', normalizeJobId(jobId), effectivePetKey);
+        return string.format('%s:%s', baseKey, effectivePetKey);
     end
 
-    -- No pet - fall back to base job
-    return normalizeJobId(jobId);
+    -- No pet - fall back to base job:subjob key
+    return baseKey;
 end
 
 -- Get available storage keys (palettes) for a bar
@@ -232,6 +210,7 @@ function M.GetAvailablePalettes(barIndex)
     local configKey = 'hotbarBar' .. barIndex;
     local barSettings = gConfig and gConfig[configKey];
     local jobId = M.jobId or 1;
+    local subjobId = M.subjobId or 0;
 
     if not barSettings or not barSettings.petAware then
         return {};
@@ -242,7 +221,7 @@ function M.GetAvailablePalettes(barIndex)
         return {};
     end
 
-    return pp.GetAvailablePalettes(barIndex, jobId);
+    return pp.GetAvailablePalettes(barIndex, jobId, subjobId);
 end
 
 -- Get per-bar settings from gConfig, merging with global if useGlobalSettings is true
@@ -484,26 +463,31 @@ end
 -- ============================================
 
 -- Helper to get the crossbar storage key based on jobSpecific setting
-local function getCrossbarStorageKey(crossbarSettings, jobId)
+-- Returns 'global' or '{jobId}:{subjobId}' format
+local function getCrossbarStorageKey(crossbarSettings, jobId, subjobId)
     if crossbarSettings.jobSpecific == false then
         return GLOBAL_SLOT_KEY;
     end
-    return normalizeJobId(jobId);
+    -- Always return composite key with job:subjob
+    local normalizedJobId = normalizeJobId(jobId);
+    local normalizedSubjobId = normalizeJobId(subjobId or 0);
+    return string.format('%d:%d', normalizedJobId, normalizedSubjobId);
 end
 
--- Helper to get crossbar slotActions with normalized job ID key
+-- Helper to get crossbar slotActions with storage key
+-- Handles: 'global' and composite keys ('15:10')
 local function getCrossbarSlotActionsForJob(slotActions, storageKey)
     if not slotActions then return nil; end
     -- Handle 'global' key specially
     if storageKey == GLOBAL_SLOT_KEY then
         return slotActions[GLOBAL_SLOT_KEY];
     end
-    local numericKey = normalizeJobId(storageKey);
-    local stringKey = tostring(numericKey);
-    return slotActions[numericKey] or slotActions[stringKey];
+    -- All job-specific keys are composite strings (job:subjob format)
+    return slotActions[storageKey];
 end
 
 -- Helper to ensure crossbar slotActions structure exists for a storage key and combo mode
+-- Handles: 'global' and composite keys ('15:10')
 local function ensureCrossbarSlotActionsStructure(crossbarSettings, storageKey, comboMode)
     if not crossbarSettings.slotActions then
         crossbarSettings.slotActions = {};
@@ -518,21 +502,14 @@ local function ensureCrossbarSlotActionsStructure(crossbarSettings, storageKey, 
         end
         return crossbarSettings.slotActions[GLOBAL_SLOT_KEY][comboMode];
     end
-    local numericKey = normalizeJobId(storageKey);
-    if not crossbarSettings.slotActions[numericKey] then
-        -- Also check for string key and migrate if found
-        local stringKey = tostring(numericKey);
-        if crossbarSettings.slotActions[stringKey] then
-            crossbarSettings.slotActions[numericKey] = crossbarSettings.slotActions[stringKey];
-            crossbarSettings.slotActions[stringKey] = nil;
-        else
-            crossbarSettings.slotActions[numericKey] = {};
-        end
+    -- All job-specific keys are composite strings (job:subjob format)
+    if not crossbarSettings.slotActions[storageKey] then
+        crossbarSettings.slotActions[storageKey] = {};
     end
-    if not crossbarSettings.slotActions[numericKey][comboMode] then
-        crossbarSettings.slotActions[numericKey][comboMode] = {};
+    if not crossbarSettings.slotActions[storageKey][comboMode] then
+        crossbarSettings.slotActions[storageKey][comboMode] = {};
     end
-    return crossbarSettings.slotActions[numericKey][comboMode];
+    return crossbarSettings.slotActions[storageKey][comboMode];
 end
 
 -- Get slot data for a crossbar slot
@@ -541,10 +518,11 @@ end
 -- Returns nil if no data exists
 function M.GetCrossbarSlotData(comboMode, slotIndex)
     local jobId = M.jobId or 1;
+    local subjobId = M.subjobId or 0;
 
     if not gConfig.hotbarCrossbar then return nil; end
-    -- Use storage key based on jobSpecific setting
-    local storageKey = getCrossbarStorageKey(gConfig.hotbarCrossbar, jobId);
+    -- Use storage key based on jobSpecific setting (includes job:subjob)
+    local storageKey = getCrossbarStorageKey(gConfig.hotbarCrossbar, jobId, subjobId);
     local jobSlotActions = getCrossbarSlotActionsForJob(gConfig.hotbarCrossbar.slotActions, storageKey);
     if not jobSlotActions then return nil; end
     if not jobSlotActions[comboMode] then return nil; end
@@ -588,6 +566,7 @@ end
 --           or nil to clear the slot
 function M.SetCrossbarSlotData(comboMode, slotIndex, slotData)
     local jobId = M.jobId or 1;
+    local subjobId = M.subjobId or 0;
 
     -- If slotData is nil, clear the slot instead
     if not slotData then
@@ -599,8 +578,8 @@ function M.SetCrossbarSlotData(comboMode, slotIndex, slotData)
     if not gConfig.hotbarCrossbar then
         gConfig.hotbarCrossbar = {};
     end
-    -- Use storage key based on jobSpecific setting
-    local storageKey = getCrossbarStorageKey(gConfig.hotbarCrossbar, jobId);
+    -- Use storage key based on jobSpecific setting (includes job:subjob)
+    local storageKey = getCrossbarStorageKey(gConfig.hotbarCrossbar, jobId, subjobId);
     local comboSlots = ensureCrossbarSlotActionsStructure(gConfig.hotbarCrossbar, storageKey, comboMode);
 
     -- Store the slot data
@@ -628,11 +607,12 @@ end
 -- slotIndex: 1-8
 function M.ClearCrossbarSlotData(comboMode, slotIndex)
     local jobId = M.jobId or 1;
+    local subjobId = M.subjobId or 0;
 
     -- Early return if structure doesn't exist
     if not gConfig.hotbarCrossbar then return; end
-    -- Use storage key based on jobSpecific setting
-    local storageKey = getCrossbarStorageKey(gConfig.hotbarCrossbar, jobId);
+    -- Use storage key based on jobSpecific setting (includes job:subjob)
+    local storageKey = getCrossbarStorageKey(gConfig.hotbarCrossbar, jobId, subjobId);
     local jobSlotActions = getCrossbarSlotActionsForJob(gConfig.hotbarCrossbar.slotActions, storageKey);
     if not jobSlotActions then return; end
     if not jobSlotActions[comboMode] then return; end

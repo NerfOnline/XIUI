@@ -376,6 +376,12 @@ function M.IsActionAvailable(bind)
     local subJobId = player:GetSubJob();
     local subJobLevel = player:GetSubJobLevel();
 
+    -- Guard: If job data is invalid (e.g., during zoning), assume available
+    -- Don't cache this result - return nil as reason to signal "don't cache"
+    if mainJobId == 0 or mainJobLevel == 0 then
+        return true, "pending";  -- "pending" signals not to cache this result
+    end
+
     -- Handle magic spells
     if bind.actionType == 'ma' then
         local spell = GetSpellByName(bind.action);

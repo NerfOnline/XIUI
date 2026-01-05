@@ -164,7 +164,8 @@ end
 
 -- Get available palettes for a bar (includes base job + all pet palettes)
 -- Returns: { { key = storageKey, displayName = "Name" }, ... }
-function M.GetAvailablePalettes(barIndex, jobId)
+-- Note: subjobId parameter is accepted but not used (pet keys don't depend on subjob)
+function M.GetAvailablePalettes(barIndex, jobId, subjobId)
     local palettes = {};
 
     -- Always include base job palette first

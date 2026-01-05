@@ -26,38 +26,31 @@ local animation = require('libs.animation');
 local M = {};
 
 -- ============================================
--- Helper Functions for Job ID Key Normalization
+-- Helper Functions for Job/Subjob Key Normalization
 -- ============================================
 
 -- Special key for global (non-job-specific) slot storage
 local GLOBAL_SLOT_KEY = 'global';
 
--- Helper to normalize job ID to number (handles string keys from JSON)
-local function normalizeJobId(jobId)
-    if type(jobId) == 'string' then
-        return tonumber(jobId) or 1;
-    end
-    return jobId or 1;
-end
-
 -- Helper to get the storage key based on jobSpecific setting
-local function getStorageKey(crossbarSettings, jobId)
+-- Returns 'global' or '{jobId}:{subjobId}' format
+local function getStorageKey(crossbarSettings, jobId, subjobId)
     if crossbarSettings.jobSpecific == false then
         return GLOBAL_SLOT_KEY;
     end
-    return normalizeJobId(jobId);
+    return string.format('%d:%d', jobId or 1, subjobId or 0);
 end
 
--- Helper to get slotActions with normalized job ID key
+-- Helper to get slotActions with storage key
+-- Handles: 'global' and composite keys ('15:10')
 local function getSlotActionsForJob(slotActions, storageKey)
     if not slotActions then return nil; end
     -- Handle 'global' key specially
     if storageKey == GLOBAL_SLOT_KEY then
         return slotActions[GLOBAL_SLOT_KEY];
     end
-    local numericKey = normalizeJobId(storageKey);
-    local stringKey = tostring(numericKey);
-    return slotActions[numericKey] or slotActions[stringKey];
+    -- All job-specific keys are composite strings (job:subjob format)
+    return slotActions[storageKey];
 end
 
 -- ============================================
@@ -660,7 +653,10 @@ local function DrawSlot(comboMode, slotIndex, x, y, slotSize, settings, isActive
 
     -- Get press scale animation for icon (scales up when pressed, animates back down on release)
     local pressKey = comboMode .. '_' .. slotIndex;
-    local iconPressScale = animation.getPressScale(pressKey, isPressed and isActive);
+    local iconPressScale = 1.0;
+    if settings.enablePressScale ~= false then
+        iconPressScale = animation.getPressScale(pressKey, isPressed and isActive);
+    end
 
     -- Get slot data
     local slotData = data.GetCrossbarSlotData(comboMode, slotIndex);
@@ -855,8 +851,12 @@ local function DrawTriggerIcons(activeCombo, l2GroupX, r2GroupX, groupY, groupWi
     end
 
     -- Get press scale animations for triggers
-    local l2PressScale = animation.getPressScale('trigger_L2', l2Active);
-    local r2PressScale = animation.getPressScale('trigger_R2', r2Active);
+    local l2PressScale = 1.0;
+    local r2PressScale = 1.0;
+    if settings.enablePressScale ~= false then
+        l2PressScale = animation.getPressScale('trigger_L2', l2Active);
+        r2PressScale = animation.getPressScale('trigger_R2', r2Active);
+    end
 
     -- Draw L2 icon with press scale
     local l2Texture = textures:GetControllerIcon('L2');
@@ -899,9 +899,9 @@ local function DrawTriggerIcons(activeCombo, l2GroupX, r2GroupX, groupY, groupWi
     end
 end
 
--- Draw combo text in center for complex combos (L2R2, R2L2, L2x2, R2x2)
+-- Draw combo text in center for complex combos (L2R2, R2L2, L2x2, R2x2) or edit mode
 local function DrawComboText(activeCombo, centerX, topY, settings)
-    if not settings.showComboText then
+    if not settings.showComboText and not settings.editMode then
         if state.comboTextFont then
             state.comboTextFont:set_visible(false);
         end
@@ -918,9 +918,18 @@ local function DrawComboText(activeCombo, centerX, topY, settings)
         comboText = 'L2x2';
     elseif activeCombo == COMBO_MODES.R2_DOUBLE then
         comboText = 'R2x2';
+    elseif activeCombo == COMBO_MODES.L2 then
+        comboText = 'L2';
+    elseif activeCombo == COMBO_MODES.R2 then
+        comboText = 'R2';
     end
 
-    -- Only show for complex combos
+    -- In edit mode, always show with warning indicator
+    if settings.editMode then
+        comboText = '(!) ' .. (comboText or 'EDIT');
+    end
+
+    -- Only show for complex combos (or edit mode)
     if not comboText then
         if state.comboTextFont then
             state.comboTextFont:set_visible(false);
@@ -939,6 +948,9 @@ local function DrawComboText(activeCombo, centerX, topY, settings)
         state.comboTextFont:set_text(comboText);
         state.comboTextFont:set_position_x(centerX + offsetX);
         state.comboTextFont:set_position_y(topY + offsetY);
+        -- Yellow warning color in edit mode, white otherwise
+        local fontColor = settings.editMode and 0xFFFFFF00 or 0xFFFFFFFF;
+        state.comboTextFont:set_font_color(fontColor);
         state.comboTextFont:set_visible(true);
     end
 end
@@ -1034,18 +1046,42 @@ function M.DrawWindow(settings, moduleSettings)
     local activeCombo = controller.GetActiveCombo();
     local pressedSlot = controller.GetPressedSlot();
 
+    -- Edit Mode: Override activeCombo to show selected bar for setup
+    if settings.editMode then
+        local editBar = settings.editModeBar or 'L2';
+        activeCombo = editBar;
+        pressedSlot = nil;  -- Don't show pressed state in edit mode
+    end
+
     -- Determine which bar set to display based on active combo
     local targetLeftMode, targetRightMode, isExpanded, expandedSide = GetDisplayModes(activeCombo);
 
-    -- Check if bar set changed and start animation
+    -- Check if animations are disabled - if so, force complete any in-progress animation
+    if settings.enableTransitionAnimations == false and state.animation.active then
+        state.currentLeftMode = state.animation.toLeftMode;
+        state.currentRightMode = state.animation.toRightMode;
+        state.currentBarSet = state.animation.toBarSet;
+        state.animation.active = false;
+    end
+
+    -- Check if bar set changed and start animation (or instant transition if disabled)
     if targetLeftMode ~= state.currentLeftMode or targetRightMode ~= state.currentRightMode then
-        if not state.animation.active then
+        if settings.enableTransitionAnimations == false then
+            -- Instant transition - skip animation
+            state.currentLeftMode = targetLeftMode;
+            state.currentRightMode = targetRightMode;
+            local toExpanded = (targetLeftMode ~= 'L2' and targetLeftMode ~= 'R2');
+            state.currentBarSet = toExpanded and 'expanded' or 'base';
+            state.animation.active = false;
+        elseif not state.animation.active then
             StartBarTransition(state.currentLeftMode, state.currentRightMode, targetLeftMode, targetRightMode);
         end
     end
 
-    -- Update animation progress
-    UpdateAnimation();
+    -- Update animation progress (only if animations enabled)
+    if settings.enableTransitionAnimations ~= false then
+        UpdateAnimation();
+    end
 
     -- Window position will be updated by ImGui's built-in dragging
     local windowPosX, windowPosY = state.windowX, state.windowY;
@@ -1088,12 +1124,14 @@ function M.DrawWindow(settings, moduleSettings)
     -- Get draw list for ImGui-based rendering (foreground works outside window context)
     local drawList = imgui.GetForegroundDrawList();
 
-    -- Hide all slot primitives first (we'll show the ones we need)
+    -- Hide all slot and icon primitives first (we'll show the ones we need)
     local allModes = { 'L2', 'R2', 'L2R2', 'R2L2', 'L2x2', 'R2x2' };
     for _, mode in ipairs(allModes) do
         for slotIndex = 1, SLOTS_PER_SIDE do
             local slotPrim = state.slotPrims[mode] and state.slotPrims[mode][slotIndex];
             if slotPrim then slotPrim.visible = false; end
+            local iconPrim = state.iconPrims[mode] and state.iconPrims[mode][slotIndex];
+            if iconPrim then iconPrim.visible = false; end
         end
     end
 
@@ -1441,19 +1479,20 @@ function M.ActivateSlot(comboMode, slotIndex)
     -- Note: Native macro blocking for controller is handled by zeroing trigger values
     -- in state_modified in controller.lua, so no StopNativeMacros call needed here
 
-    -- Get player job for slot lookup
+    -- Get player job/subjob for slot lookup
     local player = GetPlayerSafe();
     if not player then return; end
 
     local jobId = player:GetMainJob();
     if not jobId or jobId == 0 then return; end
+    local subjobId = player:GetSubJob() or 0;
 
     -- Get slot action from settings (with storage key based on jobSpecific setting)
     if not gConfig or not gConfig.hotbarCrossbar then return; end
     local slotActions = gConfig.hotbarCrossbar.slotActions;
     if not slotActions then return; end
 
-    local storageKey = getStorageKey(gConfig.hotbarCrossbar, jobId);
+    local storageKey = getStorageKey(gConfig.hotbarCrossbar, jobId, subjobId);
     local jobActions = getSlotActionsForJob(slotActions, storageKey);
     if not jobActions then return; end
 
