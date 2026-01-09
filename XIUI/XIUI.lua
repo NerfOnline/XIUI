@@ -68,6 +68,7 @@ local actionTracker = require('handlers.actiontracker');
 local mobInfo = require('modules.mobinfo.init');
 local statusHandler = require('handlers.statushandler');
 local progressbar = require('libs.progressbar');
+local TextureManager = require('libs.texturemanager');
 
 -- Global switch to hard-disable functionality that is limited on HX servers
 HzLimitedMode = false;
@@ -442,6 +443,7 @@ ashita.events.register('unload', 'unload_cb', function ()
 
     statusHandler.clear_cache();
     progressbar.Cleanup();
+    TextureManager.clear();
     if ClearDebuffFontCache then ClearDebuffFontCache(); end
 
     uiModules.CleanupAll();
@@ -528,15 +530,29 @@ ashita.events.register('command', 'command_cb', function (e)
         -- Cache Debug Commands
         -- ============================================
 
-        -- Show cache statistics: /xiui cachestats
+        -- Show progressbar cache statistics: /xiui cachestats
         if (command_args[2] == 'cachestats') then
             progressbar.PrintCacheStats();
+            return;
+        end
+
+        -- Show texture cache statistics: /xiui texturestats
+        if (command_args[2] == 'texturestats') then
+            TextureManager.printStats();
+            return;
+        end
+
+        -- Clear texture cache: /xiui textureclear
+        if (command_args[2] == 'textureclear') then
+            TextureManager.clear();
+            print('[XIUI] TextureManager cache cleared');
             return;
         end
 
         -- Clear all caches: /xiui clearcache
         if (command_args[2] == 'clearcache') then
             progressbar.ForceClearCache();
+            TextureManager.clear();
             statusHandler.clear_cache();
             print('[XIUI] All texture caches cleared');
             return;
@@ -546,6 +562,28 @@ ashita.events.register('command', 'command_cb', function (e)
         if (command_args[2] == 'stresscache') then
             local count = tonumber(command_args[3]) or 100;
             progressbar.StressTestCache(count);
+            return;
+        end
+
+        -- Stress test texture manager: /xiui stresstextures [count]
+        if (command_args[2] == 'stresstextures') then
+            local count = tonumber(command_args[3]) or 150;
+            print(string.format('[XIUI] Stress testing TextureManager with %d status icons...', count));
+            local statsBefore = TextureManager.getStats();
+            local beforeEvictions = statsBefore.categories.status_icons.evictions;
+
+            -- Request many status icons (valid IDs are 0-640)
+            for i = 0, count - 1 do
+                TextureManager.getStatusIcon(i, nil);
+            end
+
+            local statsAfter = TextureManager.getStats();
+            local afterEvictions = statsAfter.categories.status_icons.evictions;
+            local newEvictions = afterEvictions - beforeEvictions;
+
+            print(string.format('[XIUI] Created %d status icons, %d evictions triggered',
+                statsAfter.categories.status_icons.size, newEvictions));
+            TextureManager.printStats();
             return;
         end
 
@@ -595,6 +633,7 @@ ashita.events.register('packet_in', 'packet_in_cb', function (e)
         debuffHandler.HandleZonePacket(e);
         actionTracker.HandleZonePacket();
         mobInfo.data.HandleZonePacket(e);
+        TextureManager.clearOnZone();
         MarkPartyCacheDirty();
         ClearEntityCache();
         bLoggedIn = true;
@@ -627,6 +666,7 @@ ashita.events.register('packet_in', 'packet_in_cb', function (e)
     elseif (e.id == 0x00B) then
         notifications.HandleZonePacket();
         treasurePool.HandleZonePacket();
+        TextureManager.clearOnZone();
         bLoggedIn = false;
     elseif (e.id == 0x076) then
         statusHandler.ReadPartyBuffsFromPacket(e);

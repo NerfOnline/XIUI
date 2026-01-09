@@ -3,7 +3,9 @@ require('handlers.helpers');
 local imgui = require('imgui');
 local gdi = require('submodules.gdifonts.include');
 local ffi = require("ffi");
+local TextureManager = require('libs.texturemanager');
 
+-- Gil texture (loaded via TextureManager)
 local gilTexture;
 local gilText;
 local gilPerHourText;
@@ -334,7 +336,7 @@ giltracker.Initialize = function(settings)
 	gilPerHourText = FontManager.create(gphFontSettings);
 
 	allFonts = {gilText, gilPerHourText};
-	gilTexture = LoadTexture("gil");
+	gilTexture = TextureManager.getFileTexture("gil");
 
 	-- Reset tracking state on initialize (fresh login)
 	trackingStartGil = nil;

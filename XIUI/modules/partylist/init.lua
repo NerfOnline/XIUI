@@ -6,10 +6,10 @@
 require('common');
 require('handlers.helpers');
 local ffi = require('ffi');
-local d3d8 = require('d3d8');
 local gdi = require('submodules.gdifonts.include');
 local windowBg = require('libs.windowbackground');
 local encoding = require('submodules.gdifonts.encoding');
+local TextureManager = require('libs.texturemanager');
 
 local data = require('modules.partylist.data');
 local display = require('modules.partylist.display');
@@ -70,8 +70,8 @@ partyList.Initialize = function(settings)
         data.memberText[i].job = FontManager.create(job_font_settings);
     end
 
-    -- Load party titles texture
-    data.partyTitlesTexture = LoadTexture('PartyList-Titles');
+    -- Load party titles texture (via TextureManager)
+    data.partyTitlesTexture = TextureManager.getFileTexture('PartyList-Titles');
     if (data.partyTitlesTexture ~= nil) then
         data.partyTitlesTexture.width, data.partyTitlesTexture.height = GetTextureDimensions(data.partyTitlesTexture, 64, 64);
     end
@@ -98,12 +98,12 @@ partyList.Initialize = function(settings)
     end
     data.partyRefHeightsValid = true;
 
-    -- Load cursor textures
+    -- Load cursor textures (via TextureManager)
     for partyIndex = 1, 3 do
         local cache = data.partyConfigCache[partyIndex];
         local cursorName = cache.cursor;
         if cursorName and cursorName ~= '' and not data.cursorTextures[cursorName] then
-            local cursorTexture = LoadTexture(string.format('cursors/%s', cursorName:gsub('%.png$', '')));
+            local cursorTexture = TextureManager.getFileTexture(string.format('cursors/%s', cursorName:gsub('%.png$', '')));
             if cursorTexture then
                 cursorTexture.width, cursorTexture.height = GetTextureDimensions(cursorTexture, 32, 32);
                 data.cursorTextures[cursorName] = cursorTexture;
@@ -200,12 +200,12 @@ partyList.UpdateVisuals = function(settings)
         end
     end
 
-    -- Update cursor textures
+    -- Update cursor textures (via TextureManager)
     for partyIndex = 1, 3 do
         local cache = data.partyConfigCache[partyIndex];
         local cursorName = cache.cursor;
         if cursorName and cursorName ~= '' and not data.cursorTextures[cursorName] then
-            local cursorTexture = LoadTexture(string.format('cursors/%s', cursorName:gsub('%.png$', '')));
+            local cursorTexture = TextureManager.getFileTexture(string.format('cursors/%s', cursorName:gsub('%.png$', '')));
             if cursorTexture then
                 cursorTexture.width, cursorTexture.height = GetTextureDimensions(cursorTexture, 32, 32);
                 data.cursorTextures[cursorName] = cursorTexture;

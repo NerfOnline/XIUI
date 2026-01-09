@@ -22,10 +22,10 @@ require('common');
 require('handlers.helpers');
 local imgui = require('imgui');
 local ffi = require('ffi');
-local d3d8 = require('d3d8');
 local windowBg = require('libs.windowbackground');
 local progressbar = require('libs.progressbar');
 local button = require('libs.button');
+local TextureManager = require('libs.texturemanager');
 local data = require('modules.treasurepool.data');
 local actions = require('modules.treasurepool.actions');
 
@@ -52,65 +52,8 @@ local bgPrimHandle = nil;
 -- Theme tracking (for detecting changes like petbar)
 local loadedBgTheme = nil;
 
--- Item icon cache (itemId -> texture table with .image)
-local iconCache = {};
-
 -- Tab state: 1 = Pool view, 2 = History view
 local selectedTab = 1;
-
--- ============================================
--- Item Icon Loading
--- ============================================
-
--- Load item icon from game resources
-local function loadItemIcon(itemId)
-    if itemId == nil or itemId == 0 or itemId == -1 or itemId == 65535 then
-        return nil;
-    end
-
-    if iconCache[itemId] then
-        return iconCache[itemId];
-    end
-
-    local success, result = pcall(function()
-        local device = GetD3D8Device();
-        if device == nil then return nil; end
-
-        local item = AshitaCore:GetResourceManager():GetItemById(itemId);
-        if item == nil then return nil; end
-
-        if item.Bitmap == nil or item.ImageSize == nil or item.ImageSize <= 0 then
-            return nil;
-        end
-
-        local dx_texture_ptr = ffi.new('IDirect3DTexture8*[1]');
-        if ffi.C.D3DXCreateTextureFromFileInMemoryEx(
-            device, item.Bitmap, item.ImageSize,
-            0xFFFFFFFF, 0xFFFFFFFF, 1, 0,
-            ffi.C.D3DFMT_A8R8G8B8, ffi.C.D3DPOOL_MANAGED,
-            ffi.C.D3DX_DEFAULT, ffi.C.D3DX_DEFAULT,
-            0xFF000000, nil, nil, dx_texture_ptr
-        ) == ffi.C.S_OK then
-            return {
-                image = d3d8.gc_safe_release(ffi.cast('IDirect3DTexture8*', dx_texture_ptr[0]))
-            };
-        end
-        return nil;
-    end);
-
-    if success and result then
-        iconCache[itemId] = result;
-    end
-
-    return iconCache[itemId];
-end
-
-local function getIconPtr(texture)
-    if texture and texture.image then
-        return tonumber(ffi.cast("uint32_t", texture.image));
-    end
-    return nil;
-end
 
 -- ============================================
 -- Helper Functions
@@ -791,8 +734,8 @@ function M.DrawWindow(settings)
             end
 
             -- 1. Draw item icon
-            local iconTexture = loadItemIcon(item.itemId);
-            local iconPtr = getIconPtr(iconTexture);
+            local iconTexture = TextureManager.getItemIcon(item.itemId);
+            local iconPtr = TextureManager.getTexturePtr(iconTexture);
             local iconX = startX + padding + itemPadding;
             local iconY = rowY + 2 + itemPadding;  -- Align to top of row with padding
 
@@ -1363,8 +1306,8 @@ function M.DrawWindow(settings)
                         if data.historyWinnerFonts[idx] then data.historyWinnerFonts[idx]:set_visible(false); end
                     else
                         -- Draw item icon
-                        local iconTexture = loadItemIcon(histItem.itemId);
-                        local iconPtr = getIconPtr(iconTexture);
+                        local iconTexture = TextureManager.getItemIcon(histItem.itemId);
+                        local iconPtr = TextureManager.getTexturePtr(iconTexture);
                         local iconX = startX + padding;
                         local iconY = rowY + (historyRowHeight - historyIconSize) / 2;
 
@@ -1564,7 +1507,7 @@ function M.Cleanup()
     end
 
     loadedBgTheme = nil;
-    iconCache = {};
+    -- Icon cache handled by TextureManager
 end
 
 return M;
