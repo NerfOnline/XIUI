@@ -21,6 +21,13 @@ local mpCostCache = {};
 -- Structure: { isAvailable = bool, reason = string|nil }
 local availabilityCache = {};
 
+-- Cache for item quantity lookups (keyed by itemId or itemName)
+-- Structure: { quantity = number, timestamp = number }
+-- CRITICAL: Without this cache, item quantity lookups scan ALL inventory slots EVERY FRAME
+-- which causes massive performance issues (especially for items without itemId that require name matching)
+local itemQuantityCache = {};
+local ITEM_QUANTITY_CACHE_TTL = 2.0;  -- Cache for 2 seconds (inventory doesn't change that often)
+
 -- Containers to search for item quantities
 local ITEM_CONTAINERS = { 0, 8, 10, 11, 12, 13, 14, 15, 16 };  -- Inventory, wardrobes, satchel, etc.
 
@@ -148,6 +155,17 @@ end
 -- @param itemName: Item name (fallback for lookup)
 -- @return: Total quantity or nil
 function M.GetItemQuantity(itemId, itemName)
+    -- Build cache key (prefer itemId, fall back to name)
+    local cacheKey = itemId and ('id:' .. itemId) or (itemName and ('name:' .. itemName) or nil);
+    if not cacheKey then return nil; end
+
+    -- Check cache first (CRITICAL for performance - avoids full inventory scan every frame)
+    local now = os.clock();
+    local cached = itemQuantityCache[cacheKey];
+    if cached and (now - cached.timestamp) < ITEM_QUANTITY_CACHE_TTL then
+        return cached.quantity;
+    end
+
     local memMgr = AshitaCore:GetMemoryManager();
     if not memMgr then return nil; end
 
@@ -180,7 +198,11 @@ function M.GetItemQuantity(itemId, itemName)
         end
     end
 
-    return totalCount > 0 and totalCount or nil;
+    -- Cache the result
+    local result = totalCount > 0 and totalCount or nil;
+    itemQuantityCache[cacheKey] = { quantity = result, timestamp = now };
+
+    return result;
 end
 
 -- Get the ninja tool name required for a ninjutsu spell
@@ -249,11 +271,17 @@ function M.ClearAllCache()
     mpCostCache = {};
     equipmentCheckCache = {};
     ninjutsuCache = {};
+    itemQuantityCache = {};
 end
 
 -- Clear availability cache (call on job change, level sync, etc.)
 function M.ClearAvailabilityCache()
     availabilityCache = {};
+end
+
+-- Clear item quantity cache (call on inventory changes)
+function M.ClearItemQuantityCache()
+    itemQuantityCache = {};
 end
 
 local function GetAssetsPath()

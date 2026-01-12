@@ -554,7 +554,9 @@ local function LoadItemIconById(itemId)
 end
 
 -- Cache for item name -> id lookups (populated lazily)
+-- CRITICAL: Must cache BOTH found items AND "not found" results to avoid 65535-iteration search every frame
 local itemNameToIdCache = {};
+local ITEM_NOT_FOUND = -1;  -- Marker for "searched but not found"
 
 --- Load item icon from game resources by item name (slower, uses name lookup)
 ---@param itemName string The item name to look up
@@ -564,9 +566,13 @@ local function LoadItemIconByName(itemName)
         return nil;
     end
 
-    -- Check name->id cache first
-    if itemNameToIdCache[itemName] then
-        return LoadItemIconById(itemNameToIdCache[itemName]);
+    -- Check name->id cache first (includes negative cache for "not found")
+    local cachedId = itemNameToIdCache[itemName];
+    if cachedId then
+        if cachedId == ITEM_NOT_FOUND then
+            return nil;  -- Previously searched, item doesn't exist
+        end
+        return LoadItemIconById(cachedId);
     end
 
     -- Search for item by name (slow, but cached after first find)
@@ -581,6 +587,8 @@ local function LoadItemIconByName(itemName)
         end
     end
 
+    -- CRITICAL: Cache negative result to avoid searching 65535 items every frame!
+    itemNameToIdCache[itemName] = ITEM_NOT_FOUND;
     return nil;
 end
 

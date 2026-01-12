@@ -638,32 +638,42 @@ function M.GetStorageKey(jobAbbr)
     return 'global';
 end
 
+-- Default palette name when importing Base palette from tCrossBar/tHotBar
+M.DEFAULT_PALETTE_NAME = 'Default';
+
 -- Get storage key for a job+palette combination
 -- Maps tHotBar palette names to XIUI storage keys:
---   "Base" -> base job key (jobId:0)
+--   "Base" -> NEW FORMAT: '{jobId}:palette:Default' (converted to palette system)
 --   Avatar name (Ifrit, Shiva, etc.) -> pet palette key (jobId:0:avatar:ifrit)
 --   Spirit name -> pet palette key (jobId:0:spirit:firespirit)
---   Other names -> general palette key (jobId:0:palette:PaletteName)
+--   Other names -> general palette key (jobId:palette:PaletteName)
 function M.GetStorageKeyForPalette(jobAbbr, paletteName)
-    local baseKey = M.GetStorageKey(jobAbbr);
+    local jobId = M.GetJobId(jobAbbr);
+    if not jobId then
+        return 'global';
+    end
+
+    -- Handle Base palette - convert to Default palette using NEW format
+    -- The new palette system requires '{jobId}:palette:{name}' format
     if not paletteName or paletteName == 'Base' then
-        return baseKey;
+        return string.format('%d:palette:%s', jobId, M.DEFAULT_PALETTE_NAME);
     end
 
     -- Check if it's an avatar name (SMN)
+    -- Pet palettes use subjob format: '{jobId}:0:avatar:{pet}' for fallback compatibility
     if petregistry.avatars[paletteName] then
         local avatarKey = petregistry.avatars[paletteName];
-        return string.format('%s:avatar:%s', baseKey, avatarKey);
+        return string.format('%d:0:avatar:%s', jobId, avatarKey);
     end
 
     -- Check if it's a spirit name (SMN)
     if petregistry.spirits[paletteName] then
         local spiritKey = petregistry.spirits[paletteName];
-        return string.format('%s:spirit:%s', baseKey, spiritKey);
+        return string.format('%d:0:spirit:%s', jobId, spiritKey);
     end
 
-    -- Not a recognized pet - use general palette key
-    return string.format('%s:palette:%s', baseKey, paletteName);
+    -- NEW FORMAT for general palettes: '{jobId}:palette:{name}'
+    return string.format('%d:palette:%s', jobId, paletteName);
 end
 
 -- Check if a palette name corresponds to a pet palette (avatar or spirit)
@@ -672,32 +682,88 @@ function M.IsPetPalette(paletteName)
     return petregistry.avatars[paletteName] ~= nil or petregistry.spirits[paletteName] ~= nil;
 end
 
+-- Register an imported palette with the palette order system
+-- This ensures the palette appears in the palette selector dropdown
+function M.RegisterImportedPalette(paletteName, jobId, isForCrossbar)
+    if not gConfig then return; end
+
+    -- Convert Base palette to Default (the new palette system name)
+    local effectiveName = paletteName;
+    if not paletteName or paletteName == 'Base' then
+        effectiveName = M.DEFAULT_PALETTE_NAME;
+    end
+
+    -- Skip pet palettes (handled by petpalette module)
+    if M.IsPetPalette(effectiveName) then return; end
+
+    if isForCrossbar then
+        -- Register in crossbar palette order
+        if not gConfig.hotbarCrossbar then return; end
+        if not gConfig.hotbarCrossbar.crossbarPaletteOrder then
+            gConfig.hotbarCrossbar.crossbarPaletteOrder = {};
+        end
+        if not gConfig.hotbarCrossbar.crossbarPaletteOrder[jobId] then
+            gConfig.hotbarCrossbar.crossbarPaletteOrder[jobId] = {};
+        end
+        -- Check if already exists
+        for _, name in ipairs(gConfig.hotbarCrossbar.crossbarPaletteOrder[jobId]) do
+            if name == effectiveName then return; end
+        end
+        table.insert(gConfig.hotbarCrossbar.crossbarPaletteOrder[jobId], effectiveName);
+    else
+        -- Register in hotbar palette order
+        if not gConfig.hotbar then
+            gConfig.hotbar = {};
+        end
+        if not gConfig.hotbar.paletteOrder then
+            gConfig.hotbar.paletteOrder = {};
+        end
+        if not gConfig.hotbar.paletteOrder[jobId] then
+            gConfig.hotbar.paletteOrder[jobId] = {};
+        end
+        -- Check if already exists
+        for _, name in ipairs(gConfig.hotbar.paletteOrder[jobId]) do
+            if name == effectiveName then return; end
+        end
+        table.insert(gConfig.hotbar.paletteOrder[jobId], effectiveName);
+    end
+end
+
 -- ============================================
 -- Macro Creation Helpers
 -- ============================================
 
 -- Convert a slot storage key to a macro palette key
--- Storage key format: 'jobId:subjobId' or 'jobId:subjobId:palette:name' or 'jobId:subjobId:avatar:name'
+-- Storage key formats (NEW):
+--   'jobId:0' or 'jobId:subjobId' -> base job key
+--   'jobId:palette:name' -> general palette (NEW format without :0)
+--   'jobId:0:avatar:name' or 'jobId:0:spirit:name' -> pet palette
 -- Macro palette key format: jobId (number) or 'jobId:avatar:name' (string) or 'global'
 local function StorageKeyToMacroPaletteKey(storageKey)
     if storageKey == 'global' then
         return 'global';
     end
 
-    -- Parse the storage key
-    local jobId = storageKey:match('^(%d+)');
-    if not jobId then
-        return 'global';
+    -- Parse NEW format: '{jobId}:palette:{name}'
+    local jobIdPalette, paletteName = storageKey:match('^(%d+):palette:(.+)$');
+    if jobIdPalette then
+        -- General palette - use job ID as macro palette key
+        return tonumber(jobIdPalette);
     end
 
-    -- Check for pet palette (avatar:name or spirit:name)
-    local petType, petKey = storageKey:match(':([^:]+):([^:]+)$');
-    if petType and (petType == 'avatar' or petType == 'spirit') then
-        return string.format('%s:%s:%s', jobId, petType, petKey);
+    -- Parse pet format: '{jobId}:0:{avatar|spirit}:{name}'
+    local jobIdPet, petType, petKey = storageKey:match('^(%d+):%d+:([^:]+):(.+)$');
+    if jobIdPet and (petType == 'avatar' or petType == 'spirit') then
+        return string.format('%s:%s:%s', jobIdPet, petType, petKey);
     end
 
-    -- Base job key - return as number
-    return tonumber(jobId);
+    -- Parse base job key: '{jobId}:0' or '{jobId}:{subjobId}'
+    local baseJobId = storageKey:match('^(%d+)');
+    if baseJobId then
+        return tonumber(baseJobId);
+    end
+
+    return 'global';
 end
 
 -- Create a macro in the macro database for a specific palette

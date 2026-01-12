@@ -8,6 +8,7 @@ require('handlers.helpers');
 local components = require('config.components');
 local tbarMigration = require('handlers.tbar_migration');
 local imgui = require('imgui');
+local palette = require('modules.hotbar.palette');
 
 local M = {};
 
@@ -429,6 +430,12 @@ local function ExecuteImport()
 
                             -- Track what was imported
                             if paletteCount > 0 then
+                                -- Register the palette with the palette system
+                                local jobId = tbarMigration.GetJobId(jobKey);
+                                if jobId then
+                                    tbarMigration.RegisterImportedPalette(paletteName, jobId, false);
+                                end
+
                                 local isPetPalette = tbarMigration.IsPetPalette(paletteName);
                                 local targetDesc = isPetPalette
                                     and string.format('%s pet palette', paletteName)
@@ -495,6 +502,12 @@ local function ExecuteImport()
 
                             -- Track what was imported for crossbar
                             if paletteCount > 0 then
+                                -- Register the palette with the palette system
+                                local jobId = tbarMigration.GetJobId(jobKey);
+                                if jobId then
+                                    tbarMigration.RegisterImportedPalette(paletteName, jobId, true);
+                                end
+
                                 local isPetPalette = tbarMigration.IsPetPalette(paletteName);
                                 local targetDesc = isPetPalette
                                     and string.format('%s pet palette', paletteName)
@@ -520,6 +533,45 @@ local function ExecuteImport()
     -- Save settings to disk
     if results.hotbarImported > 0 or results.crossbarImported > 0 then
         SaveSettingsToDisk();
+
+        -- Activate imported palettes for the current job
+        -- This ensures the imported bindings are immediately visible
+        local player = AshitaCore:GetMemoryManager():GetPlayer();
+        local currentJobId = player and player:GetMainJob() or 1;
+
+        if results.crossbarImported > 0 then
+            -- Activate the crossbar palette (Default for Base import)
+            local crossbarPalettes = palette.GetCrossbarAvailablePalettes(currentJobId, 0);
+            if #crossbarPalettes > 0 then
+                -- Prefer 'Default' palette if it exists, otherwise use first available
+                local paletteToActivate = nil;
+                for _, name in ipairs(crossbarPalettes) do
+                    if name == tbarMigration.DEFAULT_PALETTE_NAME then
+                        paletteToActivate = name;
+                        break;
+                    end
+                end
+                paletteToActivate = paletteToActivate or crossbarPalettes[1];
+                palette.SetActivePaletteForCombo('L2', paletteToActivate);
+            end
+        end
+
+        if results.hotbarImported > 0 then
+            -- Activate the hotbar palette
+            local hotbarPalettes = palette.GetAvailablePalettes(1, currentJobId, 0);
+            if #hotbarPalettes > 0 then
+                -- Prefer 'Default' palette if it exists, otherwise use first available
+                local paletteToActivate = nil;
+                for _, name in ipairs(hotbarPalettes) do
+                    if name == tbarMigration.DEFAULT_PALETTE_NAME then
+                        paletteToActivate = name;
+                        break;
+                    end
+                end
+                paletteToActivate = paletteToActivate or hotbarPalettes[1];
+                palette.SetActivePalette(1, paletteToActivate, currentJobId);
+            end
+        end
     end
 
     return results;
@@ -784,6 +836,9 @@ local function DrawStep2Selection()
     imgui.Text('Jobs to import:');
     imgui.Spacing();
 
+    -- Scrollable job list
+    imgui.BeginChild('jobList', {0, 150}, true);
+
     local hasGlobal = charData.thotbarHasGlobal or charData.tcrossbarHasGlobal;
     if hasGlobal then
         local globalVal = { wizardState.importGlobal };
@@ -833,6 +888,8 @@ local function DrawStep2Selection()
             end
         end
     end
+
+    imgui.EndChild();
 
     imgui.Spacing();
     imgui.Separator();
