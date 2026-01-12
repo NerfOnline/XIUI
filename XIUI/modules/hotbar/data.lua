@@ -214,16 +214,20 @@ local PER_BAR_ONLY_KEYS = {
 -- ============================================
 
 -- Build full storage key for a bar, considering job, subjob, pet awareness, and general palettes
--- Returns: 'global', '{jobId}:{subjobId}', '{jobId}:{subjobId}:{petKey}', or '{jobId}:{subjobId}:palette:{name}'
+-- Returns: 'global', '{jobId}:{subjobId}' (base), '{jobId}:{subjobId}:{petKey}' (pet), or '{jobId}:palette:{name}' (palette)
 -- Priority: global > pet-aware > general palette > base
+-- NOTE: Palettes use job-only keys (no subjob) to make them job-wide
+--       Base slots use job:subjob keys to remain subjob-specific
 function M.GetStorageKeyForBar(barIndex)
     local configKey = 'hotbarBar' .. barIndex;
     local barSettings = gConfig and gConfig[configKey];
     local jobId = M.jobId or 1;
     local subjobId = M.subjobId or 0;
+    local normalizedJobId = normalizeJobId(jobId);
+    local normalizedSubjobId = normalizeJobId(subjobId);
 
-    -- Build base job:subjob key
-    local baseKey = string.format('%d:%d', normalizeJobId(jobId), normalizeJobId(subjobId));
+    -- Build base job:subjob key (used for base slots - subjob-specific)
+    local baseKey = string.format('%d:%d', normalizedJobId, normalizedSubjobId);
 
     if not barSettings then
         return baseKey;
@@ -248,11 +252,13 @@ function M.GetStorageKeyForBar(barIndex)
     end
 
     -- Check for general palette (user-defined named palettes)
+    -- IMPORTANT: Palettes use job-only keys (no subjob) - they are job-wide
     local p = getPalette();
     if p then
         local paletteSuffix = p.GetEffectivePaletteKeySuffix(barIndex);
         if paletteSuffix then
-            return string.format('%s:%s', baseKey, paletteSuffix);
+            -- NEW FORMAT: '{jobId}:palette:{name}' (no subjob)
+            return string.format('%d:%s', normalizedJobId, paletteSuffix);
         end
     end
 
@@ -337,12 +343,12 @@ function M.GetPetPaletteModule()
 end
 
 -- ============================================
--- Crossbar Storage Key Resolution (Per-Combo-Mode)
+-- Crossbar Storage Key Resolution (GLOBAL Palette)
 -- ============================================
 
 -- Build full storage key for a crossbar combo mode, considering job, subjob, pet awareness, and palettes
--- Each combo mode (L2, R2, L2R2, etc.) has its own petAware and activePalette settings
--- Returns: 'global', '{jobId}:{subjobId}', '{jobId}:{subjobId}:{petKey}', or '{jobId}:{subjobId}:palette:{name}'
+-- NOTE: Crossbar now uses a SINGLE global palette for all combo modes (not per-combo-mode)
+-- Returns: 'global', '{jobId}:{subjobId}' (base), '{jobId}:{subjobId}:{petKey}' (pet), or '{jobId}:palette:{name}' (palette)
 function M.GetCrossbarStorageKeyForCombo(comboMode)
     local crossbarSettings = gConfig and gConfig.hotbarCrossbar;
     if not crossbarSettings then
@@ -351,16 +357,18 @@ function M.GetCrossbarStorageKeyForCombo(comboMode)
 
     local jobId = M.jobId or 1;
     local subjobId = M.subjobId or 0;
+    local normalizedJobId = normalizeJobId(jobId);
+    local normalizedSubjobId = normalizeJobId(subjobId);
 
     -- Global mode (non-job-specific)
     if crossbarSettings.jobSpecific == false then
         return GLOBAL_SLOT_KEY;
     end
 
-    -- Build base job:subjob key
-    local baseKey = string.format('%d:%d', normalizeJobId(jobId), normalizeJobId(subjobId));
+    -- Build base job:subjob key (used for base slots - subjob-specific)
+    local baseKey = string.format('%d:%d', normalizedJobId, normalizedSubjobId);
 
-    -- Get per-combo-mode settings
+    -- Get per-combo-mode settings (still used for pet-aware, but not for palette)
     local modeSettings = crossbarSettings.comboModeSettings and crossbarSettings.comboModeSettings[comboMode];
 
     -- Check pet-aware mode for this combo mode
@@ -374,11 +382,14 @@ function M.GetCrossbarStorageKeyForCombo(comboMode)
         end
     end
 
-    -- Check for general palette for this combo mode
-    if modeSettings and modeSettings.activePalette then
-        local p = getPalette();
-        if p then
-            return p.BuildStorageKey(baseKey, modeSettings.activePalette);
+    -- Check for GLOBAL crossbar palette (shared across all combo modes)
+    -- IMPORTANT: Palettes use job-only keys (no subjob) - they are job-wide
+    local p = getPalette();
+    if p then
+        local paletteSuffix = p.GetEffectivePaletteKeySuffixForCombo(comboMode);
+        if paletteSuffix then
+            -- NEW FORMAT: '{jobId}:palette:{name}' (no subjob)
+            return string.format('%d:%s', normalizedJobId, paletteSuffix);
         end
     end
 
@@ -388,12 +399,13 @@ end
 
 -- Get the current palette display name for a crossbar combo mode
 -- Returns: 'Base', pet name (e.g., 'Ifrit'), or general palette name (e.g., 'Stuns')
+-- NOTE: Now uses GLOBAL crossbar palette instead of per-combo-mode
 function M.GetCrossbarPaletteDisplayName(comboMode)
     local crossbarSettings = gConfig and gConfig.hotbarCrossbar;
     local modeSettings = crossbarSettings and crossbarSettings.comboModeSettings and crossbarSettings.comboModeSettings[comboMode];
     local jobId = M.jobId or 1;
 
-    -- Check pet palette first (if pet-aware)
+    -- Check pet palette first (if pet-aware - still per-combo-mode)
     if modeSettings and modeSettings.petAware then
         local pp = getPetPalette();
         if pp then
@@ -404,9 +416,13 @@ function M.GetCrossbarPaletteDisplayName(comboMode)
         end
     end
 
-    -- Check general palette
-    if modeSettings and modeSettings.activePalette then
-        return modeSettings.activePalette;
+    -- Check GLOBAL crossbar palette (shared across all combo modes)
+    local p = getPalette();
+    if p then
+        local paletteName = p.GetActivePaletteForCombo(comboMode);
+        if paletteName then
+            return paletteName;
+        end
     end
 
     return 'Base';

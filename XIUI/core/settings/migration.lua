@@ -795,6 +795,23 @@ function M.MigrateNotificationGroups(gConfig, defaults)
     end
 end
 
+-- Migrate crossbar comboModeSettings to remove deprecated activePalette field
+-- Crossbar palettes are now GLOBAL (not per-combo-mode), stored in palette.lua state.crossbarActivePalette
+function M.MigrateCrossbarComboModeSettings(gConfig, defaults)
+    if not gConfig.hotbarCrossbar then return; end
+    if not gConfig.hotbarCrossbar.comboModeSettings then return; end
+
+    local comboModes = { 'L2', 'R2', 'L2R2', 'R2L2', 'L2x2', 'R2x2' };
+    for _, mode in ipairs(comboModes) do
+        local modeSettings = gConfig.hotbarCrossbar.comboModeSettings[mode];
+        if modeSettings then
+            -- Remove deprecated activePalette field
+            -- Palettes are now global (see palette.lua state.crossbarActivePalette)
+            modeSettings.activePalette = nil;
+        end
+    end
+end
+
 -- Run structure migrations (called AFTER settings.load())
 -- These handle migrating old settings structures to new ones
 function M.RunStructureMigrations(gConfig, defaults)
@@ -808,6 +825,7 @@ function M.RunStructureMigrations(gConfig, defaults)
     M.MigrateCastCostSettings(gConfig, defaults);
     M.MigrateBlockedGameKeys(gConfig, defaults);
     M.MigrateNotificationGroups(gConfig, defaults);
+    M.MigrateCrossbarComboModeSettings(gConfig, defaults);
 end
 
 -- Legacy function for backward compatibility (if any external code calls it)

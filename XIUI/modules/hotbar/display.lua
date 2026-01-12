@@ -523,29 +523,18 @@ local function DrawBarWindow(barIndex, settings)
         imgui.End();
     end
 
-    -- Draw palette indicator dot OUTSIDE window bounds (above bar number)
+    -- Draw pet palette indicator dot OUTSIDE window bounds (above bar number)
     -- Must be after End() and use ForegroundDrawList to avoid clipping
-    -- Shows either pet palette (gold) or general palette (cyan) indicator
-    local currentGeneralPalette = palette.GetActivePalette(barIndex);
+    -- Only shows for pet-aware bars (gold indicator)
     local hasPetIndicator = barSettings.petAware and barSettings.showPetIndicator ~= false;
-    local hasGeneralPalette = currentGeneralPalette ~= nil;
 
-    if windowPosX and (hasPetIndicator or hasGeneralPalette) then
+    if windowPosX and hasPetIndicator then
         local dotX = windowPosX - 12;  -- Centered above bar number
         local dotY = windowPosY + (barHeight / 2) - 20;  -- Above the number
         local dotRadius = 5;
         local fgDrawList = imgui.GetForegroundDrawList();
 
-        -- Determine indicator color: gold for pet, cyan for general palette
-        local indicatorColor;
-        local indicatorType;
-        if hasPetIndicator then
-            indicatorColor = {1.0, 0.8, 0.2, 1.0};  -- Gold
-            indicatorType = 'pet';
-        else
-            indicatorColor = {0.4, 0.8, 1.0, 1.0};  -- Cyan
-            indicatorType = 'palette';
-        end
+        local indicatorColor = {1.0, 0.8, 0.2, 1.0};  -- Gold
 
         fgDrawList:AddCircleFilled({dotX, dotY}, dotRadius, imgui.GetColorU32(indicatorColor), 12);
         fgDrawList:AddCircle({dotX, dotY}, dotRadius, imgui.GetColorU32({0.0, 0.0, 0.0, 1.0}), 12, 1.0);
@@ -558,60 +547,27 @@ local function DrawBarWindow(barIndex, settings)
         if (dx * dx + dy * dy) <= (hoverRadius * hoverRadius) then
             imgui.BeginTooltip();
 
-            if indicatorType == 'pet' then
-                imgui.TextColored({1.0, 0.8, 0.2, 1.0}, 'Pet Palette Bar ' .. barIndex);
-                imgui.Separator();
+            imgui.TextColored({1.0, 0.8, 0.2, 1.0}, 'Pet Palette Bar ' .. barIndex);
+            imgui.Separator();
 
-                -- Current pet info
-                local currentPet = petpalette.GetCurrentPetDisplayName();
-                if currentPet then
-                    imgui.Text('Current Pet: ' .. currentPet);
-                else
-                    imgui.TextColored({0.6, 0.6, 0.6, 1.0}, 'No pet summoned');
-                end
-
-                -- Palette mode
-                local hasOverride = petpalette.HasManualOverride(barIndex);
-                if hasOverride then
-                    local overrideName = petpalette.GetPaletteDisplayName(barIndex, data.jobId);
-                    imgui.Text('Palette: ' .. overrideName .. ' (Manual)');
-                else
-                    imgui.Text('Palette: Auto');
-                end
+            -- Current pet info
+            local currentPet = petpalette.GetCurrentPetDisplayName();
+            if currentPet then
+                imgui.Text('Current Pet: ' .. currentPet);
             else
-                imgui.TextColored({0.4, 0.8, 1.0, 1.0}, 'Named Palette Bar ' .. barIndex);
-                imgui.Separator();
-                imgui.Text('Palette: ' .. currentGeneralPalette);
-                imgui.TextColored({0.6, 0.6, 0.6, 1.0}, '/xiui palette <name> ' .. barIndex);
+                imgui.TextColored({0.6, 0.6, 0.6, 1.0}, 'No pet summoned');
+            end
+
+            -- Palette mode
+            local hasOverride = petpalette.HasManualOverride(barIndex);
+            if hasOverride then
+                local overrideName = petpalette.GetPaletteDisplayName(barIndex, data.jobId);
+                imgui.Text('Palette: ' .. overrideName .. ' (Manual)');
+            else
+                imgui.Text('Palette: Auto');
             end
 
             imgui.EndTooltip();
-        end
-    end
-
-    -- Draw palette modifier indicator (refresh icon when modifier key is held)
-    if windowPosX and actions.IsPaletteModifierHeld() then
-        local refreshTexture = textures:Get('ui_refresh');
-        if refreshTexture and refreshTexture.image then
-            local iconSize = 16;
-            local iconX = windowPosX - 20;  -- To the left of the bar
-            local iconY = windowPosY + (barHeight / 2) + 8;  -- Below the bar number
-            local fgDrawList = imgui.GetForegroundDrawList();
-
-            -- Draw with a pulsing effect for visibility
-            local pulseAlpha = 0.7 + 0.3 * math.sin(os.clock() * 6);
-            local iconColor = imgui.GetColorU32({1.0, 1.0, 1.0, pulseAlpha});
-            local iconPtr = tonumber(ffi.cast("uint32_t", refreshTexture.image));
-
-            if iconPtr then
-                fgDrawList:AddImage(
-                    iconPtr,
-                    {iconX, iconY},
-                    {iconX + iconSize, iconY + iconSize},
-                    {0, 0}, {1, 1},
-                    iconColor
-                );
-            end
         end
     end
 

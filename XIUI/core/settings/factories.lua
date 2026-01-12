@@ -448,14 +448,15 @@ function M.createCrossbarDefaults()
         -- Job-specific toggle (when true, actions are stored per-job; when false, actions are shared across all jobs)
         jobSpecific = true,
 
-        -- Per-combo-mode palette settings (each combo mode has independent pet/palette settings)
+        -- Per-combo-mode settings (pet-aware is per-combo, palettes are GLOBAL)
+        -- NOTE: activePalette was removed - crossbar palettes are now global (see palette.lua state.crossbarActivePalette)
         comboModeSettings = {
-            L2 = { petAware = false, activePalette = nil },
-            R2 = { petAware = false, activePalette = nil },
-            L2R2 = { petAware = false, activePalette = nil },
-            R2L2 = { petAware = false, activePalette = nil },
-            L2x2 = { petAware = false, activePalette = nil },
-            R2x2 = { petAware = false, activePalette = nil },
+            L2 = { petAware = false },
+            R2 = { petAware = false },
+            L2R2 = { petAware = false },
+            R2L2 = { petAware = false },
+            L2x2 = { petAware = false },
+            R2x2 = { petAware = false },
         },
 
         -- Palette cycling button for crossbar (R1 + DPad while trigger held)

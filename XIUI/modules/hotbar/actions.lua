@@ -1025,20 +1025,19 @@ function M.HandleKey(event)
            local jobId = data.jobId or 1;
            local subjobId = data.subjobId or 0;
 
-           -- Cycle all bars that have palettes
-           local anyChanged = false;
-           for i = 1, 6 do
-               local result = palette.CyclePalette(i, direction, jobId, subjobId);
-               if PALETTE_DEBUG_KEYS then
-                   print(string.format('[XIUI Palette Debug] Bar %d result=%s', i, tostring(result)));
-               end
-               if result then
-                   anyChanged = true;
-               end
+           -- Cycle GLOBAL palette (affects all hotbars at once)
+           -- NOTE: palette.CyclePalette is now global - barIndex param is ignored
+           local result = palette.CyclePalette(1, direction, jobId, subjobId);
+           if PALETTE_DEBUG_KEYS then
+               print(string.format('[XIUI Palette Debug] Result=%s', tostring(result)));
            end
 
-           if anyChanged then
-               print('[XIUI] Palette: ' .. (direction == 1 and 'Next' or 'Previous'));
+           if result then
+               local logPaletteName = gConfig.hotbarGlobal and gConfig.hotbarGlobal.logPaletteName;
+               if logPaletteName == nil then logPaletteName = true; end  -- Default to true
+               if logPaletteName then
+                   print('[XIUI] Palette: ' .. result);
+               end
            else
                if PALETTE_DEBUG_KEYS then
                    print('[XIUI Palette Debug] No palettes to cycle');

@@ -611,11 +611,11 @@ ashita.events.register('command', 'command_cb', function (e)
             if #command_args < 3 then
                 -- No argument - show current palette info and help
                 print('[XIUI] Palette commands:');
-                print('  /xiui palette <name> [bar|all] - Switch to a named palette');
-                print('  /xiui palette next [bar|all] - Cycle to next palette');
-                print('  /xiui palette prev [bar|all] - Cycle to previous palette');
-                print('  /xiui palette list [bar] - List available palettes');
-                print('  /xiui palette base [bar|all] - Return to Base palette');
+                print('  /xiui palette <name> - Switch to a named palette');
+                print('  /xiui palette next - Cycle to next palette');
+                print('  /xiui palette prev - Cycle to previous palette');
+                print('  /xiui palette list - List available palettes');
+                print('  /xiui palette first - Switch to first palette');
                 print('');
                 print('Keybinds: Ctrl+Up/Down (configure in Hotbar > Palette Cycling)');
                 print('Controller: RB + Dpad Up/Down cycles palettes');
@@ -634,30 +634,12 @@ ashita.events.register('command', 'command_cb', function (e)
 
             if action == 'next' or action == 'prev' or action == 'previous' then
                 local direction = (action == 'next') and 1 or -1;
-                if affectAll then
-                    -- Cycle all bars together
-                    local anyChanged = false;
-                    local newPaletteName = nil;
-                    for i = 1, 6 do
-                        local result = paletteModule.CyclePalette(i, direction, jobId, subjobId);
-                        if result then
-                            anyChanged = true;
-                            newPaletteName = result;
-                        end
-                    end
-                    if anyChanged then
-                        print('[XIUI] All bars palette: ' .. (newPaletteName or 'Base'));
-                    else
-                        print('[XIUI] No palettes to cycle');
-                    end
+                -- Global palette cycling - affects all bars at once
+                local result = paletteModule.CyclePalette(1, direction, jobId, subjobId);
+                if result then
+                    print('[XIUI] Palette: ' .. result);
                 else
-                    -- Cycle single bar
-                    local newPalette = paletteModule.CyclePalette(barIndex, direction, jobId, subjobId);
-                    if newPalette then
-                        print('[XIUI] Bar ' .. barIndex .. ' palette: ' .. newPalette);
-                    else
-                        print('[XIUI] No palettes to cycle for bar ' .. barIndex);
-                    end
+                    print('[XIUI] No palettes to cycle');
                 end
             elseif action == 'list' then
                 -- List available palettes
@@ -668,16 +650,14 @@ ashita.events.register('command', 'command_cb', function (e)
                     local marker = (name == currentPalette) and ' *' or '';
                     print('  - ' .. name .. marker);
                 end
-            elseif action == 'base' or action == 'reset' then
-                -- Switch to base palette
-                if affectAll then
-                    for i = 1, 6 do
-                        paletteModule.ClearActivePalette(i);
-                    end
-                    print('[XIUI] All bars palette: Base');
+            elseif action == 'base' or action == 'reset' or action == 'first' then
+                -- Switch to first palette
+                local palettes = paletteModule.GetAvailablePalettes(1, jobId, subjobId);
+                if #palettes > 0 then
+                    paletteModule.SetActivePalette(1, palettes[1]);
+                    print('[XIUI] Palette: ' .. palettes[1]);
                 else
-                    paletteModule.ClearActivePalette(barIndex);
-                    print('[XIUI] Bar ' .. barIndex .. ' palette: Base');
+                    print('[XIUI] No palettes available');
                 end
             else
                 -- Switch to named palette
@@ -1077,10 +1057,8 @@ end);
 -- ============================================
 
 -- XInput controller state event (for crossbar mode - analog triggers)
+-- Note: This fires every frame, so we don't log it (too spammy)
 ashita.events.register('xinput_state', 'xinput_state_cb', function (e)
-    if DEBUG_RAW_INPUT then
-        print('[XIUI RawInput] xinput_state event received');
-    end
     hotbar.HandleXInputState(e);
 end);
 
@@ -1114,10 +1092,8 @@ ashita.events.register('dinput_button', 'dinput_button_cb', function (e)
 end);
 
 -- DirectInput controller state event (for D-pad POV on DirectInput controllers)
+-- Note: This fires every frame, so we don't log it (too spammy)
 ashita.events.register('dinput_state', 'dinput_state_cb', function (e)
-    if DEBUG_RAW_INPUT then
-        print('[XIUI RawInput] dinput_state event received');
-    end
     hotbar.HandleDInputState(e);
 end);
 

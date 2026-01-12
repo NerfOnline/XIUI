@@ -656,6 +656,8 @@ function M.HandleJobChangePacket(e)
     ashita.tasks.once(0.5, function()
         data.SetPlayerJob();
         macropalette.SyncToCurrentJob();
+        -- Validate palettes for new job (clears if palette doesn't exist for this job)
+        palette.ValidatePalettesForJob(data.jobId, data.subjobId);
         -- Clear icon caches to force refresh for new job's actions
         display.ClearIconCache();
         if crossbarInitialized then

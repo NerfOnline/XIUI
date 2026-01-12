@@ -175,6 +175,9 @@ local state = {
     -- Debug: track if we've received any events
     receivedFirstEvent = false,
     receivedFirstDInputEvent = false,
+
+    -- Debug: track blocking state to avoid spamming logs
+    wasBlocking = false,
 };
 
 -- Track whether game macro blocking is enabled
@@ -524,6 +527,15 @@ function Controller.HandleXInputState(e)
     -- Track shoulder button state for palette cycling
     local rbHeld = bit.band(currentButtons, xboxDevice.ButtonMasks.RIGHT_SHOULDER) ~= 0;
     local lbHeld = bit.band(currentButtons, xboxDevice.ButtonMasks.LEFT_SHOULDER) ~= 0;
+
+    -- Debug: log shoulder button state changes
+    if rbHeld ~= state.rightShoulderHeld then
+        DebugLog(string.format('RB/R1 state changed: %s (from xinput_state, buttons=0x%04X)', tostring(rbHeld), currentButtons));
+    end
+    if lbHeld ~= state.leftShoulderHeld then
+        DebugLog(string.format('LB/L1 state changed: %s (from xinput_state, buttons=0x%04X)', tostring(lbHeld), currentButtons));
+    end
+
     state.rightShoulderHeld = rbHeld;
     state.leftShoulderHeld = lbHeld;
 
@@ -545,11 +557,21 @@ function Controller.HandleXInputState(e)
             local subjobId = data.subjobId or 0;
             local consumed = false;
 
+            -- Debug: log DPAD press detection
+            DebugLog(string.format('DPAD %s pressed - combo=%s, RB=%s, LB=%s',
+                dpadUp and 'UP' or 'DOWN',
+                tostring(state.activeCombo),
+                tostring(rbHeld),
+                tostring(lbHeld)));
+
             -- Crossbar cycling: when trigger IS held
             if state.activeCombo ~= COMBO_MODES.NONE then
                 -- Check which shoulder button is configured for crossbar cycling
                 local crossbarCycleButton = crossbarSettings and crossbarSettings.crossbarPaletteCycleButton or 'R1';
                 local crossbarButtonHeld = (crossbarCycleButton == 'L1' and lbHeld) or (crossbarCycleButton ~= 'L1' and rbHeld);
+
+                DebugLog(string.format('Palette cycle check: cycleButton=%s, shoulderHeld=%s',
+                    crossbarCycleButton, tostring(crossbarButtonHeld)));
 
                 if crossbarButtonHeld then
                     -- Determine active combo mode
@@ -561,31 +583,24 @@ function Controller.HandleXInputState(e)
 
                     if isPetAware then
                         -- Cycle pet palettes for this combo mode
-                        petpalette.CycleCrossbarPalette(activeCombo, direction, jobId);
-                        DebugLog('Crossbar pet palette cycled for ' .. activeCombo .. ': ' .. (direction == 1 and 'next' or 'prev'));
+                        local newPalette = petpalette.CycleCrossbarPalette(activeCombo, direction, jobId);
+                        DebugLog('Crossbar pet palette cycled for ' .. activeCombo .. ': ' .. (direction == 1 and 'next' or 'prev') .. ' -> ' .. tostring(newPalette));
                     else
                         -- Cycle general palettes for this combo mode
-                        palette.CyclePaletteForCombo(activeCombo, direction, jobId, subjobId);
-                        DebugLog('Crossbar palette cycled for ' .. activeCombo .. ': ' .. (direction == 1 and 'next' or 'prev'));
+                        local newPalette = palette.CyclePaletteForCombo(activeCombo, direction, jobId, subjobId);
+                        if newPalette then
+                            DebugLog('Crossbar palette cycled for ' .. activeCombo .. ': ' .. (direction == 1 and 'next' or 'prev') .. ' -> ' .. newPalette);
+                        else
+                            DebugLog('Crossbar palette cycle returned nil (no palettes defined for job ' .. tostring(jobId) .. ')');
+                        end
                     end
 
                     consumed = true;
+                else
+                    DebugLog('Palette cycle skipped: shoulder button not held');
                 end
-            -- Hotbar cycling: when trigger is NOT held
-            elseif state.activeCombo == COMBO_MODES.NONE then
-                -- Check which shoulder button is configured for hotbar cycling
-                local hotbarCycleButton = globalSettings and globalSettings.hotbarPaletteCycleButton or 'R1';
-                local hotbarButtonHeld = (hotbarCycleButton == 'L1' and lbHeld) or (hotbarCycleButton ~= 'L1' and rbHeld);
-
-                if hotbarButtonHeld then
-                    -- Cycle all bars that have palettes
-                    for i = 1, 6 do
-                        palette.CyclePalette(i, direction, jobId, subjobId);
-                    end
-
-                    DebugLog('Hotbar palette cycled via controller: ' .. (direction == 1 and 'next' or 'prev'));
-                    consumed = true;
-                end
+            else
+                DebugLog('Palette cycle skipped: no trigger held (combo=none)');
             end
 
             -- Clear the dpad press so it doesn't trigger slot activation
@@ -611,16 +626,17 @@ function Controller.HandleXInputState(e)
     );
 
     if shouldBlock then
-        local triggerInfo = string.format('L2=%d R2=%d', leftTrigger, rightTrigger);
-        local comboInfo = state.activeCombo ~= COMBO_MODES.NONE and state.activeCombo or 'trigger_only';
-        MacroBlockLog(string.format('[XInput] BLOCKING native macro UI - combo=%s, %s', comboInfo, triggerInfo));
-
-        DebugLog(string.format('Blocking triggers: blockingEnabled=%s, state_modified=%s, L2=%d, R2=%d',
-            tostring(blockingEnabled), tostring(e.state_modified ~= nil), leftTrigger, rightTrigger));
+        -- Only log when blocking state changes (not every frame)
+        if not state.wasBlocking then
+            local triggerInfo = string.format('L2=%d R2=%d', leftTrigger, rightTrigger);
+            local comboInfo = state.activeCombo ~= COMBO_MODES.NONE and state.activeCombo or 'trigger_only';
+            MacroBlockLog(string.format('[XInput] BLOCKING started - combo=%s, %s', comboInfo, triggerInfo));
+            DebugLog(string.format('Blocking triggers: blockingEnabled=%s, state_modified=%s, L2=%d, R2=%d',
+                tostring(blockingEnabled), tostring(e.state_modified ~= nil), leftTrigger, rightTrigger));
+        end
 
         -- Stop any native macro execution
         macrosLib.stop('xinput_state');
-        MacroBlockLog('[XInput] Called macrosLib.stop() to halt native macro');
 
         if e.state_modified then
             -- Wrap FFI modification in pcall for safety
@@ -634,19 +650,25 @@ function Controller.HandleXInputState(e)
                     modifiedGamepad.wButtons = buttonsToKeep;
                 end
             end);
-            if modOk then
-                MacroBlockLog('[XInput] Zeroed trigger values in state_modified (blocked R2/L2 to game)');
-                DebugLog('Zeroed trigger values in state_modified');
-            else
+            if not modOk and not state.wasBlocking then
                 MacroBlockLog('[XInput] WARNING: Failed to modify state_modified');
                 DebugLog('WARNING: Failed to modify state_modified');
             end
-        else
+        elseif not state.wasBlocking then
             MacroBlockLog('[XInput] WARNING: e.state_modified is nil - cannot block triggers from game!');
             DebugLog('WARNING: e.state_modified is nil - cannot block triggers!');
         end
-    elseif (leftHeld or rightHeld) and not blockingEnabled then
-        MacroBlockLog(string.format('[XInput] Trigger pressed but blocking DISABLED (L2=%d R2=%d)', leftTrigger, rightTrigger));
+        state.wasBlocking = true;
+    else
+        if state.wasBlocking then
+            MacroBlockLog('[XInput] BLOCKING ended');
+            DebugLog('Blocking ended');
+        end
+        state.wasBlocking = false;
+
+        if (leftHeld or rightHeld) and not blockingEnabled then
+            MacroBlockLog(string.format('[XInput] Trigger pressed but blocking DISABLED (L2=%d R2=%d)', leftTrigger, rightTrigger));
+        end
     end
 end
 
@@ -654,6 +676,34 @@ end
 function Controller.HandleXInputButton(e)
     if not state.initialized or not state.enabled then
         return false;
+    end
+
+    -- Only process if using XInput device
+    if not Controller.UsesXInput() then
+        return false;
+    end
+
+    -- Track shoulder button state from xinput_button events (more reliable than polling)
+    -- XInput button IDs: LEFT_SHOULDER = 8, RIGHT_SHOULDER = 9
+    local isPressed = e.state == 1;
+
+    -- Debug: log ALL button events when debug is enabled
+    if DEBUG_ENABLED and isPressed then
+        DebugLog(string.format('xinput_button: id=%d (RB=%d, LB=%d)', e.button, xboxDevice.Buttons.RIGHT_SHOULDER, xboxDevice.Buttons.LEFT_SHOULDER));
+    end
+
+    if e.button == xboxDevice.Buttons.RIGHT_SHOULDER then
+        if isPressed ~= state.rightShoulderHeld then
+            DebugLog(string.format('RB/R1 %s (from xinput_button)', isPressed and 'PRESSED' or 'RELEASED'));
+        end
+        state.rightShoulderHeld = isPressed;
+        return false;  -- Don't block shoulder buttons
+    elseif e.button == xboxDevice.Buttons.LEFT_SHOULDER then
+        if isPressed ~= state.leftShoulderHeld then
+            DebugLog(string.format('LB/L1 %s (from xinput_button)', isPressed and 'PRESSED' or 'RELEASED'));
+        end
+        state.leftShoulderHeld = isPressed;
+        return false;  -- Don't block shoulder buttons
     end
 
     if not blockingEnabled then
@@ -665,11 +715,6 @@ function Controller.HandleXInputButton(e)
                     e.button, slotIndex));
             end
         end
-        return false;
-    end
-
-    -- Only process if using XInput device
-    if not Controller.UsesXInput() then
         return false;
     end
 
@@ -699,6 +744,57 @@ function Controller.HandleXInputButton(e)
     local slotIndex = xboxDevice.GetSlotFromButton(buttonId);
 
     if slotIndex then
+        -- Check for palette cycling: DPAD UP/DOWN + shoulder button
+        local isDpadUp = buttonId == xboxDevice.Buttons.DPAD_UP;
+        local isDpadDown = buttonId == xboxDevice.Buttons.DPAD_DOWN;
+
+        if isDpadUp or isDpadDown then
+            local globalSettings = gConfig and gConfig.hotbarGlobal;
+            local crossbarSettings = gConfig and gConfig.hotbarCrossbar;
+            local paletteCycleEnabled = globalSettings and globalSettings.paletteCycleControllerEnabled ~= false;
+
+            if paletteCycleEnabled then
+                local crossbarCycleButton = crossbarSettings and crossbarSettings.crossbarPaletteCycleButton or 'R1';
+                local crossbarButtonHeld = (crossbarCycleButton == 'L1' and state.leftShoulderHeld) or (crossbarCycleButton ~= 'L1' and state.rightShoulderHeld);
+
+                DebugLog(string.format('DPAD %s via xinput_button - RB=%s, LB=%s, cycleButton=%s, shoulderHeld=%s',
+                    isDpadUp and 'UP' or 'DOWN',
+                    tostring(state.rightShoulderHeld),
+                    tostring(state.leftShoulderHeld),
+                    crossbarCycleButton,
+                    tostring(crossbarButtonHeld)));
+
+                if crossbarButtonHeld then
+                    local direction = isDpadDown and 1 or -1;
+                    local jobId = data.jobId or 1;
+                    local subjobId = data.subjobId or 0;
+                    local activeCombo = state.activeCombo;
+
+                    -- Check if this combo mode is pet-aware
+                    local modeSettings = crossbarSettings and crossbarSettings.comboModeSettings and crossbarSettings.comboModeSettings[activeCombo];
+                    local isPetAware = modeSettings and modeSettings.petAware;
+
+                    if isPetAware then
+                        local newPalette = petpalette.CycleCrossbarPalette(activeCombo, direction, jobId);
+                        print('[XIUI] Crossbar palette: ' .. (newPalette or '(default)'));
+                        DebugLog('Crossbar pet palette cycled for ' .. activeCombo .. ': ' .. (direction == 1 and 'next' or 'prev') .. ' -> ' .. tostring(newPalette));
+                    else
+                        local newPalette, palettesExist = palette.CyclePaletteForCombo(activeCombo, direction, jobId, subjobId);
+                        if newPalette then
+                            print('[XIUI] Crossbar palette: ' .. newPalette);
+                            DebugLog('Crossbar palette cycled for ' .. activeCombo .. ': ' .. (direction == 1 and 'next' or 'prev') .. ' -> ' .. newPalette);
+                        elseif not palettesExist then
+                            print('[XIUI] No crossbar palettes defined for this job');
+                            DebugLog('No crossbar palettes defined for job ' .. tostring(jobId));
+                        end
+                    end
+
+                    return true;  -- Block the button, don't activate slot
+                end
+            end
+        end
+
+        -- Normal slot activation
         state.heldButtons[slotIndex] = true;
         state.currentPressedSlot = slotIndex;
         state.lastPressedSlot = slotIndex;
@@ -1084,6 +1180,7 @@ function Controller.Reset()
     state.isRightDoubleTap = false;
     state.previousDPadAngle = -1;
     state.dpadHeldSlot = nil;
+    state.wasBlocking = false;
 end
 
 function Controller.Cleanup()
