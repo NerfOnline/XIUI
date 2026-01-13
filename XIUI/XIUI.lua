@@ -389,7 +389,7 @@ local function MigrateAllLegacySettings()
                     f:close();
                 end
                 
-                print(chat.header(addon.name):append(chat.message('Migrated ' .. char.name .. ' to profile: ' .. profileName)));
+                print(chat.header(addon.name):append(chat.message('Migrated ' .. char.name .. ' to profile: ')):append(chat.success(profileName)));
             end
         end
     end
@@ -752,9 +752,35 @@ end
 settings.register('settings', 'settings_update', function (s)
     if (s ~= nil) then
         config = s;
-        -- Check if profile changed externally
-        -- Note: gConfig is NOT automatically updated by settings library anymore
-        -- We must manually reload if profile changes
+
+        -- Validate profile existence
+        local currentProfileName = config.currentProfile;
+        if (not profileManager.ProfileExists(currentProfileName)) then
+            print(chat.header(addon.name):append(chat.message('Profile not found: ')):append(chat.error(currentProfileName)));
+            currentProfileName = 'Default';
+            config.currentProfile = 'Default';
+            settings.save();
+        end
+
+        -- Reload profile settings
+        local newGConfig = profileManager.GetProfileSettings(currentProfileName);
+        if (newGConfig) then
+            gConfig = newGConfig;
+        else
+            -- Fallback
+             gConfig = deep_copy_table(defaultUserSettings);
+        end
+        
+        -- Initialize runtime state
+        gConfig.appliedPositions = {};
+        
+        -- Run migrations
+        settingsMigration.RunStructureMigrations(gConfig, defaultUserSettings);
+        
+        -- Update visuals
+        UpdateSettings();
+        
+        print(chat.header(addon.name):append(chat.message('Loaded profile: ')):append(chat.success(currentProfileName)));
     end
 end);
 
@@ -943,7 +969,7 @@ ashita.events.register('command', 'command_cb', function (e)
                 if index > 0 then
                     local nextIndex = (index % #profiles) + 1;
                     ChangeProfile(profiles[nextIndex]);
-                    print(chat.header(addon.name):append(chat.message('Switched to profile: ' .. profiles[nextIndex])));
+                    print(chat.header(addon.name):append(chat.message('Switched to profile: ')):append(chat.success(profiles[nextIndex])));
                 end
                 return;
             end
@@ -959,7 +985,7 @@ ashita.events.register('command', 'command_cb', function (e)
                 if index > 0 then
                     local prevIndex = (index - 2 + #profiles) % #profiles + 1;
                     ChangeProfile(profiles[prevIndex]);
-                    print(chat.header(addon.name):append(chat.message('Switched to profile: ' .. profiles[prevIndex])));
+                    print(chat.header(addon.name):append(chat.message('Switched to profile: ')):append(chat.success(profiles[prevIndex])));
                 end
                 return;
             end
@@ -969,9 +995,9 @@ ashita.events.register('command', 'command_cb', function (e)
             if (command_args[3] ~= nil) then
                 local profileName = command_args[3];
                 if (ChangeProfile(profileName)) then
-                     print(chat.header(addon.name):append(chat.message('Switched to profile: ' .. profileName)));
+                     print(chat.header(addon.name):append(chat.message('Switched to profile: ')):append(chat.success(profileName)));
                 else
-                     print(chat.header(addon.name):append(chat.error('Profile not found: ' .. profileName)));
+                     print(chat.header(addon.name):append(chat.message('Profile not found: ')):append(chat.error(profileName)));
                 end
                 return;
             end
@@ -1043,7 +1069,7 @@ ashita.events.register('command', 'command_cb', function (e)
             local before = collectgarbage('count');
             collectgarbage('collect');
             local after = collectgarbage('count');
-            print(chat.header(addon.name):append(chat.message(string.format('Garbage collection: %.1f KB -> %.1f KB (freed %.1f KB)',
+            print(chat.header(addon.name):append(chat.message('Garbage collection: ')):append(chat.success(string.format('%.1f KB -> %.1f KB (freed %.1f KB)',
                 before, after, before - after))));
             return;
         end
