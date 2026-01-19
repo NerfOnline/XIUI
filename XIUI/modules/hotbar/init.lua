@@ -696,6 +696,8 @@ function M.HandleJobChangePacket(e)
         if crossbarInitialized then
             crossbar.ClearIconCache();
         end
+        -- Clear availability cache (may have stale data from during zone transition)
+        slotrenderer.ClearAvailabilityCache();
         -- Check pet state after job change
         petpalette.CheckPetState();
     end);
