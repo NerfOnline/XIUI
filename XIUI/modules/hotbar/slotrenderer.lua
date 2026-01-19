@@ -414,9 +414,12 @@ local function DrawSkillchainHighlight(drawList, x, y, size, scName, color, opac
     DrawDashedLine(drawList, x, y + size, x, y, lineColor, thickness, dashLen, gapLen, animOffset);
 
     -- Draw skillchain icon in top-right corner
-    local iconSize = math.floor(size * 0.35);
-    local iconX = x + size - iconSize - 2;
-    local iconY = y + 2;
+    local scale = gConfig.hotbarGlobal.skillchainIconScale or 1.0;
+    local iconSize = math.floor(size * 0.35 * scale);
+    local offsetX = gConfig.hotbarGlobal.skillchainIconOffsetX or 0;
+    local offsetY = gConfig.hotbarGlobal.skillchainIconOffsetY or 0;
+    local iconX = x + size - iconSize - 2 + offsetX;
+    local iconY = y + 2 + offsetY;
 
     -- Get or load icon texture
     local iconPath = GetSkillchainIconsPath() .. scName .. '.png';

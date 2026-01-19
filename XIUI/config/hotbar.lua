@@ -2386,6 +2386,15 @@ function M.DrawSettings(state)
     end
     imgui.ShowHelp('Show animated border and skillchain icon on weapon skill slots when a skillchain window is open.');
 
+    if gConfig.hotbarGlobal.skillchainHighlightEnabled ~= false then
+        components.DrawPartySlider(gConfig.hotbarGlobal, 'Icon Scale##skillchain', 'skillchainIconScale', 0.5, 2.0, '%.1f', nil, 1.0);
+        imgui.ShowHelp('Scale of the skillchain icon (default 1.0).');
+        components.DrawPartySliderInt(gConfig.hotbarGlobal, 'Icon Offset X##skillchain', 'skillchainIconOffsetX', -50, 50, '%d', nil, 0);
+        imgui.ShowHelp('Horizontal offset for skillchain icon position.');
+        components.DrawPartySliderInt(gConfig.hotbarGlobal, 'Icon Offset Y##skillchain', 'skillchainIconOffsetY', -50, 50, '%d', nil, 0);
+        imgui.ShowHelp('Vertical offset for skillchain icon position.');
+    end
+
     imgui.Spacing();
     imgui.Separator();
     imgui.Spacing();
