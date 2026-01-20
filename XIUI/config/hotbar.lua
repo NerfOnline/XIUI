@@ -679,7 +679,7 @@ local function DrawCrossbarGlobalPalettesSection()
         end
         imgui.EndCombo();
     end
-    imgui.ShowHelp('Which shoulder button + DPad cycles crossbar palettes.\nPress this button + DPad Up/Down while holding a trigger to cycle palettes.');
+    imgui.ShowHelp('Which shoulder button + DPad cycles crossbar palettes.\nHold R1 + R2 together, then press DPad Up/Down to cycle palettes.');
 
     imgui.Spacing();
 end
@@ -1895,6 +1895,7 @@ local function DrawCrossbarSettings(selectedCrossbarTab)
         dinput = 'PlayStation',
     };
 
+    imgui.AlignTextToFramePadding();
     imgui.Text('Controller Profile:');
     imgui.SameLine();
     imgui.SetNextItemWidth(150);
@@ -1934,6 +1935,39 @@ local function DrawCrossbarSettings(selectedCrossbarTab)
         end, 0.3);
         imgui.ShowHelp('Time window to register a double-tap (in seconds).');
     end
+
+    imgui.Spacing();
+
+    -- Display Mode dropdown
+    local displayModes = { 'normal', 'activeOnly' };
+    local displayModeLabels = { 'Normal', 'Active Only' };
+    local currentDisplayMode = crossbarSettings.displayMode or 'normal';
+    local currentDisplayIndex = 1;
+    for i, mode in ipairs(displayModes) do
+        if mode == currentDisplayMode then
+            currentDisplayIndex = i;
+            break;
+        end
+    end
+
+    imgui.AlignTextToFramePadding();
+    imgui.Text('Display Mode:');
+    imgui.SameLine();
+    imgui.SetNextItemWidth(150);
+    if imgui.BeginCombo('##displayModeCrossbar', displayModeLabels[currentDisplayIndex]) then
+        for i, label in ipairs(displayModeLabels) do
+            local isSelected = (i == currentDisplayIndex);
+            if imgui.Selectable(label, isSelected) then
+                crossbarSettings.displayMode = displayModes[i];
+                SaveSettingsOnly();
+            end
+            if isSelected then
+                imgui.SetItemDefaultFocus();
+            end
+        end
+        imgui.EndCombo();
+    end
+    imgui.ShowHelp('Normal: Always show both sides (inactive side dimmed).\nActive Only: Show only when trigger is held, displaying only the active side.');
 
     imgui.Spacing();
 
@@ -2234,6 +2268,9 @@ local function DrawCrossbarColorSettings()
         end
         imgui.ShowHelp('Color and transparency of slot backgrounds.');
 
+        components.DrawPartySlider(crossbarSettings, 'Slot Opacity##crossbar', 'slotOpacity', 0.0, 1.0, '%.2f', nil, 1.0);
+        imgui.ShowHelp('Opacity of the slot background texture.');
+
         local highlightColor = crossbarSettings.activeSlotHighlight or 0x44FFFFFF;
         local highlightColorTable = ARGBToImGui(highlightColor);
         if imgui.ColorEdit4('Active Highlight##crossbar', highlightColorTable, colorFlags) then
@@ -2411,6 +2448,15 @@ function M.DrawSettings(state)
         SaveSettingsOnly();
     end
     imgui.ShowHelp('Show animated border and skillchain icon on weapon skill slots when a skillchain window is open.');
+
+    if gConfig.hotbarGlobal.skillchainHighlightEnabled ~= false then
+        components.DrawPartySlider(gConfig.hotbarGlobal, 'Icon Scale##skillchain', 'skillchainIconScale', 0.5, 2.0, '%.1f', nil, 1.0);
+        imgui.ShowHelp('Scale of the skillchain icon (default 1.0).');
+        components.DrawPartySliderInt(gConfig.hotbarGlobal, 'Icon Offset X##skillchain', 'skillchainIconOffsetX', -50, 50, '%d', nil, 0);
+        imgui.ShowHelp('Horizontal offset for skillchain icon position.');
+        components.DrawPartySliderInt(gConfig.hotbarGlobal, 'Icon Offset Y##skillchain', 'skillchainIconOffsetY', -50, 50, '%d', nil, 0);
+        imgui.ShowHelp('Vertical offset for skillchain icon position.');
+    end
 
     imgui.Spacing();
     imgui.Separator();
@@ -2789,6 +2835,9 @@ local function DrawColorSettingsContent(settings, configKey)
             SaveSettingsOnly();
         end
         imgui.ShowHelp('Color and transparency of slot backgrounds.');
+
+        components.DrawPartySlider(settings, 'Slot Opacity##' .. configKey, 'slotOpacity', 0.0, 1.0, '%.2f', nil, 1.0);
+        imgui.ShowHelp('Opacity of the slot background texture.');
     end
 
     if components.CollapsingSection('Text Colors##' .. configKey .. 'color', true) then

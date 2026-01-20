@@ -258,6 +258,7 @@ local function DrawSlot(barIndex, slotIndex, x, y, buttonSize, bind, barSettings
 
         -- Visual Settings
         slotBgColor = barSettings and barSettings.slotBackgroundColor or 0xFFFFFFFF,
+        slotOpacity = barSettings and barSettings.slotOpacity or 1.0,
         keybindText = (barSettings and barSettings.showKeybinds ~= false) and data.GetKeybindDisplay(barIndex, slotIndex) or nil,
         keybindFontSize = barSettings and barSettings.keybindFontSize or 10,
         keybindFontColor = barSettings and barSettings.keybindFontColor or 0xFFFFFFFF,
@@ -490,7 +491,7 @@ local function DrawBarWindow(barIndex, settings)
         if skillchainEnabled then
             local mainTargetIdx = targetLib.GetTargets();
             if mainTargetIdx and mainTargetIdx ~= 0 then
-                local targetEntity = GetEntitySafe(mainTargetIdx);
+                local targetEntity = GetEntity(mainTargetIdx);
                 if targetEntity then
                     targetServerId = targetEntity.ServerId;
                 end

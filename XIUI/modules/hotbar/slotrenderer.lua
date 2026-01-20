@@ -32,33 +32,34 @@ local ITEM_QUANTITY_CACHE_TTL = 2.0;  -- Cache for 2 seconds (inventory doesn't 
 -- Containers to search for item quantities
 local ITEM_CONTAINERS = { 0, 8, 10, 11, 12, 13, 14, 15, 16 };  -- Inventory, wardrobes, satchel, etc.
 
--- Ninja spell to tool mapping
--- Maps spell name prefixes to required tool names
+-- Ninja spell to tool mapping (using item IDs for reliable lookups)
+-- Maps spell name prefixes to required tool item IDs
+-- IDs verified from https://www.ffxiah.com/browse/49/ninja-tools
 local NINJA_TOOL_MAPPING = {
     -- Elemental Ninjutsu (damage)
-    ['Katon'] = 'Uchitake',       -- Fire
-    ['Hyoton'] = 'Tsurara',       -- Ice
-    ['Huton'] = 'Kawahori-Ogi',   -- Wind
-    ['Doton'] = 'Makibishi',      -- Earth
-    ['Suiton'] = 'Mizu-Deppo',    -- Water
-    ['Raiton'] = 'Hiraishin',     -- Lightning
+    ['Katon'] = 1161,      -- Uchitake (Fire)
+    ['Hyoton'] = 1164,     -- Tsurara (Ice)
+    ['Huton'] = 1167,      -- Kawahori-Ogi (Wind)
+    ['Doton'] = 1170,      -- Makibishi (Earth)
+    ['Raiton'] = 1173,     -- Hiraishin (Lightning)
+    ['Suiton'] = 1176,     -- Mizu-Deppo (Water)
     -- Utility Ninjutsu
-    ['Utsusemi'] = 'Shihei',      -- Shadows
-    ['Tonko'] = 'Shinobi-Tabi',   -- Invisible
-    ['Monomi'] = 'Sanjaku-Tenugui', -- Sneak
+    ['Utsusemi'] = 1179,   -- Shihei (Shadows)
+    ['Tonko'] = 1194,      -- Shinobi-Tabi (Invisible)
+    ['Monomi'] = 2553,     -- Sanjaku-Tenugui (Sneak)
     -- Debuff Ninjutsu
-    ['Kurayami'] = 'Soshi',       -- Blind
-    ['Hojo'] = 'Kaginawa',        -- Slow
-    ['Jubaku'] = 'Jusatsu',       -- Paralyze
-    ['Dokumori'] = 'Kodoku',      -- Poison
-    ['Aisha'] = 'Kodoku',         -- Gravity (same as Dokumori)
+    ['Kurayami'] = 2555,   -- Soshi (Blind)
+    ['Hojo'] = 1185,       -- Kaginawa (Slow)
+    ['Jubaku'] = 1182,     -- Jusatsu (Paralyze)
+    ['Dokumori'] = 1191,   -- Kodoku (Poison)
+    ['Aisha'] = 1191,      -- Kodoku (Gravity - same as Dokumori)
     -- High-level Ninjutsu
-    ['Migawari'] = 'Mokujin',     -- Substitute
-    ['Yurin'] = 'Ryuno',          -- Intimidate
-    ['Myoshu'] = 'Kabenro',       -- Acc boost
-    ['Gekka'] = 'Shikanofuda',    -- Store TP
-    ['Yain'] = 'Jinko',           -- Subtle Blow
-    ['Kakka'] = 'Shikanofuda',    -- Attack boost (same as Gekka)
+    ['Migawari'] = 2970,   -- Mokujin (Substitute)
+    ['Yurin'] = 2644,      -- Ryuno (Intimidate)
+    ['Myoshu'] = 2642,     -- Kabenro (Acc boost)
+    ['Gekka'] = 2972,      -- Shikanofuda (Store TP)
+    ['Yain'] = 2643,       -- Jinko (Subtle Blow)
+    ['Kakka'] = 2972,      -- Shikanofuda (Attack boost - same as Gekka)
 };
 
 -- Cache for ninjutsu spell type lookups
@@ -206,10 +207,10 @@ function M.GetItemQuantity(itemId, itemName)
     return result;
 end
 
--- Get the ninja tool name required for a ninjutsu spell
+-- Get the ninja tool ID required for a ninjutsu spell
 -- @param spellName: The spell name (e.g., "Utsusemi: Ni", "Katon: San")
--- @return: Tool name or nil if not a ninjutsu spell
-local function GetNinjutsuToolName(spellName)
+-- @return: Tool item ID or nil if not a ninjutsu spell
+local function GetNinjutsuToolId(spellName)
     if not spellName then return nil; end
 
     -- Check cache first
@@ -223,19 +224,19 @@ local function GetNinjutsuToolName(spellName)
         baseName = baseName:gsub('%s+$', ''); -- Trim trailing whitespace
     end
 
-    local toolName = NINJA_TOOL_MAPPING[baseName];
-    ninjutsuCache[spellName] = toolName or false; -- Cache nil as false to distinguish from uncached
-    return toolName;
+    local toolId = NINJA_TOOL_MAPPING[baseName];
+    ninjutsuCache[spellName] = toolId or false; -- Cache nil as false to distinguish from uncached
+    return toolId;
 end
 
 -- Get the quantity of ninja tools for a ninjutsu spell
 -- @param spellName: The spell name (e.g., "Utsusemi: Ni")
 -- @return: Tool quantity (0+) if ninjutsu spell with tool, nil if not a ninjutsu spell
 function M.GetNinjutsuToolQuantity(spellName)
-    local toolName = GetNinjutsuToolName(spellName);
-    if not toolName then return nil; end
+    local toolId = GetNinjutsuToolId(spellName);
+    if not toolId then return nil; end
     -- Return 0 if no tools found (instead of nil) so we can show "x0" in red
-    return M.GetItemQuantity(nil, toolName) or 0;
+    return M.GetItemQuantity(toolId, nil) or 0;
 end
 
 -- Cached asset path
@@ -414,9 +415,12 @@ local function DrawSkillchainHighlight(drawList, x, y, size, scName, color, opac
     DrawDashedLine(drawList, x, y + size, x, y, lineColor, thickness, dashLen, gapLen, animOffset);
 
     -- Draw skillchain icon in top-right corner
-    local iconSize = math.floor(size * 0.35);
-    local iconX = x + size - iconSize - 2;
-    local iconY = y + 2;
+    local scale = gConfig.hotbarGlobal.skillchainIconScale or 1.0;
+    local iconSize = math.floor(size * 0.35 * scale);
+    local offsetX = gConfig.hotbarGlobal.skillchainIconOffsetX or 0;
+    local offsetY = gConfig.hotbarGlobal.skillchainIconOffsetY or 0;
+    local iconX = x + size - iconSize - 2 + offsetX;
+    local iconY = y + 2 + offsetY;
 
     -- Get or load icon texture
     local iconPath = GetSkillchainIconsPath() .. scName .. '.png';
@@ -574,6 +578,13 @@ function M.DrawSlot(resources, params)
             local g = math.floor(bit.rshift(bit.band(slotBgColor, 0x0000FF00), 8) * totalDim);
             local b = math.floor(bit.band(slotBgColor, 0x000000FF) * totalDim);
             finalColor = bit.bor(bit.lshift(a, 24), bit.lshift(r, 16), bit.lshift(g, 8), b);
+        end
+
+        -- Apply slot opacity setting (before animation opacity)
+        local slotOpacity = params.slotOpacity or 1.0;
+        if slotOpacity < 1.0 then
+            local a = math.floor(bit.rshift(bit.band(finalColor, 0xFF000000), 24) * slotOpacity);
+            finalColor = bit.bor(bit.lshift(a, 24), bit.band(finalColor, 0x00FFFFFF));
         end
 
         -- Apply animation opacity to alpha channel

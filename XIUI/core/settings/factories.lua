@@ -344,7 +344,10 @@ function M.createHotbarGlobalDefaults()
         -- Skillchain highlight settings
         skillchainHighlightEnabled = true,      -- Show skillchain highlight on WS slots
         skillchainHighlightColor = 0xFFD4AA44,  -- Gold color for highlight border (ARGB)
-
+        skillchainIconScale = 1.0,              -- Scale multiplier for icon (0.5-2.0)
+        skillchainIconOffsetX = 0,              -- X offset in pixels
+        skillchainIconOffsetY = 0,              -- Y offset in pixels
+    
         -- Cooldown timer settings
         recastTimerFontSize = 11,               -- Font size for cooldown timer display
         recastTimerFontColor = 0xFFFFFFFF,      -- Color for cooldown timer text
@@ -394,6 +397,7 @@ function M.createHotbarBarDefaults(overrides)
 
         -- Slot appearance
         slotBackgroundColor = 0x55000000,  -- ARGB color for slot backgrounds (black at 33% opacity)
+        slotOpacity = 1.0,                 -- Opacity multiplier for slot.png (0.0-1.0)
 
         -- Window colors (per-bar)
         bgColor = 0xFFFFFFFF,              -- Background color tint (ARGB)
@@ -488,8 +492,13 @@ function M.createCrossbarDefaults()
         backgroundOpacity = 0.10,
         borderOpacity = 1.0,
         slotBackgroundColor = 0x55000000,
+        slotOpacity = 1.0,                  -- Opacity multiplier for slot.png (0.0-1.0)
         activeSlotHighlight = 0x44FFFFFF,   -- Highlight color when trigger held
         inactiveSlotDim = 0.5,              -- Dim multiplier for inactive side
+
+        -- Display mode
+        displayMode = 'normal',             -- 'normal' or 'activeOnly'
+        fadeAnimationDuration = 0.15,       -- Fade in/out duration for activeOnly mode
 
         -- Window colors
         bgColor = 0xFFFFFFFF,
