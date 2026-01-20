@@ -1117,6 +1117,17 @@ function M.IsUsingCrossbarFallbackPalettes(jobId, subjobId)
     return true;  -- Using fallback
 end
 
+-- Unified fallback check for both hotbar and crossbar
+-- paletteType: 'hotbar' or 'crossbar'
+function M.IsUsingFallback(jobId, subjobId, paletteType)
+    if subjobId == 0 then return false; end
+    if paletteType == 'crossbar' then
+        return M.IsUsingCrossbarFallbackPalettes(jobId, subjobId);
+    else
+        return M.IsUsingFallbackPalettes(jobId, subjobId);
+    end
+end
+
 -- DEPRECATED: GetAllAvailablePalettes - kept for backwards compatibility
 -- Now just returns hotbar palettes since crossbar has its own separate palettes
 function M.GetAllAvailablePalettes(jobId, subjobId)
@@ -2025,8 +2036,7 @@ function M.DeleteAllCrossbarSubjobPalettes(jobId, subjobId)
         local oldPalette = state.crossbarActivePalette;
         state.crossbarActivePalette = nil;
         -- Fire callbacks for all combo modes
-        local comboModes = { 'L2', 'R2', 'L2R2', 'R2L2', 'L2x2', 'R2x2' };
-        for _, mode in ipairs(comboModes) do
+        for _, mode in ipairs(CROSSBAR_COMBO_MODES) do
             M.FirePaletteChangedCallbacks('crossbar:' .. mode, oldPalette, nil);
         end
     end

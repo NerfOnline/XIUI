@@ -174,12 +174,7 @@ local function DrawPaletteModal()
         local jobId = data.jobId or 1;
         local subjobId = data.subjobId or 0;
         if paletteModal.mode == 'create' and subjobId ~= 0 then
-            local usingFallback = false;
-            if paletteModal.paletteType == 'crossbar' then
-                usingFallback = palette.IsUsingCrossbarFallbackPalettes(jobId, subjobId);
-            else
-                usingFallback = palette.IsUsingFallbackPalettes(jobId, subjobId);
-            end
+            local usingFallback = palette.IsUsingFallback(jobId, subjobId, paletteModal.paletteType);
             if usingFallback then
                 local jobName = jobs[jobId] or ('Job ' .. jobId);
                 local subjobName = jobs[subjobId] or ('Job ' .. subjobId);
@@ -383,10 +378,7 @@ local function DrawGlobalPalettesSection()
     local currentPalette = palette.GetActivePalette(1);  -- Same for all bars
 
     -- Check if using fallback (shared library) palettes
-    local usingFallback = false;
-    if subjobId ~= 0 then
-        usingFallback = palette.IsUsingFallbackPalettes(jobId, subjobId);
-    end
+    local usingFallback = palette.IsUsingFallback(jobId, subjobId, 'hotbar');
 
     -- Ensure active palette is set if we have palettes but none active
     if #availablePalettes > 0 and not currentPalette then
@@ -555,10 +547,7 @@ local function DrawCrossbarGlobalPalettesSection()
     local currentPalette = palette.GetActivePaletteForCombo('L2');  -- Global for all combos
 
     -- Check if using fallback (shared library) palettes
-    local usingFallback = false;
-    if subjobId ~= 0 then
-        usingFallback = palette.IsUsingCrossbarFallbackPalettes(jobId, subjobId);
-    end
+    local usingFallback = palette.IsUsingFallback(jobId, subjobId, 'crossbar');
 
     -- Ensure active palette is set if we have palettes but none active
     if #availablePalettes > 0 and not currentPalette then
