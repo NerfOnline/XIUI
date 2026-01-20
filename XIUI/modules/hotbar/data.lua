@@ -214,10 +214,9 @@ local PER_BAR_ONLY_KEYS = {
 -- ============================================
 
 -- Build full storage key for a bar, considering job, subjob, pet awareness, and general palettes
--- Returns: 'global', '{jobId}:{subjobId}' (base), '{jobId}:{subjobId}:{petKey}' (pet), or '{jobId}:palette:{name}' (palette)
+-- Returns: 'global', '{jobId}:{subjobId}' (base), '{jobId}:{subjobId}:{petKey}' (pet), or '{jobId}:{subjobId}:palette:{name}' (palette)
 -- Priority: global > pet-aware > general palette > base
--- NOTE: Palettes use job-only keys (no subjob) to make them job-wide
---       Base slots use job:subjob keys to remain subjob-specific
+-- NOTE: Palettes can be subjob-specific or shared (subjob 0), with fallback to shared if no subjob-specific exist
 function M.GetStorageKeyForBar(barIndex)
     local configKey = 'hotbarBar' .. barIndex;
     local barSettings = gConfig and gConfig[configKey];
@@ -252,13 +251,18 @@ function M.GetStorageKeyForBar(barIndex)
     end
 
     -- Check for general palette (user-defined named palettes)
-    -- IMPORTANT: Palettes use job-only keys (no subjob) - they are job-wide
+    -- Palettes use subjob-aware keys with fallback to shared (subjob 0) if no subjob-specific exist
     local p = getPalette();
     if p then
         local paletteSuffix = p.GetEffectivePaletteKeySuffix(barIndex);
         if paletteSuffix then
-            -- NEW FORMAT: '{jobId}:palette:{name}' (no subjob)
-            return string.format('%d:%s', normalizedJobId, paletteSuffix);
+            -- Determine which subjobId to use: check if using fallback to shared palettes
+            local effectiveSubjobId = normalizedSubjobId;
+            if p.IsUsingFallbackPalettes and p.IsUsingFallbackPalettes(normalizedJobId, normalizedSubjobId) then
+                effectiveSubjobId = 0;  -- Use shared palette key
+            end
+            -- NEW FORMAT: '{jobId}:{subjobId}:palette:{name}'
+            return string.format('%d:%d:%s', normalizedJobId, effectiveSubjobId, paletteSuffix);
         end
     end
 
@@ -348,7 +352,7 @@ end
 
 -- Build full storage key for a crossbar combo mode, considering job, subjob, pet awareness, and palettes
 -- NOTE: Crossbar now uses a SINGLE global palette for all combo modes (not per-combo-mode)
--- Returns: 'global', '{jobId}:{subjobId}' (base), '{jobId}:{subjobId}:{petKey}' (pet), or '{jobId}:palette:{name}' (palette)
+-- Returns: 'global', '{jobId}:{subjobId}' (base), '{jobId}:{subjobId}:{petKey}' (pet), or '{jobId}:{subjobId}:palette:{name}' (palette)
 function M.GetCrossbarStorageKeyForCombo(comboMode)
     local crossbarSettings = gConfig and gConfig.hotbarCrossbar;
     if not crossbarSettings then
@@ -383,13 +387,24 @@ function M.GetCrossbarStorageKeyForCombo(comboMode)
     end
 
     -- Check for GLOBAL crossbar palette (shared across all combo modes)
-    -- IMPORTANT: Palettes use job-only keys (no subjob) - they are job-wide
+    -- Palettes use subjob-aware keys with fallback to shared (subjob 0) if no subjob-specific exist
     local p = getPalette();
     if p then
         local paletteSuffix = p.GetEffectivePaletteKeySuffixForCombo(comboMode);
         if paletteSuffix then
-            -- NEW FORMAT: '{jobId}:palette:{name}' (no subjob)
-            return string.format('%d:%s', normalizedJobId, paletteSuffix);
+            -- Determine which subjobId to use: check if using fallback to shared palettes
+            local effectiveSubjobId = normalizedSubjobId;
+            -- Use crossbar-specific fallback check
+            if p.IsUsingFallbackPalettes then
+                -- Check crossbar palettes specifically
+                local crossbarPalettes = p.GetCrossbarAvailablePalettes(normalizedJobId, normalizedSubjobId);
+                -- If no palettes found and we're not at subjob 0, we're likely using fallback
+                if #crossbarPalettes == 0 or (normalizedSubjobId ~= 0 and p.IsUsingFallbackPalettes(normalizedJobId, normalizedSubjobId)) then
+                    effectiveSubjobId = 0;  -- Use shared palette key
+                end
+            end
+            -- NEW FORMAT: '{jobId}:{subjobId}:palette:{name}'
+            return string.format('%d:%d:%s', normalizedJobId, effectiveSubjobId, paletteSuffix);
         end
     end
 

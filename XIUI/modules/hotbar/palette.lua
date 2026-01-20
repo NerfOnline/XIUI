@@ -3,10 +3,12 @@
 * Manages user-defined named palettes for hotbars
 * Works alongside petpalette.lua (pet palettes take precedence when petAware is enabled)
 *
-* GLOBAL PALETTE SYSTEM (v3):
+* GLOBAL PALETTE SYSTEM (v4):
 * - All hotbars share ONE global palette (not per-bar)
 * - Crossbar has its own single palette (not per-combo-mode)
-* - Storage key format: '{jobId}:palette:{name}' (no subjob - palettes are job-wide)
+* - Storage key format: '{jobId}:{subjobId}:palette:{name}' (subjob-specific)
+* - Fallback: If no subjob-specific palettes exist, falls back to shared palettes (subjob 0)
+* - tHotBar imports go to shared slot (subjob 0), accessible from any subjob
 * - Every job always has at least one palette (auto-created if none exist)
 * - NO special "Base" palette - the first palette IS the default
 * - All palettes are equal: renamable, reorderable, deletable (except can't delete last one)
@@ -59,23 +61,186 @@ local function EnsureHotbarConfigExists()
     return true;
 end
 
+-- ============================================
+-- Migration: Convert old format palettes to new format
+-- Old format: '{jobId}:palette:{name}'
+-- New format: '{jobId}:{subjobId}:palette:{name}' (with subjobId=0 for shared)
+-- ============================================
+
+local PALETTE_MIGRATION_VERSION = 2;  -- Increment when migration logic changes
+
+-- Check if migration is needed
+local function NeedsPaletteMigration()
+    if not gConfig then return false; end
+    local currentVersion = gConfig.hotbar and gConfig.hotbar.paletteMigrationVersion or 0;
+    return currentVersion < PALETTE_MIGRATION_VERSION;
+end
+
+-- Migrate a single slotActions table from old to new format
+local function MigrateSlotActions(slotActions)
+    if not slotActions then return 0; end
+
+    local keysToMigrate = {};
+    local migrationCount = 0;
+
+    -- Find old format keys: '{jobId}:palette:{name}' (2 parts before 'palette')
+    for storageKey, data in pairs(slotActions) do
+        if type(storageKey) == 'string' then
+            -- Check for old format: jobId:palette:name (3 parts total, no subjob)
+            local jobId, suffix = storageKey:match('^(%d+):(palette:.+)$');
+            if jobId and suffix then
+                -- This is old format - check if it's NOT new format by ensuring no subjob
+                local _, subjobCheck = storageKey:match('^(%d+):(%d+):');
+                if not subjobCheck then
+                    -- Old format detected - migrate to new format with subjob 0
+                    local newKey = string.format('%s:0:%s', jobId, suffix);
+                    keysToMigrate[storageKey] = newKey;
+                end
+            end
+        end
+    end
+
+    -- Perform migration
+    for oldKey, newKey in pairs(keysToMigrate) do
+        if not slotActions[newKey] then
+            slotActions[newKey] = slotActions[oldKey];
+            slotActions[oldKey] = nil;
+            migrationCount = migrationCount + 1;
+        end
+    end
+
+    return migrationCount;
+end
+
+-- Migrate palette order keys from old to new format
+local function MigratePaletteOrder(paletteOrder)
+    if not paletteOrder then return 0; end
+
+    local keysToMigrate = {};
+    local migrationCount = 0;
+
+    -- Find numeric keys (old format used jobId as number)
+    for key, orderList in pairs(paletteOrder) do
+        if type(key) == 'number' then
+            -- Old format: numeric jobId -> migrate to 'jobId:0' string
+            local newKey = string.format('%d:0', key);
+            keysToMigrate[key] = newKey;
+        end
+    end
+
+    -- Perform migration
+    for oldKey, newKey in pairs(keysToMigrate) do
+        if not paletteOrder[newKey] then
+            paletteOrder[newKey] = paletteOrder[oldKey];
+            paletteOrder[oldKey] = nil;
+            migrationCount = migrationCount + 1;
+        end
+    end
+
+    return migrationCount;
+end
+
+-- Migrate activePalettePerJob keys from old to new format
+local function MigrateActivePalettePerJob(activePalettePerJob)
+    if not activePalettePerJob then return 0; end
+
+    local keysToMigrate = {};
+    local migrationCount = 0;
+
+    -- Find numeric keys (old format used jobId as number)
+    for key, paletteName in pairs(activePalettePerJob) do
+        if type(key) == 'number' then
+            -- Old format: numeric jobId -> migrate to 'jobId:0' string
+            local newKey = string.format('%d:0', key);
+            keysToMigrate[key] = newKey;
+        end
+    end
+
+    -- Perform migration
+    for oldKey, newKey in pairs(keysToMigrate) do
+        if not activePalettePerJob[newKey] then
+            activePalettePerJob[newKey] = activePalettePerJob[oldKey];
+            activePalettePerJob[oldKey] = nil;
+            migrationCount = migrationCount + 1;
+        end
+    end
+
+    return migrationCount;
+end
+
+-- Run full palette migration
+local function RunPaletteMigration()
+    if not gConfig then return; end
+
+    local totalMigrated = 0;
+
+    -- Migrate hotbar slotActions
+    for barIdx = 1, 6 do
+        local configKey = 'hotbarBar' .. barIdx;
+        local barSettings = gConfig[configKey];
+        if barSettings and barSettings.slotActions then
+            totalMigrated = totalMigrated + MigrateSlotActions(barSettings.slotActions);
+        end
+    end
+
+    -- Migrate crossbar slotActions
+    if gConfig.hotbarCrossbar and gConfig.hotbarCrossbar.slotActions then
+        totalMigrated = totalMigrated + MigrateSlotActions(gConfig.hotbarCrossbar.slotActions);
+    end
+
+    -- Migrate palette order
+    if gConfig.hotbar and gConfig.hotbar.paletteOrder then
+        totalMigrated = totalMigrated + MigratePaletteOrder(gConfig.hotbar.paletteOrder);
+    end
+
+    -- Migrate crossbar palette order
+    if gConfig.hotbarCrossbar and gConfig.hotbarCrossbar.crossbarPaletteOrder then
+        totalMigrated = totalMigrated + MigratePaletteOrder(gConfig.hotbarCrossbar.crossbarPaletteOrder);
+    end
+
+    -- Migrate active palette per job
+    if gConfig.hotbar and gConfig.hotbar.activePalettePerJob then
+        totalMigrated = totalMigrated + MigrateActivePalettePerJob(gConfig.hotbar.activePalettePerJob);
+    end
+
+    -- Mark migration as complete
+    if not gConfig.hotbar then
+        gConfig.hotbar = {};
+    end
+    gConfig.hotbar.paletteMigrationVersion = PALETTE_MIGRATION_VERSION;
+
+    if totalMigrated > 0 then
+        print('[XIUI palette] Migrated ' .. totalMigrated .. ' palette entries to new subjob-aware format');
+        SaveSettingsToDisk();
+    end
+end
+
+-- Build job:subjob key string for palette state storage
+local function BuildJobSubjobKey(jobId, subjobId)
+    local normalizedJobId = jobId or 1;
+    local normalizedSubjobId = subjobId or 0;
+    return string.format('%d:%d', normalizedJobId, normalizedSubjobId);
+end
+
 -- Save active palette state to config (for persistence across reloads)
--- Called when palette changes to remember last-used palette per job
-local function SavePaletteState(jobId)
+-- Called when palette changes to remember last-used palette per job:subjob
+local function SavePaletteState(jobId, subjobId)
     if not EnsureHotbarConfigExists() then return; end
     if not gConfig.hotbar.activePalettePerJob then
         gConfig.hotbar.activePalettePerJob = {};
     end
-    gConfig.hotbar.activePalettePerJob[jobId] = state.activePalette;
+    local key = BuildJobSubjobKey(jobId, subjobId);
+    gConfig.hotbar.activePalettePerJob[key] = state.activePalette;
     -- Note: Don't call SaveSettingsToDisk() here - it will be called by the caller if needed
 end
 
 -- Load active palette state from config (for persistence across reloads)
-local function LoadPaletteState(jobId)
+local function LoadPaletteState(jobId, subjobId)
     if not gConfig or not gConfig.hotbar or not gConfig.hotbar.activePalettePerJob then
         return nil;
     end
-    return gConfig.hotbar.activePalettePerJob[jobId];
+    local key = BuildJobSubjobKey(jobId, subjobId);
+    return gConfig.hotbar.activePalettePerJob[key];
 end
 
 -- ============================================
@@ -103,16 +268,24 @@ function M.GetPaletteKeySuffix(paletteName)
     return M.PALETTE_KEY_PREFIX .. paletteName;
 end
 
--- Build full storage key for a palette (NEW FORMAT: job-only, no subjob)
+-- Build full storage key for a palette (NEW FORMAT: includes subjob for subjob-specific palettes)
 -- jobId: The main job ID (number)
+-- subjobId: The subjob ID (number), 0 = shared/imported palettes
 -- paletteName: palette name or nil for base key
--- Returns: '{jobId}:palette:{name}' for palettes, or just jobId as string for base
-function M.BuildPaletteStorageKey(jobId, paletteName)
+-- Returns: '{jobId}:{subjobId}:palette:{name}' for palettes, or '{jobId}:{subjobId}' for base
+function M.BuildPaletteStorageKey(jobId, subjobId, paletteName)
     local normalizedJobId = jobId or 1;
+    local normalizedSubjobId = subjobId or 0;
     if not paletteName then
-        return tostring(normalizedJobId);
+        return string.format('%d:%d', normalizedJobId, normalizedSubjobId);
     end
-    return string.format('%d:%s%s', normalizedJobId, M.PALETTE_KEY_PREFIX, paletteName);
+    return string.format('%d:%d:%s%s', normalizedJobId, normalizedSubjobId, M.PALETTE_KEY_PREFIX, paletteName);
+end
+
+-- Build storage key for shared/imported palettes (subjob 0)
+-- Used by tHotBar migration and for palettes accessible from any subjob
+function M.BuildSharedPaletteStorageKey(jobId, paletteName)
+    return M.BuildPaletteStorageKey(jobId, 0, paletteName);
 end
 
 -- DEPRECATED: Old format - kept for backwards compatibility during migration
@@ -163,8 +336,9 @@ end
 -- Set active palette (GLOBAL - affects all hotbars)
 -- barIndex param kept for backwards compatibility but ignored
 -- paletteName: name to activate, or nil to clear
--- jobId: optional job ID for persistence (saves which palette was last used for this job)
-function M.SetActivePalette(barIndex, paletteName, jobId)
+-- jobId: optional job ID for persistence (saves which palette was last used for this job:subjob)
+-- subjobId: optional subjob ID for persistence
+function M.SetActivePalette(barIndex, paletteName, jobId, subjobId)
     local oldPalette = state.activePalette;
 
     -- Skip if no change
@@ -176,7 +350,7 @@ function M.SetActivePalette(barIndex, paletteName, jobId)
 
     -- Save state for persistence if jobId provided
     if jobId then
-        SavePaletteState(jobId);
+        SavePaletteState(jobId, subjobId);
     end
 
     -- Fire callbacks for ALL bars (they all share the same palette now)
@@ -205,19 +379,10 @@ end
 -- Available Palettes Discovery (GLOBAL - scans all bars)
 -- ============================================
 
--- Get list of available palette names for ALL hotbars (GLOBAL)
--- Uses NEW FORMAT only: Palettes are stored with job-only keys: '{jobId}:palette:{name}'
--- barIndex param kept for backwards compatibility but all bars are scanned
--- subjobId param kept for backwards compatibility but ignored (palettes are job-wide)
--- Returns: { 'Stuns', 'Heals', ... } (empty if no palettes defined)
-function M.GetAvailablePalettes(barIndex, jobId, subjobId)
-    local normalizedJobId = jobId or 1;
-
-    -- Collect palettes from ALL hotbars (they share the same palette pool)
+-- Helper: Scan all hotbars for palettes matching a pattern prefix
+-- Returns: table of { [paletteName] = true }
+local function ScanForPalettes(patternPrefix)
     local existingPalettes = {};
-
-    -- NEW format pattern: '{jobId}:palette:{name}'
-    local newFormatPattern = string.format('%d:%s', normalizedJobId, M.PALETTE_KEY_PREFIX);
 
     for barIdx = 1, 6 do
         local configKey = 'hotbarBar' .. barIdx;
@@ -225,9 +390,8 @@ function M.GetAvailablePalettes(barIndex, jobId, subjobId)
         if barSettings and barSettings.slotActions then
             for storageKey, _ in pairs(barSettings.slotActions) do
                 if type(storageKey) == 'string' then
-                    -- Check NEW format only: '{jobId}:palette:{name}'
-                    if storageKey:find(newFormatPattern, 1, true) == 1 then
-                        local paletteName = storageKey:sub(#newFormatPattern + 1);
+                    if storageKey:find(patternPrefix, 1, true) == 1 then
+                        local paletteName = storageKey:sub(#patternPrefix + 1);
                         if paletteName and paletteName ~= '' then
                             existingPalettes[paletteName] = true;
                         end
@@ -237,9 +401,47 @@ function M.GetAvailablePalettes(barIndex, jobId, subjobId)
         end
     end
 
-    -- Get the stored palette order (GLOBAL: stored at hotbar level, keyed by jobId only)
+    return existingPalettes;
+end
+
+-- Get list of available palette names for ALL hotbars (GLOBAL)
+-- Uses NEW FORMAT: '{jobId}:{subjobId}:palette:{name}'
+-- Fallback: If no subjob-specific palettes exist, falls back to shared palettes (subjob 0)
+-- barIndex param kept for backwards compatibility but all bars are scanned
+-- Returns: { 'Stuns', 'Heals', ... } (empty if no palettes defined)
+function M.GetAvailablePalettes(barIndex, jobId, subjobId)
+    local normalizedJobId = jobId or 1;
+    local normalizedSubjobId = subjobId or 0;
+
+    -- Check subjob-specific palettes first: '{jobId}:{subjobId}:palette:{name}'
+    local subjobPattern = string.format('%d:%d:%s', normalizedJobId, normalizedSubjobId, M.PALETTE_KEY_PREFIX);
+    local existingPalettes = ScanForPalettes(subjobPattern);
+
+    -- Count subjob-specific palettes
+    local subjobPaletteCount = 0;
+    for _ in pairs(existingPalettes) do
+        subjobPaletteCount = subjobPaletteCount + 1;
+    end
+
+    -- Fallback to shared palettes (subjob 0) if no subjob-specific palettes exist
+    local usingFallback = false;
+    if subjobPaletteCount == 0 and normalizedSubjobId ~= 0 then
+        local sharedPattern = string.format('%d:0:%s', normalizedJobId, M.PALETTE_KEY_PREFIX);
+        existingPalettes = ScanForPalettes(sharedPattern);
+        usingFallback = true;
+    end
+
+    -- Get the stored palette order (keyed by job:subjob or fallback to job:0)
+    local orderKey = BuildJobSubjobKey(normalizedJobId, normalizedSubjobId);
     local storedOrder = gConfig and gConfig.hotbar and gConfig.hotbar.paletteOrder
-                        and gConfig.hotbar.paletteOrder[normalizedJobId];
+                        and gConfig.hotbar.paletteOrder[orderKey];
+
+    -- If using fallback, also check for shared order
+    if not storedOrder and usingFallback then
+        local sharedOrderKey = BuildJobSubjobKey(normalizedJobId, 0);
+        storedOrder = gConfig and gConfig.hotbar and gConfig.hotbar.paletteOrder
+                      and gConfig.hotbar.paletteOrder[sharedOrderKey];
+    end
 
     -- Build ordered result: first add palettes from storedOrder that exist
     local palettes = {};
@@ -270,6 +472,27 @@ function M.GetAvailablePalettes(barIndex, jobId, subjobId)
     return palettes;
 end
 
+-- Check if palettes are using fallback (shared) mode
+-- Returns true if using shared palettes because no subjob-specific ones exist
+function M.IsUsingFallbackPalettes(jobId, subjobId)
+    local normalizedJobId = jobId or 1;
+    local normalizedSubjobId = subjobId or 0;
+
+    if normalizedSubjobId == 0 then
+        return false;  -- Already using shared palettes
+    end
+
+    -- Check for subjob-specific palettes
+    local subjobPattern = string.format('%d:%d:%s', normalizedJobId, normalizedSubjobId, M.PALETTE_KEY_PREFIX);
+    local existingPalettes = ScanForPalettes(subjobPattern);
+
+    for _ in pairs(existingPalettes) do
+        return false;  -- Found at least one subjob-specific palette
+    end
+
+    return true;  -- Using fallback
+end
+
 -- Check if a specific palette exists for a bar
 function M.PaletteExists(barIndex, paletteName, jobId, subjobId)
     if not paletteName then
@@ -291,7 +514,6 @@ end
 
 -- Cycle through palettes (GLOBAL - affects all hotbars)
 -- barIndex param kept for backwards compatibility but ignored (all bars share one palette)
--- subjobId param kept for backwards compatibility but ignored (palettes are job-wide)
 -- direction: 1 for next, -1 for previous
 -- NOTE: Only cycles through existing palettes - no "Base" option
 function M.CyclePalette(barIndex, direction, jobId, subjobId)
@@ -321,7 +543,7 @@ function M.CyclePalette(barIndex, direction, jobId, subjobId)
     if newIndex > #palettes then newIndex = 1; end
 
     local newPalette = palettes[newIndex];
-    M.SetActivePalette(barIndex, newPalette, jobId);  -- Pass jobId for persistence
+    M.SetActivePalette(barIndex, newPalette, jobId, subjobId);  -- Pass jobId and subjobId for persistence
 
     return newPalette;
 end
@@ -331,7 +553,8 @@ end
 -- ============================================
 
 -- Helper: Find the actual storage key for a palette
--- Uses NEW format only: '{jobId}:palette:{name}' (job-wide, no subjob)
+-- Uses NEW format: '{jobId}:{subjobId}:palette:{name}'
+-- Falls back to shared key '{jobId}:0:palette:{name}' if subjob-specific not found
 -- Returns storageKey or nil if not found
 local function FindPaletteStorageKey(barIndex, paletteName, jobId, subjobId)
     local configKey = 'hotbarBar' .. barIndex;
@@ -341,20 +564,28 @@ local function FindPaletteStorageKey(barIndex, paletteName, jobId, subjobId)
     end
 
     local normalizedJobId = jobId or 1;
+    local normalizedSubjobId = subjobId or 0;
 
-    -- Use NEW format only: '{jobId}:palette:{name}' (job-wide, no subjob)
-    local storageKey = M.BuildPaletteStorageKey(normalizedJobId, paletteName);
+    -- Try subjob-specific key first: '{jobId}:{subjobId}:palette:{name}'
+    local storageKey = M.BuildPaletteStorageKey(normalizedJobId, normalizedSubjobId, paletteName);
     if barSettings.slotActions[storageKey] then
         return storageKey;
+    end
+
+    -- Fallback to shared key: '{jobId}:0:palette:{name}'
+    if normalizedSubjobId ~= 0 then
+        local sharedKey = M.BuildPaletteStorageKey(normalizedJobId, 0, paletteName);
+        if barSettings.slotActions[sharedKey] then
+            return sharedKey;
+        end
     end
 
     return nil;
 end
 
 -- Create a new palette (GLOBAL - creates empty palette entries on all bars)
--- Uses NEW key format: '{jobId}:palette:{name}' (no subjob)
+-- Uses NEW key format: '{jobId}:{subjobId}:palette:{name}'
 -- barIndex param kept for backwards compatibility
--- subjobId param kept for backwards compatibility but ignored
 -- Returns true on success, false with error message on failure
 function M.CreatePalette(barIndex, paletteName, jobId, subjobId)
     if not IsValidPaletteName(paletteName) then
@@ -362,9 +593,10 @@ function M.CreatePalette(barIndex, paletteName, jobId, subjobId)
     end
 
     local normalizedJobId = jobId or 1;
+    local normalizedSubjobId = subjobId or 0;
 
-    -- Build new format storage key: '{jobId}:palette:{name}'
-    local newStorageKey = M.BuildPaletteStorageKey(normalizedJobId, paletteName);
+    -- Build new format storage key: '{jobId}:{subjobId}:palette:{name}'
+    local newStorageKey = M.BuildPaletteStorageKey(normalizedJobId, normalizedSubjobId, paletteName);
 
     -- Check if palette already exists on any bar
     for barIdx = 1, 6 do
@@ -389,17 +621,18 @@ function M.CreatePalette(barIndex, paletteName, jobId, subjobId)
         end
     end
 
-    -- Store palette order at GLOBAL level (gConfig.hotbar.paletteOrder[jobId])
+    -- Store palette order keyed by job:subjob
+    local orderKey = BuildJobSubjobKey(normalizedJobId, normalizedSubjobId);
     if not gConfig.hotbar then
         gConfig.hotbar = {};
     end
     if not gConfig.hotbar.paletteOrder then
         gConfig.hotbar.paletteOrder = {};
     end
-    if not gConfig.hotbar.paletteOrder[normalizedJobId] then
-        gConfig.hotbar.paletteOrder[normalizedJobId] = {};
+    if not gConfig.hotbar.paletteOrder[orderKey] then
+        gConfig.hotbar.paletteOrder[orderKey] = {};
     end
-    table.insert(gConfig.hotbar.paletteOrder[normalizedJobId], paletteName);
+    table.insert(gConfig.hotbar.paletteOrder[orderKey], paletteName);
 
     SaveSettingsToDisk();
     return true;
@@ -437,7 +670,6 @@ end
 
 -- Delete a palette (GLOBAL - removes from all bars)
 -- barIndex param kept for backwards compatibility but ignored
--- subjobId param kept for backwards compatibility but ignored
 -- NOTE: Cannot delete the last palette - at least one must always exist
 -- Returns true on success, false with error message on failure
 function M.DeletePalette(barIndex, paletteName, jobId, subjobId)
@@ -446,15 +678,19 @@ function M.DeletePalette(barIndex, paletteName, jobId, subjobId)
     end
 
     local normalizedJobId = jobId or 1;
+    local normalizedSubjobId = subjobId or 0;
 
     -- Check if this is the last palette - cannot delete if so
-    local availablePalettes = M.GetAvailablePalettes(barIndex, normalizedJobId, subjobId);
+    local availablePalettes = M.GetAvailablePalettes(barIndex, normalizedJobId, normalizedSubjobId);
     if #availablePalettes <= 1 then
         return false, 'Cannot delete the last palette';
     end
 
-    -- Build new format storage key: '{jobId}:palette:{name}'
-    local storageKey = M.BuildPaletteStorageKey(normalizedJobId, paletteName);
+    -- Find the storage key (could be subjob-specific or shared)
+    local storageKey = FindPaletteStorageKey(1, paletteName, normalizedJobId, normalizedSubjobId);
+    if not storageKey then
+        return false, 'Palette not found';
+    end
 
     -- Delete palette from ALL bars
     local found = false;
@@ -473,11 +709,20 @@ function M.DeletePalette(barIndex, paletteName, jobId, subjobId)
         return false, 'Palette not found';
     end
 
-    -- Remove from GLOBAL paletteOrder
-    if gConfig.hotbar and gConfig.hotbar.paletteOrder and gConfig.hotbar.paletteOrder[normalizedJobId] then
-        for i, name in ipairs(gConfig.hotbar.paletteOrder[normalizedJobId]) do
+    -- Determine which order key to use based on the storage key found
+    local orderKey;
+    local keyJobId, keySubjobId = storageKey:match('^(%d+):(%d+):');
+    if keyJobId and keySubjobId then
+        orderKey = BuildJobSubjobKey(tonumber(keyJobId), tonumber(keySubjobId));
+    else
+        orderKey = BuildJobSubjobKey(normalizedJobId, normalizedSubjobId);
+    end
+
+    -- Remove from paletteOrder
+    if gConfig.hotbar and gConfig.hotbar.paletteOrder and gConfig.hotbar.paletteOrder[orderKey] then
+        for i, name in ipairs(gConfig.hotbar.paletteOrder[orderKey]) do
             if name == paletteName then
-                table.remove(gConfig.hotbar.paletteOrder[normalizedJobId], i);
+                table.remove(gConfig.hotbar.paletteOrder[orderKey], i);
                 break;
             end
         end
@@ -486,9 +731,9 @@ function M.DeletePalette(barIndex, paletteName, jobId, subjobId)
     -- If this was the active palette, switch to the first available palette
     if state.activePalette == paletteName then
         -- Get updated list after deletion
-        local remainingPalettes = M.GetAvailablePalettes(barIndex, normalizedJobId, subjobId);
+        local remainingPalettes = M.GetAvailablePalettes(barIndex, normalizedJobId, normalizedSubjobId);
         local newActive = remainingPalettes[1];  -- First palette becomes active
-        M.SetActivePalette(1, newActive);
+        M.SetActivePalette(1, newActive, normalizedJobId, normalizedSubjobId);
     end
 
     SaveSettingsToDisk();
@@ -497,7 +742,6 @@ end
 
 -- Rename a palette (GLOBAL - renames across all bars)
 -- barIndex param kept for backwards compatibility but ignored
--- subjobId param kept for backwards compatibility but ignored
 -- Returns true on success, false with error message on failure
 function M.RenamePalette(barIndex, oldName, newName, jobId, subjobId)
     if not oldName then
@@ -513,10 +757,20 @@ function M.RenamePalette(barIndex, oldName, newName, jobId, subjobId)
     end
 
     local normalizedJobId = jobId or 1;
+    local normalizedSubjobId = subjobId or 0;
 
-    -- Build new format storage keys
-    local oldStorageKey = M.BuildPaletteStorageKey(normalizedJobId, oldName);
-    local newStorageKey = M.BuildPaletteStorageKey(normalizedJobId, newName);
+    -- Find the old storage key (could be subjob-specific or shared)
+    local oldStorageKey = FindPaletteStorageKey(1, oldName, normalizedJobId, normalizedSubjobId);
+    if not oldStorageKey then
+        return false, 'Palette not found';
+    end
+
+    -- Extract the subjobId from the old storage key to build new key with same subjob
+    local keyJobId, keySubjobId = oldStorageKey:match('^(%d+):(%d+):');
+    local effectiveSubjobId = keySubjobId and tonumber(keySubjobId) or normalizedSubjobId;
+
+    -- Build new storage key with same subjob as the old key
+    local newStorageKey = M.BuildPaletteStorageKey(normalizedJobId, effectiveSubjobId, newName);
 
     -- Check if new name already exists on any bar
     for barIdx = 1, 6 do
@@ -545,11 +799,12 @@ function M.RenamePalette(barIndex, oldName, newName, jobId, subjobId)
         return false, 'Palette not found';
     end
 
-    -- Update GLOBAL paletteOrder (rename entry in place)
-    if gConfig.hotbar and gConfig.hotbar.paletteOrder and gConfig.hotbar.paletteOrder[normalizedJobId] then
-        for i, name in ipairs(gConfig.hotbar.paletteOrder[normalizedJobId]) do
+    -- Update paletteOrder (rename entry in place)
+    local orderKey = BuildJobSubjobKey(normalizedJobId, effectiveSubjobId);
+    if gConfig.hotbar and gConfig.hotbar.paletteOrder and gConfig.hotbar.paletteOrder[orderKey] then
+        for i, name in ipairs(gConfig.hotbar.paletteOrder[orderKey]) do
             if name == oldName then
-                gConfig.hotbar.paletteOrder[normalizedJobId][i] = newName;
+                gConfig.hotbar.paletteOrder[orderKey][i] = newName;
                 break;
             end
         end
@@ -566,7 +821,6 @@ end
 
 -- Move a palette up or down in the order (GLOBAL)
 -- barIndex param kept for backwards compatibility but ignored
--- subjobId param kept for backwards compatibility but ignored
 -- direction: -1 for up (earlier in list), 1 for down (later in list)
 -- Returns true on success, false with error message on failure
 function M.MovePalette(barIndex, paletteName, direction, jobId, subjobId)
@@ -579,24 +833,26 @@ function M.MovePalette(barIndex, paletteName, direction, jobId, subjobId)
     end
 
     local normalizedJobId = jobId or 1;
+    local normalizedSubjobId = subjobId or 0;
+    local orderKey = BuildJobSubjobKey(normalizedJobId, normalizedSubjobId);
 
-    -- Ensure GLOBAL paletteOrder exists and is populated
+    -- Ensure paletteOrder exists and is populated
     if not gConfig.hotbar then
         gConfig.hotbar = {};
     end
     if not gConfig.hotbar.paletteOrder then
         gConfig.hotbar.paletteOrder = {};
     end
-    if not gConfig.hotbar.paletteOrder[normalizedJobId] then
+    if not gConfig.hotbar.paletteOrder[orderKey] then
         -- Initialize paletteOrder from current available palettes
-        gConfig.hotbar.paletteOrder[normalizedJobId] = {};
+        gConfig.hotbar.paletteOrder[orderKey] = {};
         local available = M.GetAvailablePalettes(barIndex, jobId, subjobId);
         for _, name in ipairs(available) do
-            table.insert(gConfig.hotbar.paletteOrder[normalizedJobId], name);
+            table.insert(gConfig.hotbar.paletteOrder[orderKey], name);
         end
     end
 
-    local order = gConfig.hotbar.paletteOrder[normalizedJobId];
+    local order = gConfig.hotbar.paletteOrder[orderKey];
 
     -- Find palette index in order
     local currentIndex = nil;
@@ -627,7 +883,6 @@ end
 
 -- Set the complete palette order from an array (GLOBAL)
 -- barIndex param kept for backwards compatibility but ignored
--- subjobId param kept for backwards compatibility but ignored
 -- palettes: array of palette names in desired order (excluding Base)
 -- Returns true on success, false with error message on failure
 function M.SetPaletteOrder(barIndex, palettes, jobId, subjobId)
@@ -636,8 +891,10 @@ function M.SetPaletteOrder(barIndex, palettes, jobId, subjobId)
     end
 
     local normalizedJobId = jobId or 1;
+    local normalizedSubjobId = subjobId or 0;
+    local orderKey = BuildJobSubjobKey(normalizedJobId, normalizedSubjobId);
 
-    -- Ensure GLOBAL paletteOrder exists
+    -- Ensure paletteOrder exists
     if not gConfig.hotbar then
         gConfig.hotbar = {};
     end
@@ -646,9 +903,9 @@ function M.SetPaletteOrder(barIndex, palettes, jobId, subjobId)
     end
 
     -- Set the new order directly
-    gConfig.hotbar.paletteOrder[normalizedJobId] = {};
+    gConfig.hotbar.paletteOrder[orderKey] = {};
     for _, name in ipairs(palettes) do
-        table.insert(gConfig.hotbar.paletteOrder[normalizedJobId], name);
+        table.insert(gConfig.hotbar.paletteOrder[orderKey], name);
     end
 
     SaveSettingsToDisk();
@@ -731,8 +988,33 @@ end
 -- Crossbar combo modes for iteration
 local CROSSBAR_COMBO_MODES = { 'L2', 'R2', 'L2R2', 'R2L2', 'L2x2', 'R2x2' };
 
+-- Helper: Scan crossbar for palettes matching a pattern prefix
+-- Returns: table of { [paletteName] = true }
+local function ScanCrossbarForPalettes(patternPrefix)
+    local existingPalettes = {};
+
+    local crossbarSettings = gConfig and gConfig.hotbarCrossbar;
+    if not crossbarSettings or not crossbarSettings.slotActions then
+        return existingPalettes;
+    end
+
+    for storageKey, _ in pairs(crossbarSettings.slotActions) do
+        if type(storageKey) == 'string' then
+            if storageKey:find(patternPrefix, 1, true) == 1 then
+                local paletteName = storageKey:sub(#patternPrefix + 1);
+                if paletteName and paletteName ~= '' then
+                    existingPalettes[paletteName] = true;
+                end
+            end
+        end
+    end
+
+    return existingPalettes;
+end
+
 -- Get all available palette names for crossbar only
--- Uses NEW FORMAT: '{jobId}:palette:{name}' (job-wide, no subjob)
+-- Uses NEW FORMAT: '{jobId}:{subjobId}:palette:{name}'
+-- Fallback: If no subjob-specific palettes exist, falls back to shared palettes (subjob 0)
 -- Returns: { 'Stuns', 'Heals', ... } - palettes available ONLY for crossbar (empty if none defined)
 -- Crossbar palettes are SEPARATE from hotbar palettes
 function M.GetCrossbarAvailablePalettes(jobId, subjobId)
@@ -744,26 +1026,35 @@ function M.GetCrossbarAvailablePalettes(jobId, subjobId)
     end
 
     local normalizedJobId = jobId or 1;
+    local normalizedSubjobId = subjobId or 0;
 
-    -- NEW format pattern: '{jobId}:palette:{name}'
-    local palettePattern = string.format('%d:%s', normalizedJobId, M.PALETTE_KEY_PREFIX);
+    -- Check subjob-specific palettes first: '{jobId}:{subjobId}:palette:{name}'
+    local subjobPattern = string.format('%d:%d:%s', normalizedJobId, normalizedSubjobId, M.PALETTE_KEY_PREFIX);
+    local existingPalettes = ScanCrossbarForPalettes(subjobPattern);
 
-    -- Collect all palette names from crossbar slotActions
-    local existingPalettes = {};
-    for storageKey, _ in pairs(crossbarSettings.slotActions) do
-        if type(storageKey) == 'string' then
-            -- Check NEW format only: '{jobId}:palette:{name}'
-            if storageKey:find(palettePattern, 1, true) == 1 then
-                local paletteName = storageKey:sub(#palettePattern + 1);
-                if paletteName and paletteName ~= '' then
-                    existingPalettes[paletteName] = true;
-                end
-            end
-        end
+    -- Count subjob-specific palettes
+    local subjobPaletteCount = 0;
+    for _ in pairs(existingPalettes) do
+        subjobPaletteCount = subjobPaletteCount + 1;
     end
 
-    -- Get the stored palette order for crossbar (keyed by jobId only)
-    local storedOrder = crossbarSettings.crossbarPaletteOrder and crossbarSettings.crossbarPaletteOrder[normalizedJobId];
+    -- Fallback to shared palettes (subjob 0) if no subjob-specific palettes exist
+    local usingFallback = false;
+    if subjobPaletteCount == 0 and normalizedSubjobId ~= 0 then
+        local sharedPattern = string.format('%d:0:%s', normalizedJobId, M.PALETTE_KEY_PREFIX);
+        existingPalettes = ScanCrossbarForPalettes(sharedPattern);
+        usingFallback = true;
+    end
+
+    -- Get the stored palette order (keyed by job:subjob or fallback to job:0)
+    local orderKey = BuildJobSubjobKey(normalizedJobId, normalizedSubjobId);
+    local storedOrder = crossbarSettings.crossbarPaletteOrder and crossbarSettings.crossbarPaletteOrder[orderKey];
+
+    -- If using fallback, also check for shared order
+    if not storedOrder and usingFallback then
+        local sharedOrderKey = BuildJobSubjobKey(normalizedJobId, 0);
+        storedOrder = crossbarSettings.crossbarPaletteOrder and crossbarSettings.crossbarPaletteOrder[sharedOrderKey];
+    end
 
     -- Build ordered result: first add palettes from storedOrder that exist
     local seen = {};
@@ -905,7 +1196,7 @@ function M.GetEffectivePaletteKeySuffixForCombo(comboMode)
 end
 
 -- Create a new palette for crossbar (stores in crossbar slotActions)
--- Uses NEW FORMAT: '{jobId}:palette:{name}' (job-wide, no subjob)
+-- Uses NEW FORMAT: '{jobId}:{subjobId}:palette:{name}'
 -- Returns true on success, false with error message on failure
 function M.CreateCrossbarPalette(paletteName, jobId, subjobId)
     if not IsValidPaletteName(paletteName) then
@@ -923,9 +1214,10 @@ function M.CreateCrossbarPalette(paletteName, jobId, subjobId)
     end
 
     local normalizedJobId = jobId or 1;
+    local normalizedSubjobId = subjobId or 0;
 
-    -- Build NEW format storage key: '{jobId}:palette:{name}'
-    local storageKey = M.BuildPaletteStorageKey(normalizedJobId, paletteName);
+    -- Build NEW format storage key: '{jobId}:{subjobId}:palette:{name}'
+    local storageKey = M.BuildPaletteStorageKey(normalizedJobId, normalizedSubjobId, paletteName);
 
     -- Check if palette already exists
     if crossbarSettings.slotActions[storageKey] then
@@ -935,14 +1227,15 @@ function M.CreateCrossbarPalette(paletteName, jobId, subjobId)
     -- Create empty palette structure for all combo modes
     crossbarSettings.slotActions[storageKey] = {};
 
-    -- Add to crossbarPaletteOrder (keyed by jobId only)
+    -- Add to crossbarPaletteOrder (keyed by job:subjob)
+    local orderKey = BuildJobSubjobKey(normalizedJobId, normalizedSubjobId);
     if not crossbarSettings.crossbarPaletteOrder then
         crossbarSettings.crossbarPaletteOrder = {};
     end
-    if not crossbarSettings.crossbarPaletteOrder[normalizedJobId] then
-        crossbarSettings.crossbarPaletteOrder[normalizedJobId] = {};
+    if not crossbarSettings.crossbarPaletteOrder[orderKey] then
+        crossbarSettings.crossbarPaletteOrder[orderKey] = {};
     end
-    table.insert(crossbarSettings.crossbarPaletteOrder[normalizedJobId], paletteName);
+    table.insert(crossbarSettings.crossbarPaletteOrder[orderKey], paletteName);
 
     SaveSettingsToDisk();
     return true;
@@ -982,7 +1275,8 @@ function M.EnsureCrossbarDefaultPaletteExists(jobId, subjobId)
 end
 
 -- Helper: Find the actual crossbar storage key for a palette
--- Uses NEW FORMAT only: '{jobId}:palette:{name}' (job-wide, no subjob)
+-- Uses NEW FORMAT: '{jobId}:{subjobId}:palette:{name}'
+-- Falls back to shared key '{jobId}:0:palette:{name}' if subjob-specific not found
 -- Returns storageKey or nil if not found
 local function FindCrossbarPaletteStorageKey(paletteName, jobId, subjobId)
     local crossbarSettings = gConfig and gConfig.hotbarCrossbar;
@@ -991,18 +1285,27 @@ local function FindCrossbarPaletteStorageKey(paletteName, jobId, subjobId)
     end
 
     local normalizedJobId = jobId or 1;
+    local normalizedSubjobId = subjobId or 0;
 
-    -- Use NEW format only: '{jobId}:palette:{name}'
-    local storageKey = M.BuildPaletteStorageKey(normalizedJobId, paletteName);
+    -- Try subjob-specific key first: '{jobId}:{subjobId}:palette:{name}'
+    local storageKey = M.BuildPaletteStorageKey(normalizedJobId, normalizedSubjobId, paletteName);
     if crossbarSettings.slotActions[storageKey] then
         return storageKey;
+    end
+
+    -- Fallback to shared key: '{jobId}:0:palette:{name}'
+    if normalizedSubjobId ~= 0 then
+        local sharedKey = M.BuildPaletteStorageKey(normalizedJobId, 0, paletteName);
+        if crossbarSettings.slotActions[sharedKey] then
+            return sharedKey;
+        end
     end
 
     return nil;
 end
 
 -- Delete a crossbar palette
--- Uses NEW FORMAT: '{jobId}:palette:{name}' (job-wide, no subjob)
+-- Uses NEW FORMAT: '{jobId}:{subjobId}:palette:{name}'
 -- Returns true on success, false with error message on failure
 function M.DeleteCrossbarPalette(paletteName, jobId, subjobId)
     if not paletteName then
@@ -1015,8 +1318,9 @@ function M.DeleteCrossbarPalette(paletteName, jobId, subjobId)
     end
 
     local normalizedJobId = jobId or 1;
+    local normalizedSubjobId = subjobId or 0;
 
-    -- Find the storage key using NEW format
+    -- Find the storage key (could be subjob-specific or shared)
     local storageKey = FindCrossbarPaletteStorageKey(paletteName, jobId, subjobId);
     if not storageKey then
         return false, 'Palette not found';
@@ -1025,11 +1329,20 @@ function M.DeleteCrossbarPalette(paletteName, jobId, subjobId)
     -- Delete the palette
     crossbarSettings.slotActions[storageKey] = nil;
 
-    -- Remove from crossbarPaletteOrder (keyed by jobId only)
-    if crossbarSettings.crossbarPaletteOrder and crossbarSettings.crossbarPaletteOrder[normalizedJobId] then
-        for i, name in ipairs(crossbarSettings.crossbarPaletteOrder[normalizedJobId]) do
+    -- Determine which order key to use based on the storage key found
+    local orderKey;
+    local keyJobId, keySubjobId = storageKey:match('^(%d+):(%d+):');
+    if keyJobId and keySubjobId then
+        orderKey = BuildJobSubjobKey(tonumber(keyJobId), tonumber(keySubjobId));
+    else
+        orderKey = BuildJobSubjobKey(normalizedJobId, normalizedSubjobId);
+    end
+
+    -- Remove from crossbarPaletteOrder
+    if crossbarSettings.crossbarPaletteOrder and crossbarSettings.crossbarPaletteOrder[orderKey] then
+        for i, name in ipairs(crossbarSettings.crossbarPaletteOrder[orderKey]) do
             if name == paletteName then
-                table.remove(crossbarSettings.crossbarPaletteOrder[normalizedJobId], i);
+                table.remove(crossbarSettings.crossbarPaletteOrder[orderKey], i);
                 break;
             end
         end
@@ -1045,7 +1358,7 @@ function M.DeleteCrossbarPalette(paletteName, jobId, subjobId)
 end
 
 -- Rename a crossbar palette
--- Uses NEW FORMAT: '{jobId}:palette:{name}' (job-wide, no subjob)
+-- Uses NEW FORMAT: '{jobId}:{subjobId}:palette:{name}'
 -- Returns true on success, false with error message on failure
 function M.RenameCrossbarPalette(oldName, newName, jobId, subjobId)
     if not oldName then
@@ -1066,15 +1379,20 @@ function M.RenameCrossbarPalette(oldName, newName, jobId, subjobId)
     end
 
     local normalizedJobId = jobId or 1;
+    local normalizedSubjobId = subjobId or 0;
 
-    -- Find the storage key for the old palette using NEW format
+    -- Find the storage key for the old palette (could be subjob-specific or shared)
     local oldStorageKey = FindCrossbarPaletteStorageKey(oldName, jobId, subjobId);
     if not oldStorageKey then
         return false, 'Palette not found';
     end
 
-    -- Build new storage key using NEW format
-    local newStorageKey = M.BuildPaletteStorageKey(normalizedJobId, newName);
+    -- Extract the subjobId from the old storage key to build new key with same subjob
+    local keyJobId, keySubjobId = oldStorageKey:match('^(%d+):(%d+):');
+    local effectiveSubjobId = keySubjobId and tonumber(keySubjobId) or normalizedSubjobId;
+
+    -- Build new storage key using same subjob as the old key
+    local newStorageKey = M.BuildPaletteStorageKey(normalizedJobId, effectiveSubjobId, newName);
 
     -- Check if new name already exists
     local existingKey = FindCrossbarPaletteStorageKey(newName, jobId, subjobId);
@@ -1086,11 +1404,12 @@ function M.RenameCrossbarPalette(oldName, newName, jobId, subjobId)
     crossbarSettings.slotActions[newStorageKey] = crossbarSettings.slotActions[oldStorageKey];
     crossbarSettings.slotActions[oldStorageKey] = nil;
 
-    -- Update crossbarPaletteOrder (keyed by jobId only)
-    if crossbarSettings.crossbarPaletteOrder and crossbarSettings.crossbarPaletteOrder[normalizedJobId] then
-        for i, name in ipairs(crossbarSettings.crossbarPaletteOrder[normalizedJobId]) do
+    -- Update crossbarPaletteOrder
+    local orderKey = BuildJobSubjobKey(normalizedJobId, effectiveSubjobId);
+    if crossbarSettings.crossbarPaletteOrder and crossbarSettings.crossbarPaletteOrder[orderKey] then
+        for i, name in ipairs(crossbarSettings.crossbarPaletteOrder[orderKey]) do
             if name == oldName then
-                crossbarSettings.crossbarPaletteOrder[normalizedJobId][i] = newName;
+                crossbarSettings.crossbarPaletteOrder[orderKey][i] = newName;
                 break;
             end
         end
@@ -1106,7 +1425,7 @@ function M.RenameCrossbarPalette(oldName, newName, jobId, subjobId)
 end
 
 -- Move a crossbar palette up or down in the order
--- Uses NEW FORMAT: crossbarPaletteOrder keyed by jobId only (not job:subjob)
+-- Uses NEW FORMAT: crossbarPaletteOrder keyed by job:subjob
 -- direction: -1 for up (earlier in list), 1 for down (later in list)
 -- Returns true on success, false with error message on failure
 function M.MoveCrossbarPalette(paletteName, direction, jobId, subjobId)
@@ -1124,21 +1443,23 @@ function M.MoveCrossbarPalette(paletteName, direction, jobId, subjobId)
     end
 
     local normalizedJobId = jobId or 1;
+    local normalizedSubjobId = subjobId or 0;
+    local orderKey = BuildJobSubjobKey(normalizedJobId, normalizedSubjobId);
 
-    -- Ensure crossbarPaletteOrder exists and is populated (keyed by jobId only)
+    -- Ensure crossbarPaletteOrder exists and is populated
     if not crossbarSettings.crossbarPaletteOrder then
         crossbarSettings.crossbarPaletteOrder = {};
     end
-    if not crossbarSettings.crossbarPaletteOrder[normalizedJobId] then
+    if not crossbarSettings.crossbarPaletteOrder[orderKey] then
         -- Initialize crossbarPaletteOrder from current available palettes
-        crossbarSettings.crossbarPaletteOrder[normalizedJobId] = {};
+        crossbarSettings.crossbarPaletteOrder[orderKey] = {};
         local available = M.GetCrossbarAvailablePalettes(jobId, subjobId);
         for _, name in ipairs(available) do
-            table.insert(crossbarSettings.crossbarPaletteOrder[normalizedJobId], name);
+            table.insert(crossbarSettings.crossbarPaletteOrder[orderKey], name);
         end
     end
 
-    local order = crossbarSettings.crossbarPaletteOrder[normalizedJobId];
+    local order = crossbarSettings.crossbarPaletteOrder[orderKey];
 
     -- Find palette index in order
     local currentIndex = nil;
@@ -1218,6 +1539,11 @@ function M.ValidatePalettesForJob(jobId, subjobId)
         return;
     end
 
+    -- Run migration if needed (converts old format palettes to new subjob-aware format)
+    if NeedsPaletteMigration() then
+        RunPaletteMigration();
+    end
+
     -- Ensure at least one palette exists for this job
     local firstPalette = M.EnsureDefaultPaletteExists(jobId, subjobId);
     if not firstPalette then
@@ -1228,8 +1554,8 @@ function M.ValidatePalettesForJob(jobId, subjobId)
     -- Get available palettes
     local availablePalettes = M.GetAvailablePalettes(1, jobId, subjobId);
 
-    -- Try to restore saved palette state for this job
-    local savedPalette = LoadPaletteState(jobId);
+    -- Try to restore saved palette state for this job:subjob
+    local savedPalette = LoadPaletteState(jobId, subjobId);
 
     -- Check if current hotbar palette is valid
     if state.activePalette then
@@ -1341,6 +1667,223 @@ function M.RestoreState(savedState)
         state.activePalette = savedState.activePalette;
         state.crossbarActivePalette = savedState.crossbarActivePalette;
     end
+end
+
+-- ============================================
+-- Palette Copy/Move Operations (for Palette Manager)
+-- ============================================
+
+-- Copy a hotbar palette to a different job:subjob combination
+-- Returns true on success, false with error message on failure
+function M.CopyPalette(paletteName, fromJobId, fromSubjobId, toJobId, toSubjobId, newName)
+    if not paletteName then
+        return false, 'No palette specified';
+    end
+
+    local destName = newName or paletteName;
+    if not IsValidPaletteName(destName) then
+        return false, 'Invalid destination palette name';
+    end
+
+    -- Find source storage key
+    local sourceKey = FindPaletteStorageKey(1, paletteName, fromJobId, fromSubjobId);
+    if not sourceKey then
+        return false, 'Source palette not found';
+    end
+
+    -- Build destination storage key
+    local destKey = M.BuildPaletteStorageKey(toJobId, toSubjobId, destName);
+
+    -- Check if destination already exists
+    for barIdx = 1, 6 do
+        local configKey = 'hotbarBar' .. barIdx;
+        local barSettings = gConfig and gConfig[configKey];
+        if barSettings and barSettings.slotActions and barSettings.slotActions[destKey] then
+            return false, 'Palette already exists at destination';
+        end
+    end
+
+    -- Copy palette data to all bars
+    for barIdx = 1, 6 do
+        local configKey = 'hotbarBar' .. barIdx;
+        local barSettings = gConfig and gConfig[configKey];
+        if barSettings then
+            if not barSettings.slotActions then
+                barSettings.slotActions = {};
+            end
+            -- Deep copy slot data
+            local sourceData = barSettings.slotActions[sourceKey];
+            if sourceData then
+                local copiedData = {};
+                for slotIdx, slotData in pairs(sourceData) do
+                    if type(slotData) == 'table' then
+                        copiedData[slotIdx] = {};
+                        for k, v in pairs(slotData) do
+                            copiedData[slotIdx][k] = v;
+                        end
+                    else
+                        copiedData[slotIdx] = slotData;
+                    end
+                end
+                barSettings.slotActions[destKey] = copiedData;
+            else
+                barSettings.slotActions[destKey] = {};
+            end
+        end
+    end
+
+    -- Add to destination's palette order
+    local destOrderKey = BuildJobSubjobKey(toJobId, toSubjobId);
+    if not gConfig.hotbar then
+        gConfig.hotbar = {};
+    end
+    if not gConfig.hotbar.paletteOrder then
+        gConfig.hotbar.paletteOrder = {};
+    end
+    if not gConfig.hotbar.paletteOrder[destOrderKey] then
+        gConfig.hotbar.paletteOrder[destOrderKey] = {};
+    end
+    table.insert(gConfig.hotbar.paletteOrder[destOrderKey], destName);
+
+    SaveSettingsToDisk();
+    return true;
+end
+
+-- Copy a crossbar palette to a different job:subjob combination
+-- Returns true on success, false with error message on failure
+function M.CopyCrossbarPalette(paletteName, fromJobId, fromSubjobId, toJobId, toSubjobId, newName)
+    if not paletteName then
+        return false, 'No palette specified';
+    end
+
+    local destName = newName or paletteName;
+    if not IsValidPaletteName(destName) then
+        return false, 'Invalid destination palette name';
+    end
+
+    local crossbarSettings = gConfig and gConfig.hotbarCrossbar;
+    if not crossbarSettings then
+        return false, 'Crossbar settings not found';
+    end
+
+    -- Find source storage key
+    local sourceKey = FindCrossbarPaletteStorageKey(paletteName, fromJobId, fromSubjobId);
+    if not sourceKey then
+        return false, 'Source palette not found';
+    end
+
+    -- Build destination storage key
+    local destKey = M.BuildPaletteStorageKey(toJobId, toSubjobId, destName);
+
+    -- Check if destination already exists
+    if crossbarSettings.slotActions and crossbarSettings.slotActions[destKey] then
+        return false, 'Palette already exists at destination';
+    end
+
+    -- Ensure slotActions structure
+    if not crossbarSettings.slotActions then
+        crossbarSettings.slotActions = {};
+    end
+
+    -- Deep copy slot data
+    local sourceData = crossbarSettings.slotActions[sourceKey];
+    if sourceData then
+        local copiedData = {};
+        for comboMode, modeData in pairs(sourceData) do
+            if type(modeData) == 'table' then
+                copiedData[comboMode] = {};
+                for slotIdx, slotData in pairs(modeData) do
+                    if type(slotData) == 'table' then
+                        copiedData[comboMode][slotIdx] = {};
+                        for k, v in pairs(slotData) do
+                            copiedData[comboMode][slotIdx][k] = v;
+                        end
+                    else
+                        copiedData[comboMode][slotIdx] = slotData;
+                    end
+                end
+            else
+                copiedData[comboMode] = modeData;
+            end
+        end
+        crossbarSettings.slotActions[destKey] = copiedData;
+    else
+        crossbarSettings.slotActions[destKey] = {};
+    end
+
+    -- Add to destination's palette order
+    local destOrderKey = BuildJobSubjobKey(toJobId, toSubjobId);
+    if not crossbarSettings.crossbarPaletteOrder then
+        crossbarSettings.crossbarPaletteOrder = {};
+    end
+    if not crossbarSettings.crossbarPaletteOrder[destOrderKey] then
+        crossbarSettings.crossbarPaletteOrder[destOrderKey] = {};
+    end
+    table.insert(crossbarSettings.crossbarPaletteOrder[destOrderKey], destName);
+
+    SaveSettingsToDisk();
+    return true;
+end
+
+-- Get all job IDs that have palettes defined
+function M.GetJobsWithPalettes()
+    local jobs = {};
+    local seenJobs = {};
+
+    -- Scan hotbar palettes
+    for barIdx = 1, 6 do
+        local configKey = 'hotbarBar' .. barIdx;
+        local barSettings = gConfig and gConfig[configKey];
+        if barSettings and barSettings.slotActions then
+            for storageKey, _ in pairs(barSettings.slotActions) do
+                if type(storageKey) == 'string' then
+                    local jobIdStr = storageKey:match('^(%d+):');
+                    if jobIdStr then
+                        local jobId = tonumber(jobIdStr);
+                        if jobId and not seenJobs[jobId] then
+                            seenJobs[jobId] = true;
+                            table.insert(jobs, jobId);
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- Sort jobs by ID
+    table.sort(jobs);
+    return jobs;
+end
+
+-- Get all subjob IDs for a given job that have palettes defined
+function M.GetSubjobsWithPalettes(jobId)
+    local subjobs = {};
+    local seenSubjobs = {};
+    local normalizedJobId = jobId or 1;
+
+    -- Scan hotbar palettes
+    for barIdx = 1, 6 do
+        local configKey = 'hotbarBar' .. barIdx;
+        local barSettings = gConfig and gConfig[configKey];
+        if barSettings and barSettings.slotActions then
+            for storageKey, _ in pairs(barSettings.slotActions) do
+                if type(storageKey) == 'string' then
+                    local keyJobId, keySubjobId = storageKey:match('^(%d+):(%d+):');
+                    if keyJobId and keySubjobId and tonumber(keyJobId) == normalizedJobId then
+                        local subjobId = tonumber(keySubjobId);
+                        if subjobId and not seenSubjobs[subjobId] then
+                            seenSubjobs[subjobId] = true;
+                            table.insert(subjobs, subjobId);
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- Sort subjobs by ID (0 = shared comes first)
+    table.sort(subjobs);
+    return subjobs;
 end
 
 return M;

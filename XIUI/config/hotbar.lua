@@ -17,6 +17,7 @@ local controller = require('modules.hotbar.controller');
 local macrosLib = require('libs.ffxi.macros');
 local palette = require('modules.hotbar.palette');
 local migrationWizard = require('config.migration');
+local paletteManager = require('config.palettemanager');
 
 local M = {};
 
@@ -2208,6 +2209,9 @@ local function DrawCrossbarSettings(selectedCrossbarTab)
     -- Draw palette modal (unified for both hotbar and crossbar)
     DrawPaletteModal();
 
+    -- Draw palette manager window (separate window for advanced management)
+    paletteManager.Draw();
+
     return selectedCrossbarTab;
 end
 
@@ -2441,19 +2445,23 @@ function M.DrawSettings(state)
     imgui.PushStyleColor(ImGuiCol_ButtonHovered, components.TAB_STYLE.bgLighter);
     imgui.PushStyleColor(ImGuiCol_ButtonActive, {0.22, 0.20, 0.17, 1.0});
 
-    if imgui.Button('Macro Palette', {140, 0}) then
+    if imgui.Button('Macro Manager', {120, 0}) then
         macropalette.OpenPalette();
+    end
+    imgui.SameLine();
+    if imgui.Button('Palette Manager', {120, 0}) then
+        paletteManager.Open();
     end
     imgui.SameLine();
     -- selectedBarTab is index into BAR_TYPES where 1=Global, 2=Bar1, 3=Bar2, etc.
     -- So actual bar index is selectedBarTab - 1 (default to 1 if Global is selected)
     local editBarIndex = math.max(1, (selectedBarTab or 1) - 1);
     local editConfigKey = 'hotbarBar' .. editBarIndex;
-    if imgui.Button('Keybinds', {100, 0}) then
+    if imgui.Button('Keybinds', {80, 0}) then
         OpenKeybindModal(editBarIndex, editConfigKey);
     end
     imgui.SameLine();
-    if imgui.Button('Import', {80, 0}) then
+    if imgui.Button('Import', {60, 0}) then
         migrationWizard.Open();
     end
     imgui.ShowHelp('Import hotbar and crossbar bindings from tHotBar and tCrossBar addons.');
@@ -2772,6 +2780,9 @@ function M.DrawSettings(state)
 
     -- Draw palette modal (unified for both hotbar and crossbar)
     DrawPaletteModal();
+
+    -- Draw palette manager window (separate window for advanced management)
+    paletteManager.Draw();
 
     return { selectedHotbarTab = selectedBarTab, selectedModeTab = selectedModeTab, selectedCrossbarTab = selectedCrossbarTab };
 end
