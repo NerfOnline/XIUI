@@ -10,6 +10,7 @@ local imgui = require('imgui');
 local jobs = require('libs.jobs');
 local palette = require('modules.hotbar.palette');
 local data = require('modules.hotbar.data');
+local components = require('config.components');
 
 local M = {};
 
@@ -20,17 +21,21 @@ local windowState = {
     selectedSubjobId = nil,  -- 0 = shared
     selectedPaletteType = 'hotbar',  -- 'hotbar' or 'crossbar'
     selectedPaletteName = nil,
+    statusMessage = nil,  -- Brief status feedback for operations
+    statusMessageTime = 0,  -- Time when status was set
 };
 
--- Modal state for create/rename/copy operations
+-- Modal state for create/rename/copy/delete operations
 local modalState = {
     isOpen = false,
-    mode = nil,  -- 'create', 'rename', 'copy'
+    mode = nil,  -- 'create', 'rename', 'copy', 'delete'
     inputBuffer = { '' },
     errorMessage = nil,
     -- For copy operation
     copyTargetJobId = nil,
     copyTargetSubjobId = nil,
+    -- For delete confirmation
+    deletePaletteName = nil,
 };
 
 -- Job names mapping (for display)
@@ -48,41 +53,20 @@ local function GetJobName(jobId)
     return JOB_NAMES[jobId] or ('Job ' .. jobId);
 end
 
--- Get list of all jobs that have palettes defined
-local function GetJobsWithPalettes()
-    local jobsList = palette.GetJobsWithPalettes();
-    -- Always include current player job
-    local currentJobId = data.jobId or 1;
-    local hasCurrentJob = false;
-    for _, jobId in ipairs(jobsList) do
-        if jobId == currentJobId then
-            hasCurrentJob = true;
-            break;
-        end
+-- Check if using fallback (shared) palettes for the selected type
+local function IsUsingFallback(jobId, subjobId, paletteType)
+    if subjobId == 0 then return false; end
+    if paletteType == 'hotbar' then
+        return palette.IsUsingFallbackPalettes(jobId, subjobId);
+    else
+        return palette.IsUsingCrossbarFallbackPalettes(jobId, subjobId);
     end
-    if not hasCurrentJob then
-        table.insert(jobsList, 1, currentJobId);
-    end
-    table.sort(jobsList);
-    return jobsList;
 end
 
--- Get list of subjobs for a job that have palettes defined
-local function GetSubjobsForJob(jobId)
-    local subjobsList = palette.GetSubjobsWithPalettes(jobId);
-    -- Always include 0 (shared) at the start
-    local hasShared = false;
-    for _, subjobId in ipairs(subjobsList) do
-        if subjobId == 0 then
-            hasShared = true;
-            break;
-        end
-    end
-    if not hasShared then
-        table.insert(subjobsList, 1, 0);
-    end
-    table.sort(subjobsList);
-    return subjobsList;
+-- Set a brief status message (auto-clears after a few seconds)
+local function SetStatusMessage(message)
+    windowState.statusMessage = message;
+    windowState.statusMessageTime = os.clock();
 end
 
 -- Open the palette manager window
@@ -198,17 +182,19 @@ end
 -- Helper: Draw palette list
 local function DrawPaletteList()
     local palettes;
-    local usingFallback = false;
 
+    -- Always ensure default shared palette exists for this job
+    -- This handles both direct shared view and fallback scenarios
     if windowState.selectedPaletteType == 'hotbar' then
+        palette.EnsureDefaultPaletteExists(windowState.selectedJobId, 0);
         palettes = palette.GetAvailablePalettes(1, windowState.selectedJobId, windowState.selectedSubjobId);
-        usingFallback = windowState.selectedSubjobId ~= 0 and
-                        palette.IsUsingFallbackPalettes(windowState.selectedJobId, windowState.selectedSubjobId);
     else
+        palette.EnsureCrossbarDefaultPaletteExists(windowState.selectedJobId, 0);
         palettes = palette.GetCrossbarAvailablePalettes(windowState.selectedJobId, windowState.selectedSubjobId);
-        usingFallback = windowState.selectedSubjobId ~= 0 and #palettes > 0 and
-                        not palette.GetCrossbarAvailablePalettes(windowState.selectedJobId, windowState.selectedSubjobId)[1];
     end
+
+    -- Check fallback status using centralized function
+    local usingFallback = IsUsingFallback(windowState.selectedJobId, windowState.selectedSubjobId, windowState.selectedPaletteType);
 
     -- Show fallback indicator
     if usingFallback then
@@ -231,8 +217,21 @@ local function DrawPaletteList()
     else
         for i, paletteName in ipairs(palettes) do
             local isSelected = windowState.selectedPaletteName == paletteName;
+
+            -- Custom selected state styling using XIUI colors
+            if isSelected then
+                local gold = components.TAB_STYLE.gold;
+                imgui.PushStyleColor(ImGuiCol_Header, {gold[1], gold[2], gold[3], 0.4});
+                imgui.PushStyleColor(ImGuiCol_HeaderHovered, {gold[1], gold[2], gold[3], 0.5});
+                imgui.PushStyleColor(ImGuiCol_HeaderActive, {gold[1], gold[2], gold[3], 0.6});
+            end
+
             if imgui.Selectable(paletteName .. '##palette' .. i, isSelected) then
                 windowState.selectedPaletteName = paletteName;
+            end
+
+            if isSelected then
+                imgui.PopStyleColor(3);
             end
 
             -- Context menu for right-click
@@ -256,15 +255,11 @@ local function DrawPaletteList()
                 if #palettes > 1 then
                     imgui.Separator();
                     if imgui.MenuItem('Delete') then
-                        local success, err;
-                        if windowState.selectedPaletteType == 'hotbar' then
-                            success, err = palette.DeletePalette(1, paletteName, windowState.selectedJobId, windowState.selectedSubjobId);
-                        else
-                            success, err = palette.DeleteCrossbarPalette(paletteName, windowState.selectedJobId, windowState.selectedSubjobId);
-                        end
-                        if success then
-                            windowState.selectedPaletteName = nil;
-                        end
+                        modalState.mode = 'delete';
+                        modalState.deletePaletteName = paletteName;
+                        modalState.errorMessage = nil;
+                        modalState.isOpen = true;
+                        windowState.selectedPaletteName = paletteName;
                     end
                 end
                 imgui.EndPopup();
@@ -306,15 +301,10 @@ local function DrawActionButtons(palettes)
     local canDelete = hasSelection and #palettes > 1;
     if not canDelete then imgui.BeginDisabled(); end
     if imgui.Button('Delete') then
-        local success, err;
-        if windowState.selectedPaletteType == 'hotbar' then
-            success, err = palette.DeletePalette(1, windowState.selectedPaletteName, windowState.selectedJobId, windowState.selectedSubjobId);
-        else
-            success, err = palette.DeleteCrossbarPalette(windowState.selectedPaletteName, windowState.selectedJobId, windowState.selectedSubjobId);
-        end
-        if success then
-            windowState.selectedPaletteName = nil;
-        end
+        modalState.mode = 'delete';
+        modalState.deletePaletteName = windowState.selectedPaletteName;
+        modalState.errorMessage = nil;
+        modalState.isOpen = true;
     end
     if not canDelete then imgui.EndDisabled(); end
 
@@ -343,6 +333,9 @@ local function DrawActionButtons(palettes)
         else
             success, err = palette.MoveCrossbarPalette(windowState.selectedPaletteName, -1, windowState.selectedJobId, windowState.selectedSubjobId);
         end
+        if not success and err then
+            SetStatusMessage(err);
+        end
     end
     imgui.SameLine();
     if imgui.Button('Move Down') then
@@ -352,8 +345,20 @@ local function DrawActionButtons(palettes)
         else
             success, err = palette.MoveCrossbarPalette(windowState.selectedPaletteName, 1, windowState.selectedJobId, windowState.selectedSubjobId);
         end
+        if not success and err then
+            SetStatusMessage(err);
+        end
     end
     if not hasSelection then imgui.EndDisabled(); end
+
+    -- Show status message (auto-clears after 3 seconds)
+    if windowState.statusMessage then
+        if os.clock() - windowState.statusMessageTime < 3 then
+            imgui.TextColored({1.0, 0.6, 0.3, 1.0}, windowState.statusMessage);
+        else
+            windowState.statusMessage = nil;
+        end
+    end
 end
 
 -- Helper: Draw create/rename modal
@@ -366,6 +371,16 @@ local function DrawCreateRenameModal()
     imgui.OpenPopup(title .. '##paletteModal');
 
     if imgui.BeginPopupModal(title .. '##paletteModal', nil, ImGuiWindowFlags_AlwaysAutoResize) then
+        -- Warning when creating will break away from shared palettes
+        if modalState.mode == 'create' and windowState.selectedSubjobId ~= 0 then
+            local usingFallback = IsUsingFallback(windowState.selectedJobId, windowState.selectedSubjobId, windowState.selectedPaletteType);
+            if usingFallback then
+                imgui.TextColored({1.0, 0.7, 0.3, 1.0}, 'Warning: Creating this palette will stop');
+                imgui.TextColored({1.0, 0.7, 0.3, 1.0}, 'using shared palettes for ' .. GetJobName(windowState.selectedJobId) .. '/' .. GetJobName(windowState.selectedSubjobId) .. '.');
+                imgui.Spacing();
+            end
+        end
+
         imgui.Text('Palette Name:');
         imgui.PushItemWidth(200);
         local enterPressed = imgui.InputText('##paletteName', modalState.inputBuffer, 32, ImGuiInputTextFlags_EnterReturnsTrue);
@@ -481,6 +496,16 @@ local function DrawCopyModal()
 
         imgui.Spacing();
 
+        -- Warning when copying to a subjob-specific location that currently uses shared palettes
+        if modalState.copyTargetSubjobId ~= 0 then
+            local targetUsingFallback = IsUsingFallback(modalState.copyTargetJobId, modalState.copyTargetSubjobId, windowState.selectedPaletteType);
+            if targetUsingFallback then
+                imgui.TextColored({1.0, 0.7, 0.3, 1.0}, 'Warning: This will stop using shared palettes for');
+                imgui.TextColored({1.0, 0.7, 0.3, 1.0}, GetJobName(modalState.copyTargetJobId) .. '/' .. GetJobName(modalState.copyTargetSubjobId) .. '.');
+                imgui.Spacing();
+            end
+        end
+
         -- New name input
         imgui.Text('New Name (leave blank to keep same):');
         imgui.PushItemWidth(200);
@@ -494,11 +519,17 @@ local function DrawCopyModal()
 
         imgui.Spacing();
 
-        -- Buttons
-        if imgui.Button('Copy', { 80, 0 }) then
-            local newName = modalState.inputBuffer[1];
-            if newName == '' then newName = nil; end
+        -- Check if copying to same location with same name
+        local newName = modalState.inputBuffer[1];
+        if newName == '' then newName = nil; end
+        local effectiveName = newName or windowState.selectedPaletteName;
+        local isSameLocation = modalState.copyTargetJobId == windowState.selectedJobId and
+                               modalState.copyTargetSubjobId == windowState.selectedSubjobId and
+                               effectiveName == windowState.selectedPaletteName;
 
+        -- Buttons
+        if isSameLocation then imgui.BeginDisabled(); end
+        if imgui.Button('Copy', { 80, 0 }) then
             local success, err;
             if windowState.selectedPaletteType == 'hotbar' then
                 success, err = palette.CopyPalette(
@@ -525,6 +556,57 @@ local function DrawCopyModal()
                 imgui.CloseCurrentPopup();
             else
                 modalState.errorMessage = err or 'Copy failed';
+            end
+        end
+        if isSameLocation then imgui.EndDisabled(); end
+
+        imgui.SameLine();
+
+        if imgui.Button('Cancel', { 80, 0 }) then
+            modalState.isOpen = false;
+            imgui.CloseCurrentPopup();
+        end
+
+        imgui.EndPopup();
+    end
+end
+
+-- Helper: Draw delete confirmation modal
+local function DrawDeleteConfirmModal()
+    if not modalState.isOpen or modalState.mode ~= 'delete' then
+        return;
+    end
+
+    imgui.OpenPopup('Delete Palette##deleteModal');
+
+    if imgui.BeginPopupModal('Delete Palette##deleteModal', nil, ImGuiWindowFlags_AlwaysAutoResize) then
+        imgui.Text('Are you sure you want to delete');
+        imgui.Text('"' .. (modalState.deletePaletteName or '') .. '"?');
+        imgui.Spacing();
+        imgui.TextColored({0.7, 0.7, 0.7, 1.0}, 'This action cannot be undone.');
+        imgui.Spacing();
+
+        -- Show error if any
+        if modalState.errorMessage then
+            imgui.TextColored({1.0, 0.3, 0.3, 1.0}, modalState.errorMessage);
+        end
+
+        imgui.Spacing();
+
+        -- Buttons
+        if imgui.Button('Delete', { 80, 0 }) then
+            local success, err;
+            if windowState.selectedPaletteType == 'hotbar' then
+                success, err = palette.DeletePalette(1, modalState.deletePaletteName, windowState.selectedJobId, windowState.selectedSubjobId);
+            else
+                success, err = palette.DeleteCrossbarPalette(modalState.deletePaletteName, windowState.selectedJobId, windowState.selectedSubjobId);
+            end
+            if success then
+                windowState.selectedPaletteName = nil;
+                modalState.isOpen = false;
+                imgui.CloseCurrentPopup();
+            else
+                modalState.errorMessage = err or 'Delete failed';
             end
         end
 
@@ -571,6 +653,7 @@ function M.Draw()
         -- Draw modals
         DrawCreateRenameModal();
         DrawCopyModal();
+        DrawDeleteConfirmModal();
     end
     imgui.End();
 

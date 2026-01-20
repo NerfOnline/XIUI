@@ -648,15 +648,16 @@ function M.EnsureDefaultPaletteExists(jobId, subjobId)
     local availablePalettes = M.GetAvailablePalettes(1, normalizedJobId, subjobId);
 
     if #availablePalettes == 0 then
-        -- No palettes exist, create the default one
-        local success, err = M.CreatePalette(1, M.DEFAULT_PALETTE_NAME, normalizedJobId, subjobId);
+        -- No palettes exist, create the default one at subjob 0 (shared)
+        -- This ensures imported data at subjob 0 isn't shadowed by empty subjob-specific palettes
+        local success, err = M.CreatePalette(1, M.DEFAULT_PALETTE_NAME, normalizedJobId, 0);
         if success then
             return M.DEFAULT_PALETTE_NAME;
         else
             -- If "Default" already exists somehow, try numbered names
             for i = 1, 99 do
                 local name = 'Palette ' .. i;
-                success, err = M.CreatePalette(1, name, normalizedJobId, subjobId);
+                success, err = M.CreatePalette(1, name, normalizedJobId, 0);
                 if success then
                     return name;
                 end
@@ -834,7 +835,13 @@ function M.MovePalette(barIndex, paletteName, direction, jobId, subjobId)
 
     local normalizedJobId = jobId or 1;
     local normalizedSubjobId = subjobId or 0;
-    local orderKey = BuildJobSubjobKey(normalizedJobId, normalizedSubjobId);
+
+    -- If using fallback palettes, modify the shared order (subjob 0) instead
+    local effectiveSubjobId = normalizedSubjobId;
+    if normalizedSubjobId ~= 0 and M.IsUsingFallbackPalettes(normalizedJobId, normalizedSubjobId) then
+        effectiveSubjobId = 0;
+    end
+    local orderKey = BuildJobSubjobKey(normalizedJobId, effectiveSubjobId);
 
     -- Ensure paletteOrder exists and is populated
     if not gConfig.hotbar then
@@ -1084,6 +1091,32 @@ function M.GetCrossbarAvailablePalettes(jobId, subjobId)
     return palettes;
 end
 
+-- Check if crossbar palettes are using fallback (shared) mode
+-- Returns true if using shared palettes because no subjob-specific ones exist
+function M.IsUsingCrossbarFallbackPalettes(jobId, subjobId)
+    local normalizedJobId = jobId or 1;
+    local normalizedSubjobId = subjobId or 0;
+
+    if normalizedSubjobId == 0 then
+        return false;  -- Already using shared palettes
+    end
+
+    local crossbarSettings = gConfig and gConfig.hotbarCrossbar;
+    if not crossbarSettings or not crossbarSettings.slotActions then
+        return true;  -- No settings, would use fallback
+    end
+
+    -- Check for subjob-specific palettes
+    local subjobPattern = string.format('%d:%d:%s', normalizedJobId, normalizedSubjobId, M.PALETTE_KEY_PREFIX);
+    for storageKey, _ in pairs(crossbarSettings.slotActions) do
+        if type(storageKey) == 'string' and storageKey:find(subjobPattern, 1, true) == 1 then
+            return false;  -- Found at least one subjob-specific palette
+        end
+    end
+
+    return true;  -- Using fallback
+end
+
 -- DEPRECATED: GetAllAvailablePalettes - kept for backwards compatibility
 -- Now just returns hotbar palettes since crossbar has its own separate palettes
 function M.GetAllAvailablePalettes(jobId, subjobId)
@@ -1251,8 +1284,9 @@ function M.EnsureCrossbarDefaultPaletteExists(jobId, subjobId)
     local availablePalettes = M.GetCrossbarAvailablePalettes(normalizedJobId, subjobId);
 
     if #availablePalettes == 0 then
-        -- No palettes exist, create the default one
-        local success, err = M.CreateCrossbarPalette(M.DEFAULT_PALETTE_NAME, normalizedJobId, subjobId);
+        -- No palettes exist, create the default one at subjob 0 (shared)
+        -- This ensures imported data at subjob 0 isn't shadowed by empty subjob-specific palettes
+        local success, err = M.CreateCrossbarPalette(M.DEFAULT_PALETTE_NAME, normalizedJobId, 0);
         if success then
             -- Auto-activate the new palette
             M.SetActivePaletteForCombo('L2', M.DEFAULT_PALETTE_NAME);
@@ -1261,7 +1295,7 @@ function M.EnsureCrossbarDefaultPaletteExists(jobId, subjobId)
             -- If "Default" already exists somehow, try numbered names
             for i = 1, 99 do
                 local name = 'Palette ' .. i;
-                success, err = M.CreateCrossbarPalette(name, normalizedJobId, subjobId);
+                success, err = M.CreateCrossbarPalette(name, normalizedJobId, 0);
                 if success then
                     M.SetActivePaletteForCombo('L2', name);
                     return name;
@@ -1444,7 +1478,13 @@ function M.MoveCrossbarPalette(paletteName, direction, jobId, subjobId)
 
     local normalizedJobId = jobId or 1;
     local normalizedSubjobId = subjobId or 0;
-    local orderKey = BuildJobSubjobKey(normalizedJobId, normalizedSubjobId);
+
+    -- If using fallback palettes, modify the shared order (subjob 0) instead
+    local effectiveSubjobId = normalizedSubjobId;
+    if normalizedSubjobId ~= 0 and M.IsUsingCrossbarFallbackPalettes(normalizedJobId, normalizedSubjobId) then
+        effectiveSubjobId = 0;
+    end
+    local orderKey = BuildJobSubjobKey(normalizedJobId, effectiveSubjobId);
 
     -- Ensure crossbarPaletteOrder exists and is populated
     if not crossbarSettings.crossbarPaletteOrder then

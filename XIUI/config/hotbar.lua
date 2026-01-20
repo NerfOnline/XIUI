@@ -170,6 +170,25 @@ local function DrawPaletteModal()
     imgui.OpenPopup(popupId);
 
     if imgui.BeginPopupModal(popupId, nil, ImGuiWindowFlags_AlwaysAutoResize) then
+        -- Warning when creating will break away from shared palettes
+        local jobId = data.jobId or 1;
+        local subjobId = data.subjobId or 0;
+        if paletteModal.mode == 'create' and subjobId ~= 0 then
+            local usingFallback = false;
+            if paletteModal.paletteType == 'crossbar' then
+                usingFallback = palette.IsUsingCrossbarFallbackPalettes(jobId, subjobId);
+            else
+                usingFallback = palette.IsUsingFallbackPalettes(jobId, subjobId);
+            end
+            if usingFallback then
+                local jobName = jobs[jobId] or ('Job ' .. jobId);
+                local subjobName = jobs[subjobId] or ('Job ' .. subjobId);
+                imgui.TextColored({1.0, 0.7, 0.3, 1.0}, 'Warning: Creating this palette will stop');
+                imgui.TextColored({1.0, 0.7, 0.3, 1.0}, 'using shared palettes for ' .. jobName .. '/' .. subjobName .. '.');
+                imgui.Spacing();
+            end
+        end
+
         local promptText = paletteModal.mode == 'create'
             and 'Enter name for new palette:'
             or 'Enter new name for palette:';
