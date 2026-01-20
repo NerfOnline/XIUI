@@ -11,6 +11,7 @@
 *   - PushStyleColor: idx param no longer optional, nil check needed
 *   - ImGuiCol_Tab* constants renamed (TabActive -> TabSelected, etc.)
 *   - ImDrawCornerFlags renamed to ImDrawFlags_RoundCorners*
+*   - BeginDisabled/EndDisabled: exists in 4.3 (ImGui 1.85+), polyfilled for main
 ]]--
 
 local imgui = require('imgui');
@@ -97,6 +98,24 @@ else
     end
     if ImGuiCol_TabUnfocusedActive == nil then
         ImGuiCol_TabUnfocusedActive = ImGuiCol_HeaderActive or 0;
+    end
+
+    -- BeginDisabled/EndDisabled shim for main branch
+    -- These functions exist in ImGui 1.85+ (4.3) but not in older versions
+    -- Always push/pop to maintain stack balance (matches native ImGui behavior)
+    if imgui.BeginDisabled == nil then
+        imgui.BeginDisabled = function(disabled)
+            if disabled == false then
+                -- Push with no visual effect to maintain stack balance
+                imgui.PushStyleVar(ImGuiStyleVar_Alpha, imgui.GetStyle().Alpha);
+            else
+                -- Default: apply 50% alpha for disabled appearance
+                imgui.PushStyleVar(ImGuiStyleVar_Alpha, imgui.GetStyle().Alpha * 0.5);
+            end
+        end
+        imgui.EndDisabled = function()
+            imgui.PopStyleVar();
+        end
     end
 
     -- BeginChild: 4.3 changed default cflags behavior

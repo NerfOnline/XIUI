@@ -720,10 +720,11 @@ M.DEFAULT_PALETTE_NAME = 'Default';
 
 -- Get storage key for a job+palette combination
 -- Maps tHotBar palette names to XIUI storage keys:
---   "Base" or "Default" -> NEW FORMAT: '{jobId}:palette:Default' (converted to palette system)
+--   "Base" or "Default" -> NEW FORMAT: '{jobId}:0:palette:Default' (shared, subjob 0)
 --   Avatar name (Ifrit, Shiva, etc.) -> pet palette key (jobId:0:avatar:ifrit)
 --   Spirit name -> pet palette key (jobId:0:spirit:firespirit)
---   Other names -> general palette key (jobId:palette:PaletteName)
+--   Other names -> general palette key (jobId:0:palette:PaletteName) (shared, subjob 0)
+-- NOTE: All tHotBar imports go to subjob 0 (shared) so they're accessible from any subjob
 function M.GetStorageKeyForPalette(jobAbbr, paletteName)
     local jobId = M.GetJobId(jobAbbr);
     if not jobId then
@@ -731,10 +732,11 @@ function M.GetStorageKeyForPalette(jobAbbr, paletteName)
     end
 
     -- Handle Base/Default palettes - convert to Default palette using NEW format
-    -- The new palette system requires '{jobId}:palette:{name}' format
+    -- The new palette system requires '{jobId}:{subjobId}:palette:{name}' format
     -- 'Default' comes from thotbar's Default section, 'Base' from named palettes
+    -- All imports go to subjob 0 (shared)
     if not paletteName or paletteName == 'Base' or paletteName == 'Default' then
-        return string.format('%d:palette:%s', jobId, M.DEFAULT_PALETTE_NAME);
+        return string.format('%d:0:palette:%s', jobId, M.DEFAULT_PALETTE_NAME);
     end
 
     -- Check if it's an avatar name (SMN)
@@ -750,8 +752,8 @@ function M.GetStorageKeyForPalette(jobAbbr, paletteName)
         return string.format('%d:0:spirit:%s', jobId, spiritKey);
     end
 
-    -- NEW FORMAT for general palettes: '{jobId}:palette:{name}'
-    return string.format('%d:palette:%s', jobId, paletteName);
+    -- NEW FORMAT for general palettes: '{jobId}:0:palette:{name}' (shared, subjob 0)
+    return string.format('%d:0:palette:%s', jobId, paletteName);
 end
 
 -- Check if a palette name corresponds to a pet palette (avatar or spirit)
@@ -762,6 +764,7 @@ end
 
 -- Register an imported palette with the palette order system
 -- This ensures the palette appears in the palette selector dropdown
+-- NOTE: Imports go to job:0 (shared) palette order keys
 function M.RegisterImportedPalette(paletteName, jobId, isForCrossbar)
     if not gConfig then return; end
 
@@ -774,20 +777,23 @@ function M.RegisterImportedPalette(paletteName, jobId, isForCrossbar)
     -- Skip pet palettes (handled by petpalette module)
     if M.IsPetPalette(effectiveName) then return; end
 
+    -- Build the order key: 'jobId:0' (shared, subjob 0)
+    local orderKey = string.format('%d:0', jobId);
+
     if isForCrossbar then
         -- Register in crossbar palette order
         if not gConfig.hotbarCrossbar then return; end
         if not gConfig.hotbarCrossbar.crossbarPaletteOrder then
             gConfig.hotbarCrossbar.crossbarPaletteOrder = {};
         end
-        if not gConfig.hotbarCrossbar.crossbarPaletteOrder[jobId] then
-            gConfig.hotbarCrossbar.crossbarPaletteOrder[jobId] = {};
+        if not gConfig.hotbarCrossbar.crossbarPaletteOrder[orderKey] then
+            gConfig.hotbarCrossbar.crossbarPaletteOrder[orderKey] = {};
         end
         -- Check if already exists
-        for _, name in ipairs(gConfig.hotbarCrossbar.crossbarPaletteOrder[jobId]) do
+        for _, name in ipairs(gConfig.hotbarCrossbar.crossbarPaletteOrder[orderKey]) do
             if name == effectiveName then return; end
         end
-        table.insert(gConfig.hotbarCrossbar.crossbarPaletteOrder[jobId], effectiveName);
+        table.insert(gConfig.hotbarCrossbar.crossbarPaletteOrder[orderKey], effectiveName);
     else
         -- Register in hotbar palette order
         if not gConfig.hotbar then
@@ -796,14 +802,14 @@ function M.RegisterImportedPalette(paletteName, jobId, isForCrossbar)
         if not gConfig.hotbar.paletteOrder then
             gConfig.hotbar.paletteOrder = {};
         end
-        if not gConfig.hotbar.paletteOrder[jobId] then
-            gConfig.hotbar.paletteOrder[jobId] = {};
+        if not gConfig.hotbar.paletteOrder[orderKey] then
+            gConfig.hotbar.paletteOrder[orderKey] = {};
         end
         -- Check if already exists
-        for _, name in ipairs(gConfig.hotbar.paletteOrder[jobId]) do
+        for _, name in ipairs(gConfig.hotbar.paletteOrder[orderKey]) do
             if name == effectiveName then return; end
         end
-        table.insert(gConfig.hotbar.paletteOrder[jobId], effectiveName);
+        table.insert(gConfig.hotbar.paletteOrder[orderKey], effectiveName);
     end
 end
 

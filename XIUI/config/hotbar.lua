@@ -17,6 +17,7 @@ local controller = require('modules.hotbar.controller');
 local macrosLib = require('libs.ffxi.macros');
 local palette = require('modules.hotbar.palette');
 local migrationWizard = require('config.migration');
+local paletteManager = require('config.palettemanager');
 
 local M = {};
 
@@ -169,6 +170,20 @@ local function DrawPaletteModal()
     imgui.OpenPopup(popupId);
 
     if imgui.BeginPopupModal(popupId, nil, ImGuiWindowFlags_AlwaysAutoResize) then
+        -- Warning when creating will break away from shared palettes
+        local jobId = data.jobId or 1;
+        local subjobId = data.subjobId or 0;
+        if paletteModal.mode == 'create' and subjobId ~= 0 then
+            local usingFallback = palette.IsUsingFallback(jobId, subjobId, paletteModal.paletteType);
+            if usingFallback then
+                local jobName = jobs[jobId] or ('Job ' .. jobId);
+                local subjobName = jobs[subjobId] or ('Job ' .. subjobId);
+                imgui.TextColored({1.0, 0.7, 0.3, 1.0}, 'Warning: Creating this palette will stop');
+                imgui.TextColored({1.0, 0.7, 0.3, 1.0}, 'using shared palettes for ' .. jobName .. '/' .. subjobName .. '.');
+                imgui.Spacing();
+            end
+        end
+
         local promptText = paletteModal.mode == 'create'
             and 'Enter name for new palette:'
             or 'Enter new name for palette:';
@@ -362,6 +377,9 @@ local function DrawGlobalPalettesSection()
     local availablePalettes = palette.GetAvailablePalettes(1, jobId, subjobId);
     local currentPalette = palette.GetActivePalette(1);  -- Same for all bars
 
+    -- Check if using fallback (shared library) palettes
+    local usingFallback = palette.IsUsingFallback(jobId, subjobId, 'hotbar');
+
     -- Ensure active palette is set if we have palettes but none active
     if #availablePalettes > 0 and not currentPalette then
         currentPalette = availablePalettes[1];
@@ -369,7 +387,14 @@ local function DrawGlobalPalettesSection()
     end
 
     imgui.TextColored(components.TAB_STYLE.gold, 'Palettes');
-    imgui.TextColored({0.7, 0.7, 0.7, 1.0}, 'Palettes affect all hotbars simultaneously.');
+    if imgui.SmallButton('Palette Manager##hotbar') then
+        paletteManager.Open();
+    end
+    if usingFallback then
+        imgui.SameLine();
+        imgui.TextColored({0.4, 0.8, 1.0, 1.0}, '(Shared Library)');
+        imgui.ShowHelp('These palettes are from your Shared Library.\nOpen Palette Manager to create subjob-specific palettes.');
+    end
     imgui.Spacing();
 
     -- Header with count
@@ -521,6 +546,9 @@ local function DrawCrossbarGlobalPalettesSection()
     local availablePalettes = palette.GetCrossbarAvailablePalettes(jobId, subjobId);
     local currentPalette = palette.GetActivePaletteForCombo('L2');  -- Global for all combos
 
+    -- Check if using fallback (shared library) palettes
+    local usingFallback = palette.IsUsingFallback(jobId, subjobId, 'crossbar');
+
     -- Ensure active palette is set if we have palettes but none active
     if #availablePalettes > 0 and not currentPalette then
         currentPalette = availablePalettes[1];
@@ -528,7 +556,14 @@ local function DrawCrossbarGlobalPalettesSection()
     end
 
     imgui.TextColored(components.TAB_STYLE.gold, 'Crossbar Palettes');
-    imgui.TextColored({0.7, 0.7, 0.7, 1.0}, 'Palettes affect all crossbar combo modes simultaneously.');
+    if imgui.SmallButton('Palette Manager##crossbar') then
+        paletteManager.Open();
+    end
+    if usingFallback then
+        imgui.SameLine();
+        imgui.TextColored({0.4, 0.8, 1.0, 1.0}, '(Shared Library)');
+        imgui.ShowHelp('These palettes are from your Shared Library.\nOpen Palette Manager to create subjob-specific palettes.');
+    end
     imgui.Spacing();
 
     -- Header with count
@@ -2226,6 +2261,9 @@ local function DrawCrossbarSettings(selectedCrossbarTab)
     -- Draw palette modal (unified for both hotbar and crossbar)
     DrawPaletteModal();
 
+    -- Draw palette manager window (separate window for advanced management)
+    paletteManager.Draw();
+
     return selectedCrossbarTab;
 end
 
@@ -2467,19 +2505,23 @@ function M.DrawSettings(state)
     imgui.PushStyleColor(ImGuiCol_ButtonHovered, components.TAB_STYLE.bgLighter);
     imgui.PushStyleColor(ImGuiCol_ButtonActive, {0.22, 0.20, 0.17, 1.0});
 
-    if imgui.Button('Macro Palette', {140, 0}) then
+    if imgui.Button('Macro Manager', {120, 0}) then
         macropalette.OpenPalette();
+    end
+    imgui.SameLine();
+    if imgui.Button('Palette Manager', {120, 0}) then
+        paletteManager.Open();
     end
     imgui.SameLine();
     -- selectedBarTab is index into BAR_TYPES where 1=Global, 2=Bar1, 3=Bar2, etc.
     -- So actual bar index is selectedBarTab - 1 (default to 1 if Global is selected)
     local editBarIndex = math.max(1, (selectedBarTab or 1) - 1);
     local editConfigKey = 'hotbarBar' .. editBarIndex;
-    if imgui.Button('Keybinds', {100, 0}) then
+    if imgui.Button('Keybinds', {80, 0}) then
         OpenKeybindModal(editBarIndex, editConfigKey);
     end
     imgui.SameLine();
-    if imgui.Button('Import', {80, 0}) then
+    if imgui.Button('Import', {60, 0}) then
         migrationWizard.Open();
     end
     imgui.ShowHelp('Import hotbar and crossbar bindings from tHotBar and tCrossBar addons.');
@@ -2798,6 +2840,9 @@ function M.DrawSettings(state)
 
     -- Draw palette modal (unified for both hotbar and crossbar)
     DrawPaletteModal();
+
+    -- Draw palette manager window (separate window for advanced management)
+    paletteManager.Draw();
 
     return { selectedHotbarTab = selectedBarTab, selectedModeTab = selectedModeTab, selectedCrossbarTab = selectedCrossbarTab };
 end
