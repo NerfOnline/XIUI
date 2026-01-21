@@ -36,7 +36,7 @@ local ITEM_CONTAINERS = { 0, 8, 10, 11, 12, 13, 14, 15, 16 };  -- Inventory, war
 -- Maps spell name prefixes to required tool item IDs
 -- IDs verified from https://www.ffxiah.com/browse/49/ninja-tools
 local NINJA_TOOL_MAPPING = {
-    -- Elemental Ninjutsu (Inoshishinofuda - 2971) Inoshishinofuda
+    -- Elemental Ninjutsu (Inoshishinofuda - 2971)
     ['Katon'] = { 1161, 2971 },     -- Uchitake (Fire)
     ['Hyoton'] = { 1164, 2971 },    -- Tsurara (Ice)
     ['Huton'] = { 1167, 2971 },     -- Kawahori-Ogi (Wind)
@@ -50,15 +50,15 @@ local NINJA_TOOL_MAPPING = {
 	['Migawari'] = { 2970, 2972 },   -- Mokujin (One-shot immunity)
 	['Myoshu'] = { 2642, 2972 },     -- Kabenro (Subtle blow)
 	['Gekka'] = { 8803, 2972 },      -- Ranka (Enmity increase)
-	['Yain'] = { 2643, 2972 },       -- Furusumi (Enmity decrease)
+	['Yain'] = { 8804, 2972 },       -- Furusumi (Enmity decrease)
 	['Kakka'] = { 2644, 2972 },      -- Ryuno (Store TP)
     -- Debuffing Ninjutsu (Chonofuda - 2973)
-    ['Kurayami'] = { 2555, 2973 },   -- Sairui-ran (Blind)
+    ['Kurayami'] = { 1188, 2973 },   -- Sairui-ran (Blind)
     ['Hojo'] = { 1185, 2973 },       -- Kaginawa (Slow)
     ['Jubaku'] = { 1182, 2973 },     -- Jusatsu (Paralyze)
     ['Dokumori'] = { 1191, 2973 },   -- Kodoku (Poison)
-    ['Aisha'] = { 1191, 2973 },      -- Soshi (Attack down)
-	['Yurin'] = { 2644, 2973 },      -- Jinko (Reduces enemy TP gain)
+    ['Aisha'] = { 2555, 2973 },      -- Soshi (Attack down)
+	['Yurin'] = { 2643, 2973 },      -- Jinko (Reduces enemy TP gain)
 };
 
 -- Cache for ninjutsu spell type lookups
