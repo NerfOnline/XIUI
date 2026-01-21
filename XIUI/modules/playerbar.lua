@@ -34,7 +34,12 @@ local lastInterpColorConfig = nil;
 local baseWindowFlags = nil;
 
 local playerbar = {
-	interpolation = {}
+	interpolation = {},
+	restingTicker = {
+		nextTick = 0,
+		wasResting = false,
+		isFirstTick = true,  -- Track if this is the first tick after starting to rest
+	}
 };
 
 -- Get cached interpolation colors, only recompute when config changes
@@ -354,6 +359,51 @@ playerbar.DrawWindow = function(settings)
 		-- Capture HP bar start position
 		local hpBarStartX, hpBarStartY = imgui.GetCursorScreenPos();
 		progressbar.ProgressBar(hpPercentData, {barSize, settings.barHeight}, {decorate = gConfig.showPlayerBarBookends});
+
+		-- Draw resting ticker if enabled
+		if gConfig.playerBarRestingTicker and playerEnt.Status == 33 then
+			local currentTime = os.clock();
+			local ticker = playerbar.restingTicker;
+			
+			-- Initialize tick timer when starting to rest
+			if not ticker.wasResting then
+				ticker.nextTick = currentTime + 21;
+				ticker.wasResting = true;
+				ticker.isFirstTick = true;
+			elseif playerEnt.Status ~= 33 then
+				ticker.wasResting = false;
+				ticker.isFirstTick = true;
+			end
+			
+			-- Update tick timer if it has passed
+			if ticker.nextTick <= currentTime then
+				ticker.nextTick = currentTime + 10;
+				ticker.isFirstTick = false;
+			end
+			
+			-- Calculate progress (0.0 to 1.0)
+			local timeUntilTick = ticker.nextTick - currentTime;
+			local tickInterval = ticker.isFirstTick and 21 or 10;
+			local progress = math.max(0.0, math.min(1.0, 1.0 - (timeUntilTick / tickInterval)));
+			
+			-- Draw gold progress bar
+			if progress > 0 then
+				local bookendWidth = gConfig.showPlayerBarBookends and (settings.barHeight / 2) or 0;
+				local padding = 5.0;
+				local availableWidth = barSize - bookendWidth * 2 - (padding * 2);
+				local barStartX = hpBarStartX + bookendWidth + padding;
+				local barEndX = barStartX + (progress * availableWidth);
+				
+				imgui.GetWindowDrawList():AddRectFilled(
+					{barStartX, hpBarStartY},
+					{barEndX, hpBarStartY + 2.0},
+					imgui.GetColorU32({1.0, 0.84, 0.0, 1.0}),
+					0
+				);
+			end
+		else
+			playerbar.restingTicker.wasResting = false;
+		end
 
 		imgui.SameLine();
 		local hpEndX = imgui.GetCursorPosX();	
