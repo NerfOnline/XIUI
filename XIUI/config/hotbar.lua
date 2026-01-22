@@ -881,14 +881,14 @@ local function ApplyKeybind(keyCode, ctrl, alt, shift)
                 -- Skip the slot we're assigning to (handle both numeric and string keys)
                 local slotNum = tonumber(slotIndex) or slotIndex;
                 local isSameSlot = (checkConfigKey == configKey and slotNum == selectedSlot);
-                if not isSameSlot and existingBinding and existingBinding.key then
+                if not isSameSlot and existingBinding and existingBinding.key and not existingBinding.cleared then
                     -- Check if this binding matches the new one
                     if existingBinding.key == keyCode and
                        (existingBinding.ctrl or false) == ctrlVal and
                        (existingBinding.alt or false) == altVal and
                        (existingBinding.shift or false) == shiftVal then
-                        -- Clear the duplicate binding
-                        checkBarSettings.keyBindings[slotIndex] = nil;
+                        -- Clear the duplicate binding (use marker so it persists)
+                        checkBarSettings.keyBindings[slotIndex] = { cleared = true };
                     end
                 end
             end
@@ -1280,7 +1280,7 @@ function M.DrawKeybindModal()
         for slotIndex = 1, slots do
             -- Handle both numeric and string keys (JSON serialization converts numeric keys to strings)
             local binding = barSettings.keyBindings[slotIndex] or barSettings.keyBindings[tostring(slotIndex)];
-            local hasKeybind = binding and binding.key;
+            local hasKeybind = binding and binding.key and not binding.cleared;
             local isSelected = keybindModal.selectedSlot == slotIndex;
 
             -- Get position before drawing button for indicator
@@ -1346,7 +1346,7 @@ function M.DrawKeybindModal()
             -- Current keybind display inline
             imgui.Text(string.format('Slot %d:', selectedSlot));
             imgui.SameLine();
-            if currentBinding and currentBinding.key then
+            if currentBinding and currentBinding.key and not currentBinding.cleared then
                 imgui.TextColored(components.TAB_STYLE.gold, FormatKeybind(currentBinding));
             else
                 imgui.TextColored({0.5, 0.5, 0.5, 1.0}, 'No keybind assigned');
@@ -1411,7 +1411,7 @@ function M.DrawKeybindModal()
                     keybindModal.waitingForKey = true;
                 end
                 -- Clear button next to set button if keybind exists
-                if currentBinding and currentBinding.key then
+                if currentBinding and currentBinding.key and not currentBinding.cleared then
                     imgui.SameLine();
                     if imgui.Button('Clear##clear', {60, 0}) then
                         -- Also remove from blocked keys if it was blocked
@@ -1421,9 +1421,9 @@ function M.DrawKeybindModal()
                             currentBinding.alt,
                             currentBinding.shift
                         );
-                        -- Clear both numeric and string key versions
-                        barSettings.keyBindings[selectedSlot] = nil;
-                        barSettings.keyBindings[tostring(selectedSlot)] = nil;
+                        -- Use cleared marker so it persists and doesn't restore defaults
+                        barSettings.keyBindings[selectedSlot] = { cleared = true };
+                        barSettings.keyBindings[tostring(selectedSlot)] = nil;  -- Clean up string key
                         SaveSettingsOnly();
                     end
                 end
