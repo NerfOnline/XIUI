@@ -940,7 +940,7 @@ local function FindMatchingKeybind(keyCode, ctrl, alt, shift)
            and barSettings.enabled
            and barSettings.keyBindings and type(barSettings.keyBindings) == 'table' then
             for slotIndex, binding in pairs(barSettings.keyBindings) do
-                if binding and type(binding) == 'table' and binding.key == keyCode then
+                if binding and type(binding) == 'table' and not binding.cleared and binding.key == keyCode then
                     -- Check modifiers match
                     local ctrlMatch = (binding.ctrl or false) == (ctrl or false);
                     local altMatch = (binding.alt or false) == (alt or false);

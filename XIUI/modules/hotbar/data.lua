@@ -576,6 +576,9 @@ function M.GetKeybindDisplay(barIndex, slotIndex)
     if barSettings and barSettings.keyBindings then
         -- Handle both numeric and string keys (JSON serialization converts numeric keys to strings)
         local binding = barSettings.keyBindings[slotIndex] or barSettings.keyBindings[tostring(slotIndex)];
+        if binding and binding.cleared then
+            return '';
+        end
         if binding and binding.key then
             return FormatKeybindShort(binding);
         end
