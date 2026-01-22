@@ -89,7 +89,7 @@ local diagnostics = require('libs.diagnostics');
 local TextureManager = require('libs.texturemanager');
 
 -- Global switch to hard-disable functionality that is limited on HX servers
-HzLimitedMode = true;
+HzLimitedMode = false;
 
 -- Developer override to allow editing the Default profile
 g_AllowDefaultEdit = false;
@@ -325,19 +325,16 @@ local function MigrateAllLegacySettings()
     local imguiPath = installPath .. 'config\\imgui.ini';
     local legacyFound = false;
 
-    -- Helper to list directories
     local function GetCharacterFolders()
         local folders = {};
-        -- Use dir command to list directories
-        local p = io.popen('dir "' .. xiuiPath .. '" /b /ad');
-        if p then
-            for dir in p:lines() do
+        local directories = ashita.fs.get_directory(xiuiPath);
+        if directories then
+            for _, dir in ipairs(directories) do
                 local name, id = string.match(dir, "^([%a]+)_(%d+)$");
                 if name and id then
                     table.insert(folders, { name = name, id = id, dir = dir });
                 end
             end
-            p:close();
         end
         return folders;
     end
@@ -466,14 +463,12 @@ if (not profileManager.ProfileExists(currentProfileName)) then
 end
 
 gConfig = profileManager.GetProfileSettings(currentProfileName);
-    if (gConfig == nil) then
-        -- Fallback if load fails
-        gConfig = deep_copy_table(defaultUserSettings);
-    end
-    
-    gConfig.appliedPositions = {};
+if (gConfig == nil) then
+    gConfig = deep_copy_table(defaultUserSettings);
+end
 
-    gConfigVersion = 0;
+gConfig.appliedPositions = {};
+gConfigVersion = 0;
 settingsMigration.RunStructureMigrations(gConfig, defaultUserSettings);
 
 -- Show migration message
@@ -518,6 +513,7 @@ function CreateProfile(name)
     if (profileManager.ProfileExists(name)) then return false; end
     
     local newSettings = deep_copy_table(defaultUserSettings);
+    newSettings.windowPositions = GetDefaultWindowPositions();
     profileManager.SaveProfileSettings(name, newSettings);
     
     local globalProfiles = profileManager.GetGlobalProfiles();
@@ -575,10 +571,8 @@ end
 function ChangeProfile(name)
     if (not profileManager.ProfileExists(name)) then return false; end
 
-    -- Save current settings before switching
-    if (config.currentProfile ~= 'Default' or g_AllowDefaultEdit) then
-        profileManager.SaveProfileSettings(config.currentProfile, gConfig);
-    end
+    -- Always save current profile before switching (positions, etc.)
+    profileManager.SaveProfileSettings(config.currentProfile, gConfig);
 
     config.currentProfile = name;
     settings.save(); -- Save character preference
@@ -591,8 +585,8 @@ function ChangeProfile(name)
     gConfig = profileManager.GetProfileSettings(name);
     gConfig.appliedPositions = {}; -- Ensure we re-apply positions for the new profile
 
-    -- If Default profile has no saved positions, inject defaults
-    if (name == 'Default' and (not gConfig.windowPositions or next(gConfig.windowPositions) == nil)) then
+    -- If profile has no saved positions, inject defaults
+    if (not gConfig.windowPositions or next(gConfig.windowPositions) == nil) then
         gConfig.windowPositions = GetDefaultWindowPositions();
     end
 
@@ -660,13 +654,17 @@ function UpdateUserSettings()
     settingsUpdater.UpdateUserSettings(gAdjustedSettings, settingsDefaults.default_settings, gConfig);
 end
 
+local function ShouldSaveProfile()
+    return config.currentProfile ~= 'Default' or g_AllowDefaultEdit;
+end
+
 function SaveSettingsToDisk()
     if gConfig.colorCustomization == nil then
         gConfig.colorCustomization = deep_copy_table(defaultUserSettings.colorCustomization);
     end
     gConfigVersion = gConfigVersion + 1; -- Notify caches of settings change
-    
-    if (config.currentProfile ~= 'Default' or g_AllowDefaultEdit) then
+
+    if ShouldSaveProfile() then
         profileManager.SaveProfileSettings(config.currentProfile, gConfig);
     end
     bInternalSave = true;
@@ -679,8 +677,8 @@ function SaveSettingsOnly()
         gConfig.colorCustomization = deep_copy_table(defaultUserSettings.colorCustomization);
     end
     gConfigVersion = gConfigVersion + 1; -- Notify caches of settings change
-    
-    if (config.currentProfile ~= 'Default' or g_AllowDefaultEdit) then
+
+    if ShouldSaveProfile() then
         profileManager.SaveProfileSettings(config.currentProfile, gConfig);
     end
     bInternalSave = true;

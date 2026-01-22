@@ -1,4 +1,5 @@
 local profileManager = {};
+local chat = require('chat');
 local addonName = 'xiui';
 local configPath = AshitaCore:GetInstallPath() .. 'config\\addons\\' .. addonName .. '\\';
 local profilesPath = configPath .. 'profiles\\';
