@@ -14,6 +14,7 @@ local actions = require('modules.hotbar.actions');
 local dragdrop = require('libs.dragdrop');
 local textures = require('modules.hotbar.textures');
 local skillchain = require('modules.hotbar.skillchain');
+local statusHandler = require('handlers.statushandler');
 
 -- Cache for MP cost lookups (keyed by action key string)
 local mpCostCache = {};
@@ -107,6 +108,52 @@ local EQUIPMENT_TYPES = { [4] = true, [5] = true };
 
 -- Ammo slot mask - items that ONLY equip to this slot are consumables (bolts, bullets, arrows)
 local AMMO_SLOT_MASK = 0x0008;
+
+-- Maps ammo item names to the status effect ID they apply
+-- Status IDs: 2=Sleep, 3=Poison, 4=Paralysis, 5=Blind, 6=Silence, 10=Stun, 147=Attack Down, 149=Defense Down
+local AMMO_STATUS_EFFECTS_BY_NAME = {
+    -- Bolts
+    ['Acid Bolt']     = 149,  -- Defense Down
+    ['Sleep Bolt']    = 2,    -- Sleep
+    ['Blind Bolt']    = 5,    -- Blindness
+    ['Venom Bolt']    = 3,    -- Poison
+    -- Arrows
+    ['Sleep Arrow']     = 2,    -- Sleep
+    ['Poison Arrow']    = 3,    -- Poison
+    ['Kabura Arrow']    = 6,    -- Silence
+    ['Paralysis Arrow'] = 4,    -- Paralysis
+    ['Demon Arrow']     = 147,  -- Attack Down
+    -- Bullets
+    ['Spartan Bullet']  = 10,   -- Stun
+};
+
+-- Runtime cache: itemId -> statusId (populated on first lookup)
+local ammoStatusCache = {};
+
+-- Get status effect ID for ammo item (if any)
+-- Uses item name lookup with caching for performance
+local function GetAmmoStatusEffect(itemId)
+    if not itemId or itemId <= 0 then return nil; end
+
+    -- Check cache first
+    if ammoStatusCache[itemId] ~= nil then
+        return ammoStatusCache[itemId] or nil;  -- false means "checked, no effect"
+    end
+
+    -- Look up item name
+    local resMgr = AshitaCore:GetResourceManager();
+    if not resMgr then return nil; end
+
+    local item = resMgr:GetItemById(itemId);
+    if item and item.Name and item.Name[1] then
+        local statusId = AMMO_STATUS_EFFECTS_BY_NAME[item.Name[1]];
+        ammoStatusCache[itemId] = statusId or false;  -- Cache misses too
+        return statusId;
+    end
+
+    ammoStatusCache[itemId] = false;
+    return nil;
+end
 
 -- Check if an item is equipment (armor, weapons, accessories) by its item data
 -- Requires itemId for reliable detection
@@ -284,6 +331,7 @@ function M.ClearAllCache()
     equipmentCheckCache = {};
     ninjutsuCache = {};
     itemQuantityCache = {};
+    ammoStatusCache = {};
 end
 
 -- Clear availability cache (call on job change, level sync, etc.)
@@ -1156,6 +1204,38 @@ function M.DrawSlot(resources, params)
             resources.quantityFont:set_visible(true);
         else
             resources.quantityFont:set_visible(false);
+        end
+    end
+
+    -- ========================================
+    -- 9b. Ammo Status Effect Icon (top-right corner)
+    -- Shows status effect icon for ammo that applies debuffs
+    -- ========================================
+    if bind and bind.actionType == 'item' and bind.itemId and animOpacity > 0.5 then
+        local statusId = GetAmmoStatusEffect(bind.itemId);
+        if statusId then
+            local statusIconPtr = statusHandler.get_icon_image(statusId);
+            if statusIconPtr then
+                local drawList = imgui.GetWindowDrawList();
+                if drawList then
+                    local iconSize = size * 0.35;
+                    local padding = 2;
+                    local iconX = x + size - iconSize - padding;
+                    local iconY = y + padding;
+
+                    -- Apply animation opacity
+                    local iconAlpha = math.floor(255 * animOpacity);
+                    local iconTint = bit.bor(bit.lshift(iconAlpha, 24), 0x00FFFFFF);
+
+                    drawList:AddImage(
+                        statusIconPtr,
+                        {iconX, iconY},
+                        {iconX + iconSize, iconY + iconSize},
+                        {0, 0}, {1, 1},
+                        iconTint
+                    );
+                end
+            end
         end
     end
 
