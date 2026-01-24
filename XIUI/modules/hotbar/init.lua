@@ -328,6 +328,10 @@ function M.Initialize(settings)
     local disableMacroBars = gConfig and gConfig.hotbarGlobal and gConfig.hotbarGlobal.disableMacroBars or false;
     if disableMacroBars then
         macrosLib.hide_macro_bar();  -- Switch to hide mode
+    else
+        -- Apply controller hold-to-show setting (only relevant when macros are not fully disabled)
+        local holdToShow = gConfig.hotbarGlobal.controllerHoldToShow ~= false;  -- default true
+        macrosLib.set_controller_hold_to_show(holdToShow);
     end
     -- If checkbox is OFF, macrofix is already applied by initialize_patches()
 
@@ -432,6 +436,9 @@ function M.UpdateVisuals(settings)
         macrosLib.hide_macro_bar();  -- Hide mode: macro bar hidden
     else
         macrosLib.show_macro_bar();  -- Macrofix mode: fast built-in macros
+        -- Apply controller hold-to-show setting (only relevant when macros are not fully disabled)
+        local holdToShow = gConfig.hotbarGlobal.controllerHoldToShow ~= false;  -- default true
+        macrosLib.set_controller_hold_to_show(holdToShow);
     end
 
     -- Handle crossbar enable/disable based on mode

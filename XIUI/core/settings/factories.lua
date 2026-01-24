@@ -274,6 +274,7 @@ function M.createHotbarGlobalDefaults()
     return T{
         -- Game UI patches
         disableMacroBars = false,  -- Disable native XI macros (macro bar display + controller macro blocking)
+        controllerHoldToShow = true,  -- Controller triggers use hold-to-show (like macrofix addon) instead of tap-to-toggle
 
         -- Blocked game keys - array of key definitions that should be blocked from reaching the game
         -- Each entry: { key = virtualKeyCode, ctrl = bool, alt = bool, shift = bool }
@@ -541,6 +542,12 @@ function M.createCrossbarDefaults()
         comboTextFontSize = 10,             -- Font size for combo text
         comboTextOffsetX = 0,               -- X offset for combo text position
         comboTextOffsetY = 0,               -- Y offset for combo text position
+
+        -- Palette name display (shows current palette and index, e.g., "Stuns (2/5)")
+        showPaletteName = false,            -- Toggle to show palette name
+        paletteNameFontSize = 10,           -- Font size for palette name
+        paletteNameOffsetX = 0,             -- X offset for position
+        paletteNameOffsetY = 0,             -- Y offset for position
 
         -- Expanded crossbar (L2+R2 combos)
         enableExpandedCrossbar = true,      -- Enable L2+R2 and R2+L2 combos

@@ -2133,6 +2133,14 @@ local function DrawCrossbarSettings(selectedCrossbarTab)
                 end
                 imgui.ShowHelp('Show current combo mode text in center (L2+R2, R2+L2, L2x2, R2x2). X/Y offsets adjust position.');
 
+                -- Show Palette Name with X/Y offsets
+                components.DrawPartyCheckbox(crossbarSettings, 'Show Palette Name##crossbar', 'showPaletteName');
+                if crossbarSettings.showPaletteName then
+                    imgui.SameLine();
+                    components.DrawInlineOffsets(crossbarSettings, 'crossbarpalette', 'paletteNameOffsetX', 'paletteNameOffsetY', 35);
+                end
+                imgui.ShowHelp('Display current palette name and index (e.g., "Stuns (2/5)"). X/Y offsets adjust position.');
+
                 -- Show Action Labels with X/Y offsets
                 components.DrawPartyCheckbox(crossbarSettings, 'Show Action Labels##crossbar', 'showActionLabels');
                 if crossbarSettings.showActionLabels then
@@ -2220,6 +2228,9 @@ local function DrawCrossbarSettings(selectedCrossbarTab)
 
                 components.DrawPartySliderInt(crossbarSettings, 'Combo Text Size##crossbar', 'comboTextFontSize', 8, 24, '%d', nil, 12);
                 imgui.ShowHelp('Font size for combo mode text (L2+R2, R2+L2, etc.).');
+
+                components.DrawPartySliderInt(crossbarSettings, 'Palette Name Text Size##crossbar', 'paletteNameFontSize', 8, 24, '%d', nil, 10);
+                imgui.ShowHelp('Font size for palette name display.');
             end
 
             -- Visual Feedback section
@@ -2387,6 +2398,20 @@ function M.DrawSettings(state)
         SaveSettingsOnly();
         DeferredUpdateVisuals();
     end
+
+    -- Controller Hold-to-Show checkbox (only shown when Disable XI Macros is OFF)
+    if not gConfig.hotbarGlobal.disableMacroBars then
+        imgui.Indent(20);
+        local holdToShow = { gConfig.hotbarGlobal.controllerHoldToShow ~= false };  -- default true
+        if imgui.Checkbox('Controller Hold-to-Show', holdToShow) then
+            gConfig.hotbarGlobal.controllerHoldToShow = holdToShow[1];
+            SaveSettingsOnly();
+            DeferredUpdateVisuals();
+        end
+        imgui.ShowHelp('When enabled (default), native macro bars auto-hide when\ntriggers are released. Disable for legacy tap-to-toggle.\nOnly affects controller input.');
+        imgui.Unindent(20);
+    end
+
     imgui.SameLine();
     -- Get diagnostic info for tooltip
     local diag = macrosLib.get_diagnostics();
@@ -2414,7 +2439,9 @@ function M.DrawSettings(state)
     if diag.mode == 'hide' then
         imgui.TextColored({0.5, 1.0, 0.5, 1.0}, '(hidden)');  -- Green when hidden
     elseif diag.mode == 'macrofix' then
-        imgui.TextColored({0.5, 0.8, 1.0, 1.0}, '(macrofix)');  -- Cyan for macrofix mode
+        -- Show hold-to-show status when in macrofix mode
+        local statusText = diag.controllerHoldToShow and '(macrofix, hold-to-show)' or '(macrofix)';
+        imgui.TextColored({0.5, 0.8, 1.0, 1.0}, statusText);  -- Cyan for macrofix mode
     else
         imgui.TextColored({1.0, 0.7, 0.3, 1.0}, '(init...)');  -- Orange if still initializing
     end
@@ -2429,6 +2456,12 @@ function M.DrawSettings(state)
             modeStr = 'macrofix (fast built-in macros)';
         end
         imgui.Text('Mode: ' .. modeStr);
+
+        -- Show controller hold-to-show status when in macrofix mode
+        if diag.mode == 'macrofix' then
+            local holdStatus = diag.controllerHoldToShow and 'enabled' or 'disabled';
+            imgui.Text('Controller Hold-to-Show: ' .. holdStatus);
+        end
 
         -- Check if macrofix addon is loaded (safely - GetAddonManager may not exist)
         local macrofixLoaded = false;
