@@ -915,33 +915,52 @@ function M.DrawSlot(resources, params)
 
     -- ========================================
     -- 4b. Abbreviation Text Fallback (when no icon available)
+    -- Uses GdiFonts for cached text rendering (avoids per-frame ImGui overhead)
     -- ========================================
-    -- Hide abbreviation when cooldown timer is showing (GDI renders before ImGui, so text would overlap)
     if not iconRendered and bind and animOpacity > 0.5 and not recastText then
-        local drawList = GetUIDrawList();
-        if drawList then
+        if resources.abbreviationFont then
             local abbr = GetActionAbbreviation(bind);
-            local textSize = imgui.CalcTextSize(abbr);
-            local textX = x + (size - textSize) / 2;
-            local textY = y + (size - 14) / 2;  -- Approximate font height
 
-            -- Gold color for abbreviation text (matching XIUI style)
-            -- Apply dimming when unavailable/not enough MP
-            local textColorMult = 1.0;
-            if isUnavailable then
-                textColorMult = 0.35;
-            elseif notEnoughMp then
-                textColorMult = 0.6;
+            -- Only update text when changed
+            if cache and cache.abbreviation ~= abbr then
+                resources.abbreviationFont:set_text(abbr);
+                cache.abbreviation = abbr;
             end
-            textColorMult = textColorMult * dimFactor;
 
-            local textColor = imgui.GetColorU32({
-                0.957 * textColorMult,
-                0.855 * textColorMult,
-                0.592 * textColorMult,
-                animOpacity
-            });
-            drawList:AddText({textX, textY}, textColor, abbr);
+            -- Compute color with dimming for unavailable/low MP
+            local colorMult = 1.0;
+            if isUnavailable then colorMult = 0.35;
+            elseif notEnoughMp then colorMult = 0.6; end
+            colorMult = colorMult * dimFactor;
+
+            -- Gold base: R=244, G=218, B=151 (0xF4DA97)
+            local r = math.floor(244 * colorMult);
+            local g = math.floor(218 * colorMult);
+            local b = math.floor(151 * colorMult);
+            local a = math.floor(animOpacity * 255);
+            local abbrColor = bit.bor(bit.lshift(a, 24), bit.lshift(r, 16), bit.lshift(g, 8), b);
+
+            if cache and cache.abbreviationColor ~= abbrColor then
+                resources.abbreviationFont:set_font_color(abbrColor);
+                cache.abbreviationColor = abbrColor;
+            end
+
+            -- Center position
+            local abbrX = x + size / 2;
+            local abbrY = y + size / 2 - 6;
+            if cache and (cache.abbrX ~= abbrX or cache.abbrY ~= abbrY) then
+                resources.abbreviationFont:set_position_x(abbrX);
+                resources.abbreviationFont:set_position_y(abbrY);
+                cache.abbrX = abbrX;
+                cache.abbrY = abbrY;
+            end
+
+            resources.abbreviationFont:set_visible(true);
+        end
+    else
+        if resources.abbreviationFont then
+            resources.abbreviationFont:set_visible(false);
+            if cache then cache.abbreviation = nil; end
         end
     end
 
@@ -1536,6 +1555,7 @@ function M.HideSlot(resources)
     if resources.labelFont then resources.labelFont:set_visible(false); end
     if resources.mpCostFont then resources.mpCostFont:set_visible(false); end
     if resources.quantityFont then resources.quantityFont:set_visible(false); end
+    if resources.abbreviationFont then resources.abbreviationFont:set_visible(false); end
 end
 
 return M;

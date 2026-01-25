@@ -229,6 +229,7 @@ local function DrawSlot(barIndex, slotIndex, x, y, buttonSize, bind, barSettings
         labelFont = data.labelFonts[barIndex] and data.labelFonts[barIndex][slotIndex],
         mpCostFont = data.mpCostFonts[barIndex] and data.mpCostFonts[barIndex][slotIndex],
         quantityFont = data.quantityFonts[barIndex] and data.quantityFonts[barIndex][slotIndex],
+        abbreviationFont = data.abbreviationFonts[barIndex] and data.abbreviationFonts[barIndex][slotIndex],
     };
 
     -- Get icon for this action (cached - only rebuilds when bind changes)
@@ -416,6 +417,9 @@ local function DrawBarWindow(barIndex, settings)
         if data.quantityFonts[barIndex] and data.quantityFonts[barIndex][hiddenSlot] then
             data.quantityFonts[barIndex][hiddenSlot]:set_visible(false);
         end
+        if data.abbreviationFonts[barIndex] and data.abbreviationFonts[barIndex][hiddenSlot] then
+            data.abbreviationFonts[barIndex][hiddenSlot]:set_visible(false);
+        end
     end
 
     -- Window flags (dummy window for positioning)
@@ -552,6 +556,9 @@ local function DrawBarWindow(barIndex, settings)
                         end
                         if data.quantityFonts[barIndex] and data.quantityFonts[barIndex][slotIndex] then
                             data.quantityFonts[barIndex][slotIndex]:set_visible(false);
+                        end
+                        if data.abbreviationFonts[barIndex] and data.abbreviationFonts[barIndex][slotIndex] then
+                            data.abbreviationFonts[barIndex][slotIndex]:set_visible(false);
                         end
                     else
                         -- Check for skillchain prediction on weapon skill slots

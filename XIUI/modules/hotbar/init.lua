@@ -283,7 +283,21 @@ function M.Initialize(settings)
             data.quantityFonts[barIndex][slotIndex] = font;
         end
 
-        -- 10. Create hotbar number font
+        -- 10. Create abbreviation fonts (centered, gold color for icon-less actions)
+        data.abbreviationFonts[barIndex] = {};
+        for slotIndex = 1, data.MAX_SLOTS_PER_BAR do
+            local abbrSettings = deep_copy_table(fontSettings);
+            abbrSettings.font_height = 12;
+            abbrSettings.font_alignment = gdi.Alignment.Center;
+            abbrSettings.font_color = 0xFFF4DA97;  -- Gold color
+            abbrSettings.outline_color = 0xFF000000;
+            abbrSettings.outline_width = 2;
+            local font = FontManager.create(abbrSettings);
+            font:set_visible(false);
+            data.abbreviationFonts[barIndex][slotIndex] = font;
+        end
+
+        -- 11. Create hotbar number font
         local numSettings = deep_copy_table(fontSettings);
         numSettings.font_height = 12;
         data.hotbarNumberFonts[barIndex] = FontManager.create(numSettings);
@@ -619,6 +633,15 @@ function M.Cleanup()
             for slotIndex = 1, data.MAX_SLOTS_PER_BAR do
                 if data.quantityFonts[barIndex][slotIndex] then
                     FontManager.destroy(data.quantityFonts[barIndex][slotIndex]);
+                end
+            end
+        end
+
+        -- Abbreviation fonts
+        if data.abbreviationFonts[barIndex] then
+            for slotIndex = 1, data.MAX_SLOTS_PER_BAR do
+                if data.abbreviationFonts[barIndex][slotIndex] then
+                    FontManager.destroy(data.abbreviationFonts[barIndex][slotIndex]);
                 end
             end
         end

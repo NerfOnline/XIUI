@@ -141,6 +141,10 @@ M.mpCostFonts = {};
 -- Shows quantity of usable items (e.g., "x5")
 M.quantityFonts = {};
 
+-- Abbreviation fonts (per bar, per slot)
+-- Shows text abbreviation when action has no icon
+M.abbreviationFonts = {};
+
 -- Fonts for hotbar numbers (1-6)
 M.hotbarNumberFonts = {};
 
@@ -1069,6 +1073,9 @@ function M.RebuildAllFonts()
 
             f = M.quantityFonts[barIndex] and M.quantityFonts[barIndex][slotIndex];
             if f then table.insert(all, f); end
+
+            f = M.abbreviationFonts[barIndex] and M.abbreviationFonts[barIndex][slotIndex];
+            if f then table.insert(all, f); end
         end
 
         -- Per-bar fonts
@@ -1131,6 +1138,15 @@ function M.SetBarFontsVisible(barIndex, visible)
     -- Item quantity fonts for this bar
     if M.quantityFonts[barIndex] then
         for _, font in pairs(M.quantityFonts[barIndex]) do
+            if font then
+                font:set_visible(visible);
+            end
+        end
+    end
+
+    -- Abbreviation fonts for this bar
+    if M.abbreviationFonts[barIndex] then
+        for _, font in pairs(M.abbreviationFonts[barIndex]) do
             if font then
                 font:set_visible(visible);
             end
@@ -1200,6 +1216,7 @@ function M.Cleanup()
     M.timerFonts = {};
     M.mpCostFonts = {};
     M.quantityFonts = {};
+    M.abbreviationFonts = {};
     M.hotbarNumberFonts = {};
     M.allFonts = nil;
 end
