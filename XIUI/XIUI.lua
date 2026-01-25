@@ -78,6 +78,7 @@ local notifications = uiMods.notifications;
 local treasurePool = uiMods.treasurepool;
 local hotbar = uiMods.hotbar;
 local macropalette = require('modules.hotbar.macropalette');
+local palette = require('modules.hotbar.palette');
 local skillchainModule = require('modules.hotbar.skillchain');
 local configMenu = require('config');
 local debuffHandler = require('handlers.debuffhandler');
@@ -959,6 +960,11 @@ ashita.events.register('unload', 'unload_cb', function ()
     if macropalette.IsHotbarDirty() then
         SaveSettingsToDisk();
         macropalette.ClearHotbarDirty();
+    end
+    -- Save any pending palette selection changes
+    if palette.IsPaletteStateDirty() then
+        SaveSettingsToDisk();
+        palette.ClearPaletteStateDirty();
     end
 
     statusHandler.clear_cache();

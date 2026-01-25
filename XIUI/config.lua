@@ -27,6 +27,7 @@ local hotbarModule = require('config.hotbar');
 
 local treasurePool = require('modules.treasurepool.init');
 local macropalette = require('modules.hotbar.macropalette');
+local palette = require('modules.hotbar.palette');
 
 local config = {};
 
@@ -620,6 +621,11 @@ config.DrawWindow = function(us)
         if macropalette.IsHotbarDirty() then
             SaveSettingsToDisk();
             macropalette.ClearHotbarDirty();
+        end
+        -- Check for unsaved palette selection changes
+        if palette.IsPaletteStateDirty() then
+            SaveSettingsToDisk();
+            palette.ClearPaletteStateDirty();
         end
         -- Clear preview state and reset settings
         treasurePool.ClearPreview();

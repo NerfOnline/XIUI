@@ -5,6 +5,8 @@
 
 require('common');
 
+local gameState = require('core.gamestate');
+
 local M = {};
 
 -- Callback for slot data changes (used by macropalette for debounced saves)
@@ -1159,10 +1161,15 @@ function M.Initialize()
 end
 
 function M.SetPlayerJob()
+    -- Gate on login state - memory only reliable when player entity is visible
+    if not gameState.CheckLoggedIn() then
+        return false;
+    end
+
     local player = AshitaCore:GetMemoryManager():GetPlayer()
     local currentJobId = player:GetMainJob();
-    if(currentJobId == 0) then
-       return;
+    if currentJobId == 0 then
+        return false;
     end
     local currentSubjobId = player:GetSubJob();
 
@@ -1173,6 +1180,7 @@ function M.SetPlayerJob()
 
     M.jobId = currentJobId;
     M.subjobId = currentSubjobId;
+    return true;
 end
 
 -- Clear all state (call on zone change)

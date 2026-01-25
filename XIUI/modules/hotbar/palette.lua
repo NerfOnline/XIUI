@@ -28,6 +28,10 @@ local M = {};
 M.DEFAULT_PALETTE_NAME = 'Default';  -- Name for auto-created palettes
 M.PALETTE_KEY_PREFIX = 'palette:';
 
+-- Deferred save state for palette selection changes
+-- Instead of saving immediately, track dirty state and save at natural pause points
+local paletteStateDirty = false;
+
 -- ============================================
 -- State
 -- ============================================
@@ -250,7 +254,7 @@ local function SavePaletteState(jobId, subjobId)
     end
     local key = BuildJobSubjobKey(jobId, subjobId);
     gConfig.hotbar.activePalettePerJob[key] = state.activePalette;
-    -- Note: Don't call SaveSettingsToDisk() here - it will be called by the caller if needed
+    paletteStateDirty = true;  -- Mark for deferred save
 end
 
 -- Load active palette state from config (for persistence across reloads)
@@ -2117,6 +2121,28 @@ function M.DeleteAllCrossbarSubjobPalettes(jobId, subjobId)
     end
 
     return true;
+end
+
+-- ============================================
+-- Deferred Save State Management
+-- ============================================
+
+-- Check if palette state has unsaved changes
+function M.IsPaletteStateDirty()
+    return paletteStateDirty;
+end
+
+-- Clear the dirty flag (call after saving)
+function M.ClearPaletteStateDirty()
+    paletteStateDirty = false;
+end
+
+-- Flush any pending save (call on unload)
+function M.FlushPendingSave()
+    if paletteStateDirty then
+        SaveSettingsToDisk();
+        paletteStateDirty = false;
+    end
 end
 
 return M;

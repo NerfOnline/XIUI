@@ -103,10 +103,9 @@ function M.Initialize(settings)
     -- Helper function to validate palettes once job is ready
     local function ValidatePalettesWhenReady(attempt)
         attempt = attempt or 1;
-        local maxAttempts = 20;  -- ~10 seconds max wait (0.5s * 20)
+        local maxAttempts = 20;
 
-        data.SetPlayerJob();
-        if data.jobId then
+        if data.SetPlayerJob() then
             palette.ValidatePalettesForJob(data.jobId, data.subjobId);
             macropalette.SyncToCurrentJob();
             display.ClearIconCache();
@@ -115,7 +114,6 @@ function M.Initialize(settings)
                 crossbar.ClearIconCache();
             end
         elseif attempt < maxAttempts then
-            -- Job not ready yet, retry after delay (increases slightly each attempt)
             local delay = math.min(0.5, 0.2 + (attempt * 0.05));
             ashita.tasks.once(delay, function()
                 ValidatePalettesWhenReady(attempt + 1);
@@ -704,20 +702,32 @@ function M.HandleZonePacket()
 end
 
 function M.HandleJobChangePacket(e)
-    ashita.tasks.once(0.5, function()
-        data.SetPlayerJob();
-        macropalette.SyncToCurrentJob();
-        -- Validate palettes for new job (clears if palette doesn't exist for this job)
-        palette.ValidatePalettesForJob(data.jobId, data.subjobId);
-        -- Clear icon caches to force refresh for new job's actions
-        display.ClearIconCache();
-        if crossbarInitialized then
-            crossbar.ClearIconCache();
+    local function TrySetJob(attempt)
+        attempt = attempt or 1;
+        local maxAttempts = 20;
+
+        if data.SetPlayerJob() then
+            -- Job successfully read - proceed with refresh
+            macropalette.SyncToCurrentJob();
+            palette.ValidatePalettesForJob(data.jobId, data.subjobId);
+            display.ClearIconCache();
+            if crossbarInitialized then
+                crossbar.ClearIconCache();
+            end
+            slotrenderer.ClearAvailabilityCache();
+            petpalette.CheckPetState();
+        elseif attempt < maxAttempts then
+            -- Not logged in yet or job not ready - retry
+            local delay = math.min(0.5, 0.2 + (attempt * 0.05));
+            ashita.tasks.once(delay, function()
+                TrySetJob(attempt + 1);
+            end);
         end
-        -- Clear availability cache (may have stale data from during zone transition)
-        slotrenderer.ClearAvailabilityCache();
-        -- Check pet state after job change
-        petpalette.CheckPetState();
+    end
+
+    -- Initial delay to allow zone transition to complete
+    ashita.tasks.once(0.5, function()
+        TrySetJob(1);
     end);
 end
 
