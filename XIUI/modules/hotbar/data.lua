@@ -891,8 +891,7 @@ end
 -- slotIndex: 1-8
 -- slotData: { actionType, action, target, displayName, equipSlot, macroText, itemId, customIconType, customIconId, customIconPath }
 --           or nil to clear the slot
--- sourcePaletteKey: optional; when dropping a macro from palette, pass payload.paletteKey so the correct job/tab is stored
-function M.SetCrossbarSlotData(comboMode, slotIndex, slotData, sourcePaletteKey)
+function M.SetCrossbarSlotData(comboMode, slotIndex, slotData)
     -- If slotData is nil, clear the slot instead
     if not slotData then
         M.ClearCrossbarSlotData(comboMode, slotIndex);
@@ -922,7 +921,7 @@ function M.SetCrossbarSlotData(comboMode, slotIndex, slotData, sourcePaletteKey)
         customIconId = slotData.customIconId,
         customIconPath = slotData.customIconPath,
         macroRef = slotData.macroRef or slotData.id,  -- Store reference to source macro for live updates
-        macroPaletteKey = slotData.macroPaletteKey or sourcePaletteKey,  -- Store which palette the macro came from
+        macroPaletteKey = slotData.macroPaletteKey,  -- Store which palette the macro came from
         -- Recast source override (for macros showing cooldown from different action)
         recastSourceType = slotData.recastSourceType,
         recastSourceAction = slotData.recastSourceAction,

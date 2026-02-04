@@ -1230,7 +1230,6 @@ function M.StartDragMacro(macroIndex, macroData)
     dragdrop.StartDrag('macro', {
         data = macroData,
         macroIndex = macroIndex,
-        paletteKey = GetEffectivePaletteType(),  -- palette the macro was dragged from (job/tab)
         label = macroData.displayName or macroData.action or 'Macro',
         icon = icon,
     });
@@ -1303,8 +1302,8 @@ function M.HandleDropOnSlot(payload, targetBarIndex, targetSlotIndex)
         -- Dragging from palette to slot
         local macroData = payload.data;
         if macroData then
-            -- Use palette the macro was dragged from (payload.paletteKey), not current tab at drop time
-            local macroPaletteKey = payload.paletteKey or GetEffectivePaletteType();
+            -- Get the current macro palette key to store with the reference
+            local macroPaletteKey = GetEffectivePaletteType();
             jobSlotActions[targetSlotIndex] = {
                 actionType = macroData.actionType,
                 action = macroData.action,
