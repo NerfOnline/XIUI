@@ -1384,25 +1384,9 @@ function M.DrawSlot(resources, params)
     -- Helper: determine if movement/drag-drop is locked for this slot
     local function IsMovementLockedForDropZone(dropZoneId)
         if not dropZoneId then return false; end
-        -- Hotbar drop zones: hotbar_<barIndex>_<slotIndex>
-        local hbar = dropZoneId:match('^hotbar_(%d+)_');
-        if hbar then
-            local barIndex = tonumber(hbar);
-            if barIndex then
-                local barSettings = data.GetBarSettings(barIndex);
-                if (barSettings and barSettings.lockMovement) or gConfig.hotbarLockMovement then
-                    return true;
-                end
-            end
-            return false;
-        end
-        -- Crossbar drop zones: crossbar_<comboMode>_<slotIndex>
-        local cbar = dropZoneId:match('^crossbar_([^_]+)_');
-        if cbar then
-            if gConfig and gConfig.hotbarCrossbar and gConfig.hotbarCrossbar.lockMovement then
-                return true;
-            end
-            return false;
+        -- Check global lock setting for all hotbar and crossbar drop zones
+        if gConfig and gConfig.hotbarLockMovement then
+            return true;
         end
         return false;
     end

@@ -1518,8 +1518,8 @@ function M.DrawWindow(settings, moduleSettings)
     end
 
     -- Draw move anchor (only visible when config is open)
-    -- Only show when crossbar movement is NOT locked
-    local crossbarLocked = gConfig and gConfig.hotbarCrossbar and gConfig.hotbarCrossbar.lockMovement;
+    -- Only show when crossbar movement is NOT locked (uses global lock setting)
+    local crossbarLocked = gConfig and gConfig.hotbarLockMovement;
     if not crossbarLocked then
         -- Use same window name as ImGui window so positions are shared
         local anchorNewX, anchorNewY = drawing.DrawMoveAnchor('Crossbar', state.windowX, state.windowY);
