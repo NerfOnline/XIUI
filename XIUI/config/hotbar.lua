@@ -1957,6 +1957,14 @@ local function DrawCrossbarSettings(selectedCrossbarTab)
     components.DrawPartyCheckbox(crossbarSettings, 'Enable L2+R2 / R2+L2##crossbar', 'enableExpandedCrossbar');
     imgui.ShowHelp('Enable L2+R2 and R2+L2 combo modes. Hold one trigger, then press the other to access expanded bars.');
 
+    -- Nested option: Use shared expanded bar (only visible when L2+R2/R2+L2 is enabled)
+    if crossbarSettings.enableExpandedCrossbar then
+        imgui.Indent(20);
+        components.DrawPartyCheckbox(crossbarSettings, 'Use Shared Expanded Bar##crossbar', 'useSharedExpandedBar', DeferredUpdateVisuals);
+        imgui.ShowHelp('When enabled, L2+R2 and R2+L2 will access the same shared expanded bar instead of separate bars.\\nThis shared bar is completely independent from the separate L2+R2 and R2+L2 bars.');
+        imgui.Unindent(20);
+    end
+
     components.DrawPartyCheckbox(crossbarSettings, 'Enable Double-Tap##crossbar', 'enableDoubleTap', DeferredUpdateVisuals);
     imgui.ShowHelp('Enable L2x2 and R2x2 double-tap modes. Tap a trigger twice quickly (hold on second tap) to access double-tap bars.');
 
@@ -2021,9 +2029,46 @@ local function DrawCrossbarSettings(selectedCrossbarTab)
     if crossbarSettings.editMode then
         -- Preview bar dropdown on same line as checkbox
         imgui.SameLine();
-        local previewBarOptions = { 'L2', 'R2', 'L2+R2', 'R2+L2', 'L2x2', 'R2x2' };
-        local previewBarKeys = { 'L2', 'R2', 'L2R2', 'R2L2', 'L2x2', 'R2x2' };
+
+        -- Build preview bar options dynamically based on settings
+        local previewBarOptions = { 'L2', 'R2' };
+        local previewBarKeys = { 'L2', 'R2' };
+
+        -- Add expanded bar options
+        if crossbarSettings.enableExpandedCrossbar then
+            if crossbarSettings.useSharedExpandedBar then
+                -- Shared mode: show single "L2+R2 (Shared)" option
+                table.insert(previewBarOptions, 'L2+R2 (Shared)');
+                table.insert(previewBarKeys, 'Shared');
+            else
+                -- Separate mode: show both L2+R2 and R2+L2
+                table.insert(previewBarOptions, 'L2+R2');
+                table.insert(previewBarKeys, 'L2R2');
+                table.insert(previewBarOptions, 'R2+L2');
+                table.insert(previewBarKeys, 'R2L2');
+            end
+        end
+
+        -- Add double-tap options if enabled
+        if crossbarSettings.enableDoubleTap then
+            table.insert(previewBarOptions, 'L2x2');
+            table.insert(previewBarKeys, 'L2x2');
+            table.insert(previewBarOptions, 'R2x2');
+            table.insert(previewBarKeys, 'R2x2');
+        end
+
         local currentPreviewBar = crossbarSettings.editModeBar or 'L2';
+        -- Handle migration: if current bar is L2R2 or R2L2 but shared mode is now enabled, switch to Shared
+        if crossbarSettings.useSharedExpandedBar and (currentPreviewBar == 'L2R2' or currentPreviewBar == 'R2L2') then
+            currentPreviewBar = 'Shared';
+            crossbarSettings.editModeBar = 'Shared';
+        end
+        -- Handle migration: if current bar is Shared but shared mode is now disabled, switch to L2R2
+        if not crossbarSettings.useSharedExpandedBar and currentPreviewBar == 'Shared' then
+            currentPreviewBar = 'L2R2';
+            crossbarSettings.editModeBar = 'L2R2';
+        end
+
         local currentPreviewLabel = currentPreviewBar;
         -- Convert key to label
         for i, key in ipairs(previewBarKeys) do
@@ -2033,7 +2078,7 @@ local function DrawCrossbarSettings(selectedCrossbarTab)
             end
         end
 
-        imgui.SetNextItemWidth(80);
+        imgui.SetNextItemWidth(110);
         if imgui.BeginCombo('##editModeBar', currentPreviewLabel) then
             for i, label in ipairs(previewBarOptions) do
                 local isSelected = (previewBarKeys[i] == currentPreviewBar);

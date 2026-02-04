@@ -232,6 +232,9 @@ end
 
 -- Get cached icon for a crossbar slot, recompute only if bind changed
 local function GetCachedCrossbarIcon(comboMode, slotIndex, slotData)
+    -- Use effective combo mode for cache key (Shared when shared expanded bar is enabled)
+    comboMode = data.GetEffectiveComboModeForStorage and data.GetEffectiveComboModeForStorage(comboMode) or comboMode;
+
     if not iconCache[comboMode] then
         iconCache[comboMode] = {};
     end
@@ -267,6 +270,8 @@ end
 
 -- Clear crossbar icon cache for a specific slot
 local function ClearCrossbarIconCacheForSlot(comboMode, slotIndex)
+    -- Use effective combo mode for cache key (Shared when shared expanded bar is enabled)
+    comboMode = data.GetEffectiveComboModeForStorage and data.GetEffectiveComboModeForStorage(comboMode) or comboMode;
     if iconCache[comboMode] then
         iconCache[comboMode][slotIndex] = nil;
     end
@@ -435,6 +440,9 @@ local function GetDisplayModes(activeCombo)
     elseif activeCombo == COMBO_MODES.R2_THEN_L2 then
         -- Expanded: R2 first, then L2 -> show R2L2 on right side only, left side dimmed (shows L2)
         return 'L2', 'R2L2', true, 'right';
+    elseif activeCombo == 'Shared' then
+        -- Shared expanded bar (edit mode only): show Shared on left side, right side dimmed
+        return 'Shared', 'R2', true, 'left';
     elseif activeCombo == COMBO_MODES.L2_DOUBLE then
         -- Double-tap L2: show L2x2 on left side only, right side dimmed (shows R2)
         return 'L2x2', 'R2', true, 'left';
@@ -654,8 +662,8 @@ function M.Initialize(settings, moduleSettings)
     local primData = moduleSettings and moduleSettings.prim_data or {};
     state.bgHandle = windowBg.create(primData, settings.backgroundTheme, settings.bgScale, settings.borderScale);
 
-    -- Create primitives and fonts for each combo mode (including double-tap modes)
-    local comboModes = { 'L2', 'R2', 'L2R2', 'R2L2', 'L2x2', 'R2x2' };
+    -- Create primitives and fonts for each combo mode (including double-tap and shared modes)
+    local comboModes = { 'L2', 'R2', 'L2R2', 'R2L2', 'L2x2', 'R2x2', 'Shared' };
 
     for _, comboMode in ipairs(comboModes) do
         state.slotPrims[comboMode] = {};
@@ -1054,9 +1062,13 @@ local function DrawComboText(activeCombo, centerX, topY, settings)
     -- Determine combo text based on active combo
     local comboText = nil;
     if activeCombo == COMBO_MODES.L2_THEN_R2 then
-        comboText = 'L2+R2';
+        -- Show "Shared" when shared expanded bar is enabled
+        comboText = settings.useSharedExpandedBar and 'Shared' or 'L2+R2';
     elseif activeCombo == COMBO_MODES.R2_THEN_L2 then
-        comboText = 'R2+L2';
+        -- Show "Shared" when shared expanded bar is enabled
+        comboText = settings.useSharedExpandedBar and 'Shared' or 'R2+L2';
+    elseif activeCombo == 'Shared' then
+        comboText = 'Shared';
     elseif activeCombo == COMBO_MODES.L2_DOUBLE then
         comboText = 'L2x2';
     elseif activeCombo == COMBO_MODES.R2_DOUBLE then
@@ -1382,7 +1394,7 @@ function M.DrawWindow(settings, moduleSettings)
     end
 
     -- Hide all slot and icon primitives first (we'll show the ones we need)
-    local allModes = { 'L2', 'R2', 'L2R2', 'R2L2', 'L2x2', 'R2x2' };
+    local allModes = { 'L2', 'R2', 'L2R2', 'R2L2', 'L2x2', 'R2x2', 'Shared' };
     for _, mode in ipairs(allModes) do
         for slotIndex = 1, SLOTS_PER_SIDE do
             local slotPrim = state.slotPrims[mode] and state.slotPrims[mode][slotIndex];
@@ -1618,7 +1630,7 @@ function M.SetHidden(hidden)
     -- DrawWindow is responsible for showing them at the correct positions
     -- Setting visible=true here would show them at (0,0) before they're positioned
     if hidden then
-        local comboModes = { 'L2', 'R2', 'L2R2', 'R2L2', 'L2x2', 'R2x2' };
+        local comboModes = { 'L2', 'R2', 'L2R2', 'R2L2', 'L2x2', 'R2x2', 'Shared' };
         for _, comboMode in ipairs(comboModes) do
             for slotIndex = 1, SLOTS_PER_SIDE do
                 local slotPrim = state.slotPrims[comboMode] and state.slotPrims[comboMode][slotIndex];
@@ -1689,7 +1701,7 @@ function M.UpdateVisuals(settings, moduleSettings)
     end
 
     -- Recreate fonts if settings changed
-    local comboModes = { 'L2', 'R2', 'L2R2', 'R2L2', 'L2x2', 'R2x2' };
+    local comboModes = { 'L2', 'R2', 'L2R2', 'R2L2', 'L2x2', 'R2x2', 'Shared' };
     for _, comboMode in ipairs(comboModes) do
         for slotIndex = 1, SLOTS_PER_SIDE do
             -- Recreate label font
@@ -1755,7 +1767,7 @@ function M.Cleanup()
     end
 
     -- Destroy all primitives and fonts
-    local comboModes = { 'L2', 'R2', 'L2R2', 'R2L2', 'L2x2', 'R2x2' };
+    local comboModes = { 'L2', 'R2', 'L2R2', 'R2L2', 'L2x2', 'R2x2', 'Shared' };
     for _, comboMode in ipairs(comboModes) do
         -- Destroy slot primitives, icon primitives, and fonts
         for slotIndex = 1, SLOTS_PER_SIDE do
