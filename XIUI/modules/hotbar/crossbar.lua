@@ -853,6 +853,8 @@ local function DrawSlot(comboMode, slotIndex, x, y, slotSize, settings, isActive
         dropAccepts = {'macro', 'crossbar_slot', 'slot'},
         onDrop = function(payload)
             if payload.type == 'macro' then
+                -- Ensure stored slot has a macroPaletteKey (fallback to current job if missing)
+                if payload.data then payload.data.macroPaletteKey = payload.data.macroPaletteKey or data.jobId; end
                 data.SetCrossbarSlotData(comboMode, slotIndex, payload.data);
             elseif payload.type == 'crossbar_slot' then
                 -- Swap crossbar slots

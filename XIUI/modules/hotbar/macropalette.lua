@@ -1227,8 +1227,13 @@ function M.StartDragMacro(macroIndex, macroData)
     -- Get icon for this macro
     local icon = actions.GetBindIcon(macroData);
 
+    -- Include palette key in data so crossbar drops know which palette the macro came from
+    local dragData = {};
+    for k, v in pairs(macroData) do dragData[k] = v; end
+    dragData.macroPaletteKey = GetEffectivePaletteType();
+
     dragdrop.StartDrag('macro', {
-        data = macroData,
+        data = dragData,
         macroIndex = macroIndex,
         label = macroData.displayName or macroData.action or 'Macro',
         icon = icon,
