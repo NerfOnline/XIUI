@@ -470,6 +470,9 @@ function M.UpdateVisuals(settings)
             doubleTapEnabled = gConfig.hotbarCrossbar.enableDoubleTap or false,
             doubleTapWindow = gConfig.hotbarCrossbar.doubleTapWindow or 0.3,
             controllerScheme = gConfig.hotbarCrossbar.controllerScheme,
+            triggerPressThreshold = gConfig.hotbarCrossbar.triggerPressThreshold or 30,
+            triggerReleaseThreshold = gConfig.hotbarCrossbar.triggerReleaseThreshold or 15,
+            minTriggerHold = gConfig.hotbarCrossbar.minTriggerHold or 0.05,
         });
         controller.SetSlotActivateCallback(function(comboMode, slotIndex)
             crossbar.ActivateSlot(comboMode, slotIndex);

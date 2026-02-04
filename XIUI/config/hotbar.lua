@@ -1933,6 +1933,24 @@ local function DrawCrossbarSettings(selectedCrossbarTab)
     end
     imgui.ShowHelp('Select which button mapping profile to use.\n\n- Xbox: For XInput controllers (Xbox, 8BitDo in X-mode)\n- PlayStation: For DualSense/DualShock via DirectInput\n- Switch Pro: For Nintendo Switch Pro controller\n- Generic DirectInput: For other DirectInput controllers\n\nChanging this will also update the button icon theme.');
 
+    -- Analog Trigger Threshold Settings (Xbox and PlayStation only)
+    local hasAnalogTriggers = (currentScheme == 'xbox' or currentScheme == 'dualsense' or currentScheme == 'dinput');
+    if hasAnalogTriggers then
+        imgui.Spacing();
+        imgui.Text('Analog Trigger Settings');
+        imgui.Separator();
+
+        components.DrawPartySliderInt(crossbarSettings, 'Press Threshold##crossbar', 'triggerPressThreshold', 5, 250, '%d', function()
+            controller.SetTriggerThresholds(crossbarSettings.triggerPressThreshold, crossbarSettings.triggerReleaseThreshold);
+        end, 30);
+        imgui.ShowHelp('Analog trigger value (0-255) required to register as pressed. Higher values require a deeper press. Default: 30');
+
+        components.DrawPartySliderInt(crossbarSettings, 'Release Threshold##crossbar', 'triggerReleaseThreshold', 5, 250, '%d', function()
+            controller.SetTriggerThresholds(crossbarSettings.triggerPressThreshold, crossbarSettings.triggerReleaseThreshold);
+        end, 15);
+        imgui.ShowHelp('Analog trigger value (0-255) below which the trigger is considered released. Provides hysteresis to prevent jitter. Default: 15');
+    end
+
     imgui.Spacing();
 
     -- Controller Input settings (combo modes, double-tap) - directly under controller
@@ -1947,6 +1965,14 @@ local function DrawCrossbarSettings(selectedCrossbarTab)
             controller.SetDoubleTapWindow(crossbarSettings.doubleTapWindow);
         end, 0.3);
         imgui.ShowHelp('Time window to register a double-tap (in seconds).');
+
+        -- Minimum Trigger Hold (only for analog controllers with double-tap enabled)
+        if hasAnalogTriggers then
+            components.DrawPartySlider(crossbarSettings, 'Minimum Trigger Hold##crossbar', 'minTriggerHold', 0.01, 0.15, '%.3f sec', function()
+                controller.SetMinTriggerHold(crossbarSettings.minTriggerHold);
+            end, 0.05);
+            imgui.ShowHelp('Minimum time the trigger must be held before releasing for the release to count toward double-tap detection. Prevents false double-taps from analog jitter or accidental taps. Default: 0.050 sec (50ms)');
+        end
     end
 
     imgui.Spacing();
