@@ -1382,8 +1382,13 @@ function M.DrawSlot(resources, params)
     -- 12. Drop Zone Registration
     -- ========================================
     -- Helper: determine if movement/drag-drop is locked for this slot
+    -- Shift key overrides the lock to allow dragging while locked
     local function IsMovementLockedForDropZone(dropZoneId)
         if not dropZoneId then return false; end
+        -- Shift key overrides the lock
+        if imgui.GetIO().KeyShift then
+            return false;
+        end
         -- Check global lock setting for all hotbar and crossbar drop zones
         if gConfig and gConfig.hotbarLockMovement then
             return true;
@@ -1438,9 +1443,9 @@ function M.DrawSlot(resources, params)
             end
         end
 
-        -- Right click
+        -- Right click (disabled when Lock Movement is enabled)
         if isItemHovered and imgui.IsMouseClicked(1) and bind then
-            if params.onRightClick then
+            if params.onRightClick and not gConfig.hotbarLockMovement then
                 params.onRightClick();
             end
         end
