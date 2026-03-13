@@ -117,8 +117,27 @@ function display.DrawMember(memIdx, settings, isLastVisibleMember)
     local nameRefHeight = refHeights.nameRefHeight;
 
     -- Calculate text sizes (use cached text to avoid texture regeneration)
+    -- Early casting detection: determine which font slots will be overwritten by cast bar
+    -- rendering later in this frame. Skipping setCachedText here prevents setting text to
+    -- playerName/HP/MP/TP only to overwrite it with spellName, which would cause 2 expensive
+    -- GDI+ texture regenerations per casting member per frame.
+    local castBarStyle = cache.castBarStyle or 'name';
+    local castingOverridesName = false;
+    local castingOverridesMp = false;
+    local castingOverridesTp = false;
+    if (cache.showCastBars and memInfo.inzone and memInfo.serverid ~= nil) then
+        local earlyCheckCast = data.partyCasts[memInfo.serverid];
+        if (earlyCheckCast ~= nil and earlyCheckCast.spellName ~= nil and earlyCheckCast.castTime ~= nil and earlyCheckCast.startTime ~= nil) then
+            castingOverridesName = (castBarStyle == 'name');
+            castingOverridesMp = (castBarStyle == 'mp');
+            castingOverridesTp = (castBarStyle == 'tp');
+        end    
+    end
+
     local nameText = tostring(memInfo.name);
-    setCachedText(memIdx, 'name', data.memberText[memIdx].name, nameText);
+    if not castingOverridesName then
+        setCachedText(memIdx, 'name', data.memberText[memIdx].name, nameText);
+    end
     local nameWidth, nameHeight = data.memberText[memIdx].name:get_text_size();
 
     -- Format HP text based on display mode
@@ -158,11 +177,15 @@ function display.DrawMember(memIdx, settings, isLastVisibleMember)
     else
         mpDisplayText = tostring(memInfo.mp);
     end
-    setCachedText(memIdx, 'mp', data.memberText[memIdx].mp, mpDisplayText);
+    if not castingOverridesMp then
+        setCachedText(memIdx, 'mp', data.memberText[memIdx].mp, mpDisplayText);
+    end
     local mpTextWidth, mpHeight = data.memberText[memIdx].mp:get_text_size();
 
     local tpText = tostring(memInfo.tp);
-    setCachedText(memIdx, 'tp', data.memberText[memIdx].tp, tpText);
+    if not castingOverridesTp then
+        setCachedText(memIdx, 'tp', data.memberText[memIdx].tp, tpText);
+    end
     local tpTextWidth, tpHeight = data.memberText[memIdx].tp:get_text_size();
 
     -- Calculate max TP text width for Layout 1 (cached per party to avoid per-frame texture regen)
@@ -576,7 +599,7 @@ function display.DrawMember(memIdx, settings, isLastVisibleMember)
     local castData = nil;
     local isCasting = false;
     local castProgress = 0;
-    local castBarStyle = cache.castBarStyle or 'name';
+    -- castBarStyle already declared in early casting detection above
     if (cache.showCastBars and memInfo.inzone and memInfo.serverid ~= nil) then
         castData = data.partyCasts[memInfo.serverid];
         if (castData ~= nil and castData.spellName ~= nil and castData.castTime ~= nil and castData.startTime ~= nil) then
