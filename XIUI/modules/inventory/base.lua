@@ -8,6 +8,7 @@ require('handlers.helpers');
 local imgui = require('imgui');
 local gdi = require('submodules.gdifonts.include');
 local defaultPositions = require('libs.defaultpositions');
+local testMode = require('libs.testmode');
 
 local BaseTracker = {};
 
@@ -222,24 +223,28 @@ function BaseTracker.Create(config)
     local maxContainers = #config.containers;
 
     tracker.DrawWindow = function(settings)
+        local tmActive = testMode.IsActive('inventory');
+
         local player = GetPlayerSafe();
-        if (player == nil) then
+        if (player == nil and not tmActive) then
             for i = 1, maxContainers do
                 if fonts[i] then fonts[i]:set_visible(false); end
             end
             return;
         end
 
-        local mainJob = player:GetMainJob();
-        if (player.isZoning or mainJob == 0) then
-            for i = 1, maxContainers do
-                if fonts[i] then fonts[i]:set_visible(false); end
+        if (not tmActive) then
+            local mainJob = player:GetMainJob();
+            if (player.isZoning or mainJob == 0) then
+                for i = 1, maxContainers do
+                    if fonts[i] then fonts[i]:set_visible(false); end
+                end
+                return;
             end
-            return;
         end
 
         local inventory = GetInventorySafe();
-        if (inventory == nil) then
+        if (inventory == nil and not tmActive) then
             for i = 1, maxContainers do
                 if fonts[i] then fonts[i]:set_visible(false); end
             end
@@ -254,8 +259,14 @@ function BaseTracker.Create(config)
         local unlockedCount = 0;
 
         for i, containerId in ipairs(config.containers) do
-            local used = inventory:GetContainerCount(containerId);
-            local max = inventory:GetContainerCountMax(containerId);
+            local used, max;
+            local tmUsed, tmMax = testMode.Inventory(containerId);
+            if tmUsed then
+                used, max = tmUsed, tmMax;
+            else
+                used = inventory:GetContainerCount(containerId);
+                max = inventory:GetContainerCountMax(containerId);
+            end
             containers[i] = { used = used, max = max, unlocked = (max > 0), id = containerId };
             totalUsed = totalUsed + used;
             totalMax = totalMax + max;

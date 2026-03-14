@@ -15,6 +15,7 @@ local dragdrop = require('libs.dragdrop');
 local textures = require('modules.hotbar.textures');
 local skillchain = require('modules.hotbar.skillchain');
 local statusHandler = require('handlers.statushandler');
+local testMode = require('libs.testmode');
 
 -- Cache for MP cost lookups (keyed by action key string)
 local mpCostCache = {};
@@ -760,6 +761,12 @@ function M.DrawSlot(resources, params)
         isUnavailable = not cached.isAvailable;
         unavailableReason = cached.reason;
     end
+
+    -- Test mode: override slot states for visual simulation
+    local tmNoMp, tmOnCd, tmCdText, tmPressed = testMode.HotbarSlotState(bind, params.buttonId);
+    if tmNoMp then notEnoughMp = true end
+    if tmOnCd then isOnCooldown = true; recastText = tmCdText end
+    if tmPressed then isPressed = true end
 
     -- ========================================
     -- 4. Icon Rendering (Primitive for file-based, ImGui for memory-based)

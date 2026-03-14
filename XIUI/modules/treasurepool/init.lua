@@ -17,6 +17,7 @@ local windowBg = require('libs.windowbackground');
 local data = require('modules.treasurepool.data');
 local display = require('modules.treasurepool.display');
 local actions = require('modules.treasurepool.actions');
+local testMode = require('libs.testmode');
 
 local M = {};
 
@@ -325,7 +326,10 @@ function M.DrawWindow(settings)
     if not M.initialized then return; end
     if not M.visible then return; end
 
-    -- Read pool state from memory (skip in preview mode)
+    -- Handle test mode activation/deactivation
+    testMode.TreasurePoolTick(data);
+
+    -- Read pool state from memory (skip in preview mode and test mode)
     if not data.IsPreviewActive() then
         data.ReadFromMemory();
     end

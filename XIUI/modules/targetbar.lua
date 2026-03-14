@@ -13,6 +13,7 @@ local ffi = require("ffi");
 local defaultPositions = require('libs.defaultpositions');
 local TextureManager = require('libs.texturemanager');
 local mobdata = require('modules.mobinfo.data');
+local testMode = require('libs.testmode');
 
 -- Position save/restore state
 local hasAppliedSavedPosition = false;
@@ -88,10 +89,12 @@ local _XIUI_DEV_DEBUG_HP_PERCENT_PERSISTENT = 100;
 local _XIUI_DEV_DAMAGE_SET_TIMES = {};
 
 targetbar.DrawWindow = function(settings)
+    local tm = testMode.TargetBar();
+
     -- Obtain the player entity..
     local playerEnt = GetPlayerEntity();
 	local player = GetPlayerSafe();
-    if (playerEnt == nil or player == nil) then
+    if not tm and (playerEnt == nil or player == nil) then
 		SetFontsVisible(allFonts, false);
 		targetbar.nameTextInfo.visible = false;
         -- Also hide debuff timer texts during zone transitions
@@ -109,7 +112,10 @@ targetbar.DrawWindow = function(settings)
 	local playerTarget = GetTargetSafe();
 	local targetIndex;
 	local targetEntity;
-	if (playerTarget ~= nil) then
+	if tm then
+		targetIndex = tm.TargetIndex;
+		targetEntity = tm;
+	elseif (playerTarget ~= nil) then
 		targetIndex, _ = GetTargets();
 		targetEntity = GetEntity(targetIndex);
 	end
@@ -664,7 +670,9 @@ targetbar.DrawWindow = function(settings)
 		local preBuffX, preBuffY = imgui.GetCursorScreenPos();
 		local buffIds;
         local buffTimes = nil;
-		if (targetEntity == playerEnt) then
+		if tm then
+			buffIds = targetEntity.debuffs;
+		elseif (targetEntity == playerEnt) then
 			buffIds = player:GetBuffs();
 		elseif (IsMemberOfParty(targetIndex)) then
 			-- Use targetEntity.ServerId instead of playerTarget:GetServerId(0)

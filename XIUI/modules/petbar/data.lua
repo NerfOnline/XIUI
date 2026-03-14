@@ -9,6 +9,7 @@ local windowBg = require('libs.windowbackground');
 local packets = require('libs.packets');
 local abilityRecast = require('libs.abilityrecast');
 local petBuffHandler = require('handlers.petbuffhandler');
+local testMode = require('libs.testmode');
 
 local data = {};
 
@@ -565,6 +566,9 @@ end
 
 -- Get primary pet job (main takes precedence)
 function data.GetPetJob()
+    local tmJob = testMode.PetJob();
+    if tmJob then return tmJob end
+
     local player = GetPlayerSafe();
     if player == nil then return nil; end
 
@@ -582,6 +586,9 @@ end
 -- Get pet type key for per-type settings lookup
 -- Returns: 'avatar', 'charm', 'jug', 'automaton', 'wyvern' (defaults to 'avatar')
 function data.GetPetTypeKey()
+    local tmType = testMode.PetTypeKey();
+    if tmType then return tmType end
+
     -- Preview mode: derive from preview type
     if showConfig and showConfig[1] and gConfig.petBarPreview then
         local previewType = gConfig.petBarPreviewType or data.PREVIEW_AVATAR;
@@ -634,6 +641,10 @@ end
 -- Get pet data - single entry point for both preview and real data
 -- This follows the partylist pattern where preview is handled inside the data function
 function data.GetPetData()
+    -- Test mode: use dynamic simulated data
+    local tmPet = testMode.PetBar();
+    if tmPet then return tmPet end
+
     -- Preview check inside data function (like partylist's GetMemberInformation)
     if showConfig[1] and gConfig.petBarPreview then
         local previewType = gConfig.petBarPreviewType or data.PREVIEW_AVATAR;

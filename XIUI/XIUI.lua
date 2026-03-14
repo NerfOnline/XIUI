@@ -90,6 +90,7 @@ local statusHandler = require('handlers.statushandler');
 local progressbar = require('libs.progressbar');
 local diagnostics = require('libs.diagnostics');
 local TextureManager = require('libs.texturemanager');
+local testMode = require('libs.testmode');
 
 -- Global switch to hard-disable functionality that is limited on HX servers
 HzLimitedMode = true;
@@ -974,6 +975,9 @@ ashita.events.register('d3d_present', 'present_cb', function ()
                 notifications.CheckPendingPoolNotifications();
             end
 
+            -- Cache frame clock for test mode (single os.clock() call per frame)
+            testMode.BeginFrame();
+
             -- Render all registered modules
             for name, _ in pairs(uiModules.GetAll()) do
                 uiModules.RenderModule(name, gConfig, gAdjustedSettings, eventSystemActive, menuOpen);
@@ -1108,6 +1112,31 @@ ashita.events.register('command', 'command_cb', function (e)
                 playerName = 'TestPlayer',
                 amount = 5000,
             });
+            return;
+        end
+
+        -- Test mode: /xiui test [module]
+        if (command_args[2] == 'test') then
+            if #command_args == 2 then
+                -- Toggle global test mode
+                local isActive = testMode.Toggle();
+                print(chat.header(addon.name):append(chat.message('Test mode: ')):append(chat.success(isActive and 'ON' or 'OFF')));
+            else
+                -- Toggle a specific module: reconstruct name from remaining args
+                local originalArgs = e.command:args();
+                local nameParts = {};
+                for i = 3, #originalArgs do
+                    table.insert(nameParts, originalArgs[i]);
+                end
+                local moduleName = table.concat(nameParts, ' ');
+                local isActive, resolvedName = testMode.ToggleModule(moduleName);
+                if resolvedName then
+                    print(chat.header(addon.name):append(chat.message('Test mode [' .. resolvedName .. ']: ')):append(chat.success(isActive and 'ON' or 'OFF')));
+                else
+                    print(chat.header(addon.name):append(chat.error('Unknown module: ' .. moduleName)));
+                    print(chat.header(addon.name):append(chat.message('Valid modules: playerbar, targetbar, partylist, enemylist, castbar, expbar, giltracker, petbar, notifications, treasurepool, inventory, hotbar')));
+                end
+            end
             return;
         end
 

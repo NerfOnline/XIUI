@@ -675,6 +675,7 @@ function display.DrawWindow(settings)
         data.currentPetName = nil;
         data.SetAllFontsVisible(false);
         data.HideBackground();
+        statusIcons.HideDebuffFonts();
         -- Reset window state when hidden so bottom alignment starts fresh
         windowState.x = nil;
         windowState.y = nil;

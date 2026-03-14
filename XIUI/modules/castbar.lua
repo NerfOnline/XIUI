@@ -6,6 +6,7 @@ local progressbar = require('libs.progressbar');
 local gdi = require('submodules.gdifonts.include');
 local encoding = require('submodules.gdifonts.encoding');
 local defaultPositions = require('libs.defaultpositions');
+local testMode = require('libs.testmode');
 
 local spellText;
 local percentText;
@@ -54,34 +55,41 @@ castbar.GetLabelText = function()
 end
 
 castbar.DrawWindow = function(settings)
-	local castBar = GetCastBarSafe();
-	if castBar == nil then
-		return;
-	end
-	local percent = castBar:GetPercent();
+	local tm = testMode.CastBar();
+	local percent;
 
-	local totalCast = 1
-
-	-- Use shared fast cast calculation
-	local player = GetPlayerSafe();
-	if player ~= nil then
-		local fastCast = CalculateFastCast(
-			player:GetMainJob(),
-			player:GetSubJob(),
-			castbar.currentSpellType,
-			castbar.currentSpellName,
-			player:GetMainJobLevel(),
-			player:GetSubJobLevel()
-		);
-		if fastCast > 0 then
-			-- The 0.75 factor corrects for how GetCastBarSafe():GetPercent() reports progress
-			totalCast = (1 - fastCast) * 0.75;
+	if tm then
+		percent = tm.percent;
+	else
+		local castBar = GetCastBarSafe();
+		if castBar == nil then
+			return;
 		end
+		percent = castBar:GetPercent();
+
+		local totalCast = 1
+
+		-- Use shared fast cast calculation
+		local player = GetPlayerSafe();
+		if player ~= nil then
+			local fastCast = CalculateFastCast(
+				player:GetMainJob(),
+				player:GetSubJob(),
+				castbar.currentSpellType,
+				castbar.currentSpellName,
+				player:GetMainJobLevel(),
+				player:GetSubJobLevel()
+			);
+			if fastCast > 0 then
+				-- The 0.75 factor corrects for how GetCastBarSafe():GetPercent() reports progress
+				totalCast = (1 - fastCast) * 0.75;
+			end
+		end
+
+		percent = percent / totalCast
 	end
 
-	percent = percent / totalCast
-
-	if ((percent < 1 and percent ~= castbar.previousPercent) or showConfig[1]) then
+	if ((percent < 1 and percent ~= castbar.previousPercent) or showConfig[1] or (tm and percent < 1)) then
 		imgui.SetNextWindowSize({settings.barWidth, -1});
 
 		-- Handle position reset or restore
@@ -118,7 +126,8 @@ castbar.DrawWindow = function(settings)
 			]]--
 
 			local castGradient = GetCustomGradient(gConfig.colorCustomization.castBar, 'barGradient') or {'#3798ce', '#78c5ee'};
-			progressbar.ProgressBar({{showConfig[1] and 0.5 or percent, castGradient}}, {-1, settings.barHeight}, {decorate = gConfig.showCastBarBookends});
+			local displayPercent = showConfig[1] and 0.5 or percent;
+			progressbar.ProgressBar({{displayPercent, castGradient}}, {-1, settings.barHeight}, {decorate = gConfig.showCastBarBookends});
 
 			-- Draw Spell/Item name
 			imgui.SameLine();
@@ -131,7 +140,8 @@ castbar.DrawWindow = function(settings)
 			local leftTextX = startX + bookendWidth + textPadding;
 			spellText:set_position_x(leftTextX);
 			spellText:set_position_y(startY + settings.barHeight + settings.spellOffsetY);
-			spellText:set_text(showConfig[1] and 'Configuration Mode' or castbar.GetLabelText());
+			local labelText = showConfig[1] and 'Configuration Mode' or (tm and tm.spellName or castbar.GetLabelText());
+			spellText:set_text(labelText);
 			-- Only call set_font_color if the color has changed
 			if (lastSpellTextColor ~= gConfig.colorCustomization.castBar.spellTextColor) then
 				spellText:set_font_color(gConfig.colorCustomization.castBar.spellTextColor);
@@ -143,7 +153,7 @@ castbar.DrawWindow = function(settings)
 			local rightTextX = startX + progressBarWidth - bookendWidth - textPadding;
 			percentText:set_position_x(rightTextX);
 			percentText:set_position_y(startY + settings.barHeight + settings.percentOffsetY);
-			percentText:set_text(showConfig[1] and '50%' or math.floor(percent * 100) .. '%');
+			percentText:set_text(showConfig[1] and '50%' or math.floor(displayPercent * 100) .. '%');
 			-- Only call set_font_color if the color has changed
 			if (lastPercentTextColor ~= gConfig.colorCustomization.castBar.percentTextColor) then
 				percentText:set_font_color(gConfig.colorCustomization.castBar.percentTextColor);

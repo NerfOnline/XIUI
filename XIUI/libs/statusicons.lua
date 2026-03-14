@@ -340,6 +340,15 @@ function M.ClearDebuffFontCache()
     end
 end
 
+-- Hide all cached debuff timer fonts without destroying them
+function M.HideDebuffFonts()
+    for _, textObj in pairs(debuffTable) do
+        if textObj ~= nil then
+            textObj:set_visible(false);
+        end
+    end
+end
+
 -- Get the debuff table (for external access if needed)
 function M.GetDebuffTable()
     return debuffTable;

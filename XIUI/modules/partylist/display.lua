@@ -16,6 +16,7 @@ local encoding = require('submodules.gdifonts.encoding');
 local ashita_settings = require('settings');
 local castcostShared = require('modules.castcost.shared');
 local defaultPositions = require('libs.defaultpositions');
+local testMode = require('libs.testmode');
 
 local data = require('modules.partylist.data');
 
@@ -26,6 +27,9 @@ local hasAppliedSavedPosition = { false, false, false };
 local forcePositionReset = { false, false, false };
 local lastSavedPosX = { nil, nil, nil };
 local lastSavedPosY = { nil, nil, nil };
+
+-- Cached test mode state (set once per frame in DrawWindow, used by DrawMember/DrawPartyWindow)
+local tmPartyActive = false;
 
 -- Helper: Set font text only if changed (avoids texture regeneration)
 local function setCachedText(memIdx, fontKey, font, text)
@@ -1161,7 +1165,7 @@ function display.DrawMember(memIdx, settings, isLastVisibleMember)
     end
 
     -- Add a click target over party member entry if in zone and enabled
-    if (memInfo.inzone and not isPreviewMode and not showConfig[1] and gConfig.enablePartyListClickTarget) then
+    if (memInfo.inzone and not isPreviewMode and not showConfig[1] and not tmPartyActive and gConfig.enablePartyListClickTarget) then
         --Save off current cursor position
         local currentCursorPositionX, currentCursorPositionY = imgui.GetCursorScreenPos();
         
@@ -1199,7 +1203,7 @@ function display.DrawPartyWindow(settings, party, partyIndex)
     local cache = data.partyConfigCache[partyIndex];
     local partyMemberCount = data.frameCache.activeMemberCount[partyIndex];
 
-    if (partyIndex == 1 and not gConfig.showPartyListWhenSolo and partyMemberCount <= 1) then
+    if (partyIndex == 1 and not tmPartyActive and not gConfig.showPartyListWhenSolo and partyMemberCount <= 1) then
         data.UpdateTextVisibility(false);
         return;
     end
@@ -1404,6 +1408,9 @@ end
 -- DrawWindow - Main entry point for rendering
 -- ============================================
 function display.DrawWindow(settings)
+    -- Cache test mode state for this frame (used by DrawMember and DrawPartyWindow too)
+    tmPartyActive = testMode.IsActive('partylist');
+
     -- Rebuild config cache if settings version changed
     -- This is more efficient than rebuilding every frame but still catches config UI changes
     data.checkAndUpdateConfigCache();
@@ -1417,7 +1424,7 @@ function display.DrawWindow(settings)
     local party = data.frameCache.party;
     local player = data.frameCache.player;
 
-    if (party == nil or player == nil or player.isZoning or player:GetMainJob() == 0) then
+    if not tmPartyActive and (party == nil or player == nil or player.isZoning or player:GetMainJob() == 0) then
         data.UpdateTextVisibility(false);
         return;
     end
@@ -1440,7 +1447,7 @@ function display.DrawWindow(settings)
         local count = 0;
         data.frameCache.activeMemberList[partyIndex] = {};
 
-        if showConfig[1] and gConfig.partyListPreview then
+        if showConfig[1] and gConfig.partyListPreview or tmPartyActive then
             count = data.partyMaxSize;
             for i = 0, data.partyMaxSize - 1 do
                 data.frameCache.activeMemberList[partyIndex][i] = true;
@@ -1475,7 +1482,7 @@ function display.DrawWindow(settings)
     display.DrawPartyWindow(settings, party, 1);
 
     -- Alliance party windows
-    if (gConfig.partyListAlliance) then
+    if (gConfig.partyListAlliance or tmPartyActive) then
         display.DrawPartyWindow(settings, party, 2);
         display.DrawPartyWindow(settings, party, 3);
     else

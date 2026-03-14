@@ -23,6 +23,7 @@ local recast = require('modules.hotbar.recast');
 local slotrenderer = require('modules.hotbar.slotrenderer');
 local animation = require('libs.animation');
 local skillchain = require('modules.hotbar.skillchain');
+local testMode = require('libs.testmode');
 local targetLib = require('libs.target');
 local palette = require('modules.hotbar.palette');
 
@@ -1282,6 +1283,12 @@ function M.DrawWindow(settings, moduleSettings)
     -- Get current combo mode and pressed slot from controller
     local activeCombo = controller.GetActiveCombo();
     local pressedSlot = controller.GetPressedSlot();
+
+    -- Test mode: simulate modifier presses
+    local tmModifier = testMode.CrossbarModifier();
+    if tmModifier then
+        activeCombo = tmModifier;
+    end
 
     -- Edit Mode: Override activeCombo to show selected bar for setup
     local isEditMode = settings.editMode;

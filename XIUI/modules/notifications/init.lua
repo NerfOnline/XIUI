@@ -13,6 +13,7 @@ local windowBg = require('libs.windowbackground');
 local data = require('modules.notifications.data');
 local display = require('modules.notifications.display');
 local handler = require('handlers.notificationhandler');
+local testMode = require('libs.testmode');
 
 local notifications = {};
 
@@ -214,6 +215,9 @@ end
 -- ============================================
 notifications.DrawWindow = function(settings)
     local currentTime = os.clock();
+
+    -- Generate periodic test notifications when test mode is active
+    testMode.NotificationTick(currentTime, data);
 
     -- Update notification state (handle expiration, animations)
     data.Update(currentTime, settings);

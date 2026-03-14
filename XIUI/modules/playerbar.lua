@@ -6,6 +6,7 @@ local progressbar = require('libs.progressbar');
 local buffTable = require('libs.bufftable');
 local castcostShared = require('modules.castcost.shared');
 local defaultPositions = require('libs.defaultpositions');
+local testMode = require('libs.testmode');
 
 local hpText;
 local mpText;
@@ -66,25 +67,29 @@ if _XIUI_DEV_DEBUG_INTERPOLATION then
 end
 
 playerbar.DrawWindow = function(settings)
+    local tm = testMode.PlayerBar();
+
     -- Obtain game state (single call each, cached for this frame)
     local party = GetPartySafe();
     local player = GetPlayerSafe();
 	local playerEnt = GetPlayerEntity();
 
-	if (party == nil or player == nil or playerEnt == nil) then
+	if not tm and (party == nil or player == nil or playerEnt == nil) then
 		SetFontsVisible(allFonts, false);
 		return;
 	end
 
-	local currJob = player:GetMainJob();
+	if not tm then
+		local currJob = player:GetMainJob();
 
-    if (player.isZoning or currJob == 0) then
-		SetFontsVisible(allFonts, false);
-        return;
+		if (player.isZoning or currJob == 0) then
+			SetFontsVisible(allFonts, false);
+			return;
+		end
 	end
 
 	-- Hide player bar when in party/alliance if setting is enabled
-	if gConfig.playerBarHideWhenInParty then
+	if not tm and gConfig.playerBarHideWhenInParty then
 		-- Check if any other party/alliance members are active (slots 1-17)
 		local inParty = false;
 		for i = 1, 17 do
@@ -99,35 +104,47 @@ playerbar.DrawWindow = function(settings)
 		end
 	end
 
-	local SelfHP = party:GetMemberHP(0);
-	local SelfHPPercentParty = party:GetMemberHPPercent(0);
-	local SelfHPMaxPlayer = player:GetHPMax();
-	local SelfHPMaxFromParty = 0;
-	if SelfHPPercentParty and SelfHPPercentParty > 0 then
-		SelfHPMaxFromParty = math.floor((SelfHP * 100) / SelfHPPercentParty + 0.5);
-	end
-	local SelfHPMax = SelfHPMaxPlayer;
-	if SelfHPMaxFromParty > 0 then
-		if SelfHPMaxPlayer == 0 or math.abs(SelfHPMaxFromParty - SelfHPMaxPlayer) > 50 then
-			SelfHPMax = SelfHPMaxFromParty;
+	local SelfHP, SelfHPPercent, SelfHPMax, SelfMP, SelfMPPercent, SelfMPMax, SelfTP;
+
+	if tm then
+		SelfHP = tm.hp;
+		SelfHPPercent = tm.hpPercent;
+		SelfHPMax = tm.maxhp;
+		SelfMP = tm.mp;
+		SelfMPPercent = tm.mpPercent;
+		SelfMPMax = tm.maxmp;
+		SelfTP = tm.tp;
+	else
+		SelfHP = party:GetMemberHP(0);
+		local SelfHPPercentParty = party:GetMemberHPPercent(0);
+		local SelfHPMaxPlayer = player:GetHPMax();
+		local SelfHPMaxFromParty = 0;
+		if SelfHPPercentParty and SelfHPPercentParty > 0 then
+			SelfHPMaxFromParty = math.floor((SelfHP * 100) / SelfHPPercentParty + 0.5);
 		end
-	end
-	local SelfHPPercent = (SelfHPMax > 0) and math.clamp((SelfHP / SelfHPMax) * 100, 0, 100) or (SelfHPPercentParty or 0);
-	local SelfMP = party:GetMemberMP(0);
-	local SelfMPPercentParty = party:GetMemberMPPercent(0);
-	local SelfMPMaxPlayer = player:GetMPMax();
-	local SelfMPMaxFromParty = 0;
-	if SelfMPPercentParty and SelfMPPercentParty > 0 then
-		SelfMPMaxFromParty = math.floor((SelfMP * 100) / SelfMPPercentParty + 0.5);
-	end
-	local SelfMPMax = SelfMPMaxPlayer;
-	if SelfMPMaxFromParty > 0 then
-		if SelfMPMaxPlayer == 0 or math.abs(SelfMPMaxFromParty - SelfMPMaxPlayer) > 20 then
-			SelfMPMax = SelfMPMaxFromParty;
+		SelfHPMax = SelfHPMaxPlayer;
+		if SelfHPMaxFromParty > 0 then
+			if SelfHPMaxPlayer == 0 or math.abs(SelfHPMaxFromParty - SelfHPMaxPlayer) > 50 then
+				SelfHPMax = SelfHPMaxFromParty;
+			end
 		end
+		SelfHPPercent = (SelfHPMax > 0) and math.clamp((SelfHP / SelfHPMax) * 100, 0, 100) or (SelfHPPercentParty or 0);
+		SelfMP = party:GetMemberMP(0);
+		local SelfMPPercentParty = party:GetMemberMPPercent(0);
+		local SelfMPMaxPlayer = player:GetMPMax();
+		local SelfMPMaxFromParty = 0;
+		if SelfMPPercentParty and SelfMPPercentParty > 0 then
+			SelfMPMaxFromParty = math.floor((SelfMP * 100) / SelfMPPercentParty + 0.5);
+		end
+		SelfMPMax = SelfMPMaxPlayer;
+		if SelfMPMaxFromParty > 0 then
+			if SelfMPMaxPlayer == 0 or math.abs(SelfMPMaxFromParty - SelfMPMaxPlayer) > 20 then
+				SelfMPMax = SelfMPMaxFromParty;
+			end
+		end
+		SelfMPPercent = (SelfMPMax > 0) and math.clamp((SelfMP / SelfMPMax) * 100, 0, 100) or (SelfMPPercentParty or 0);
+		SelfTP = party:GetMemberTP(0);
 	end
-	local SelfMPPercent = (SelfMPMax > 0) and math.clamp((SelfMP / SelfMPMax) * 100, 0, 100) or (SelfMPPercentParty or 0);
-	local SelfTP = party:GetMemberTP(0);
 
 	local currentTime = os.clock();
 
@@ -285,8 +302,14 @@ playerbar.DrawWindow = function(settings)
 
 		local hpNameColor, hpGradient = GetCustomHpColors(SelfHPPercent/100, gConfig.colorCustomization.playerBar);
 
-		local SelfJob = GetJobStr(party:GetMemberMainJob(0));
-		local SelfSubJob = GetJobStr(party:GetMemberSubJob(0));
+		local SelfJob, SelfSubJob;
+		if tm then
+			SelfJob = GetJobStr(3);   -- WHM
+			SelfSubJob = GetJobStr(5); -- RDM
+		else
+			SelfJob = GetJobStr(party:GetMemberMainJob(0));
+			SelfSubJob = GetJobStr(party:GetMemberSubJob(0));
+		end
 		local bShowMp = buffTable.IsSpellcaster(SelfJob) or buffTable.IsSpellcaster(SelfSubJob) or gConfig.alwaysShowMpBar;
 
 		-- Draw HP Bar (two bars to fake animation

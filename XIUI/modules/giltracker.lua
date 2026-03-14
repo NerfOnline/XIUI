@@ -5,6 +5,7 @@ local gdi = require('submodules.gdifonts.include');
 local ffi = require("ffi");
 local defaultPositions = require('libs.defaultpositions');
 local TextureManager = require('libs.texturemanager');
+local testMode = require('libs.testmode');
 
 -- Position save/restore state
 local hasAppliedSavedPosition = false;
@@ -85,91 +86,99 @@ local function FormatSessionNet(gilChange)
 end
 
 giltracker.DrawWindow = function(settings)
+    local tmGil = testMode.GilTracker();
     local player = GetPlayerSafe();
     local playerEnt = GetPlayerEntity();
 
-	if (player == nil or playerEnt == nil) then
+	if (not tmGil and (player == nil or playerEnt == nil)) then
 		SetFontsVisible(allFonts,false);
 		return;
 	end
 
-	local loggedInName = GetLoggedInPlayerName();
+	if not tmGil then
+		local loggedInName = GetLoggedInPlayerName();
 
-	if loggedInName == nil then
-		SetFontsVisible(allFonts,false);
-		return;
-	end
-
-	-- Reset tracking on character change (switching characters) or first login after addon load
-	-- This is the ONLY place session tracking resets (besides manual reset command)
-	if lastPlayerName == nil then
-		-- First time seeing a player name after addon load = fresh login
-		lastPlayerName = loggedInName;
-		giltracker.ResetTracking();
-	elseif lastPlayerName ~= loggedInName then
-		-- Player name changed = character switch
-		lastPlayerName = loggedInName;
-		giltracker.ResetTracking();
-	end
-
-    if (player.isZoning) then
-		SetFontsVisible(allFonts,false);
-        return;
-	end
-
-	local gilAmount
-	local inventory = GetInventorySafe();
-	if (inventory ~= nil) then
-		gilAmount = inventory:GetContainerItem(0, 0);
-		if (gilAmount == nil) then
+		if loggedInName == nil then
 			SetFontsVisible(allFonts,false);
 			return;
 		end
-	else
-		SetFontsVisible(allFonts,false);
-		return;
-	end
 
-	local currentGil = gilAmount.Count;
+		-- Reset tracking on character change (switching characters) or first login after addon load
+		-- This is the ONLY place session tracking resets (besides manual reset command)
+		if lastPlayerName == nil then
+			-- First time seeing a player name after addon load = fresh login
+			lastPlayerName = loggedInName;
+			giltracker.ResetTracking();
+		elseif lastPlayerName ~= loggedInName then
+			-- Player name changed = character switch
+			lastPlayerName = loggedInName;
+			giltracker.ResetTracking();
+		end
 
-	-- Skip invalid reads during zoning (inventory returns 0 or garbage)
-	-- This preserves tracking state so we continue where we left off after zoning
-	if currentGil == 0 then
-		SetFontsVisible(allFonts, false);
-		return;
-	end
-
-	-- Detect invalid reads: if gil changes by millions in a single frame, it's likely
-	-- garbage data from zoning - skip this frame but don't reset tracking
-	if lastKnownGil ~= nil and lastKnownGil > 0 then
-		local frameDiff = math.abs(currentGil - lastKnownGil);
-		-- If changed by more than 10 million in one frame, skip (likely zone garbage)
-		if frameDiff > 10000000 then
-			SetFontsVisible(allFonts, false);
+		if (player.isZoning) then
+			SetFontsVisible(allFonts,false);
 			return;
 		end
 	end
 
-	-- Initialize tracking with stabilization delay (prevents false spikes on login)
-	-- Issue #111: During login, inventory may return garbage values initially
-	if trackingStartGil == nil then
-		local now = os.clock();
-		if stabilizationStartTime == nil then
-			-- First valid read - start stabilization period
-			stabilizationStartTime = now;
-			stabilizationGil = currentGil;
-		elseif now - stabilizationStartTime >= STABILIZATION_DELAY then
-			-- Stabilization period elapsed - now safe to initialize tracking
-			trackingStartGil = currentGil;
-			trackingStartTime = now;
-			stabilizationStartTime = nil;
-			stabilizationGil = nil;
+	local currentGil;
+	if tmGil then
+		currentGil = tmGil;
+	else
+		local gilAmount
+		local inventory = GetInventorySafe();
+		if (inventory ~= nil) then
+			gilAmount = inventory:GetContainerItem(0, 0);
+			if (gilAmount == nil) then
+				SetFontsVisible(allFonts,false);
+				return;
+			end
+		else
+			SetFontsVisible(allFonts,false);
+			return;
 		end
-		-- During stabilization, don't show gil/hr (show 0)
-	end
 
-	-- Update last known gil with valid reads only
-	lastKnownGil = currentGil;
+		currentGil = gilAmount.Count;
+
+		-- Skip invalid reads during zoning (inventory returns 0 or garbage)
+		-- This preserves tracking state so we continue where we left off after zoning
+		if currentGil == 0 then
+			SetFontsVisible(allFonts, false);
+			return;
+		end
+
+		-- Detect invalid reads: if gil changes by millions in a single frame, it's likely
+		-- garbage data from zoning - skip this frame but don't reset tracking
+		if lastKnownGil ~= nil and lastKnownGil > 0 then
+			local frameDiff = math.abs(currentGil - lastKnownGil);
+			-- If changed by more than 10 million in one frame, skip (likely zone garbage)
+			if frameDiff > 10000000 then
+				SetFontsVisible(allFonts, false);
+				return;
+			end
+		end
+
+		-- Initialize tracking with stabilization delay (prevents false spikes on login)
+		-- Issue #111: During login, inventory may return garbage values initially
+		if trackingStartGil == nil then
+			local now = os.clock();
+			if stabilizationStartTime == nil then
+				-- First valid read - start stabilization period
+				stabilizationStartTime = now;
+				stabilizationGil = currentGil;
+			elseif now - stabilizationStartTime >= STABILIZATION_DELAY then
+				-- Stabilization period elapsed - now safe to initialize tracking
+				trackingStartGil = currentGil;
+				trackingStartTime = now;
+				stabilizationStartTime = nil;
+				stabilizationGil = nil;
+			end
+			-- During stabilization, don't show gil/hr (show 0)
+		end
+
+		-- Update last known gil with valid reads only
+		lastKnownGil = currentGil;
+	end
 
 	-- Calculate tracking display (throttled to avoid jittery display)
 	-- Display modes: 1 = Session Net, 2 = Gil Per Hour
@@ -179,7 +188,10 @@ giltracker.DrawWindow = function(settings)
 	local trackingText_str = cachedGilPerHourStr;
 	local now = os.clock();
 
-	if showGilPerHour and trackingStartGil ~= nil and trackingStartTime ~= nil then
+	if tmGil then
+		gilChange = 125000;
+		trackingText_str = displayMode == 2 and FormatGilPerHour(gilChange) or FormatSessionNet(gilChange);
+	elseif showGilPerHour and trackingStartGil ~= nil and trackingStartTime ~= nil then
 		-- Only recalculate every GIL_PER_HOUR_UPDATE_INTERVAL seconds
 		if now - lastGilPerHourCalcTime >= GIL_PER_HOUR_UPDATE_INTERVAL then
 			local elapsedSeconds = now - trackingStartTime;

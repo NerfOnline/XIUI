@@ -433,12 +433,15 @@ local function ensurePreviewItems()
         local winningLot = history.winner and history.winner.lot or 0;
         local winningName = history.winner and history.winner.name or '';
 
+        -- Short staggered timers for test mode (max 20s, each item starts at a random offset)
+        local startTimer = math.max(3, 20 - (i * 2) + math.floor(math.fmod(now * 7 + i * 13, 5)));
+
         M.previewItems[slot] = {
             slot = slot,
             itemId = item.itemId,
             itemName = item.name,
             count = 1,
-            expiresAt = now + (300 - (i * 30)),  -- Stagger expiration times (30s apart)
+            expiresAt = now + startTimer,
             dropTime = 0,
             playerLot = 0,
             winningLot = winningLot,
@@ -446,6 +449,56 @@ local function ensurePreviewItems()
         };
     end
     markCacheDirty();
+end
+
+-- Regenerate a single preview item with a fresh 20s timer
+local function regeneratePreviewItem(slot)
+    local item = PREVIEW_ITEMS[slot + 1];
+    if not item then return; end
+
+    local history = generateMockLotHistory(slot);
+    M.lotHistory[slot] = history;
+
+    local winningLot = history.winner and history.winner.lot or 0;
+    local winningName = history.winner and history.winner.name or '';
+
+    M.previewItems[slot] = {
+        slot = slot,
+        itemId = item.itemId,
+        itemName = item.name,
+        count = 1,
+        expiresAt = os.time() + 20,
+        dropTime = 0,
+        playerLot = 0,
+        winningLot = winningLot,
+        winningLotterName = winningName,
+    };
+    markCacheDirty();
+end
+
+-- Force regeneration of all preview items with fresh timestamps
+function M.RegeneratePreviewItems()
+    M.previewItems = {};
+    for slot = 0, M.MAX_POOL_SLOTS - 1 do
+        M.lotHistory[slot] = nil;
+    end
+    ensurePreviewItems();
+    M.previewWonHistory = generateMockWonHistory();
+end
+
+-- Refresh any individually expired preview items (restart their timer at 20s)
+-- Returns true if any items were refreshed
+function M.RefreshExpiredPreviewItems()
+    if next(M.previewItems) == nil then return false; end
+    local now = os.time();
+    local refreshed = false;
+    for slot, item in pairs(M.previewItems) do
+        if item.expiresAt and item.expiresAt <= now then
+            regeneratePreviewItem(slot);
+            refreshed = true;
+        end
+    end
+    return refreshed;
 end
 
 -- Set preview mode

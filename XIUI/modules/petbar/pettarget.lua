@@ -12,6 +12,7 @@ local windowBg = require('libs.windowbackground');
 local progressbar = require('libs.progressbar');
 
 local data = require('modules.petbar.data');
+local testMode = require('libs.testmode');
 
 local pettarget = {};
 
@@ -81,6 +82,7 @@ end
 -- ============================================
 function pettarget.DrawWindow(settings)
     local isPreview = showConfig and showConfig[1] and gConfig.petBarPreview;
+    local tmTarget = testMode.PetTarget();
 
     -- Only show if we have a valid pet (prevents showing when "Always Visible" is on but no pet)
     if data.GetPetData() == nil then
@@ -93,7 +95,12 @@ function pettarget.DrawWindow(settings)
 
     local targetName, targetHp, targetDistance, targetIndex;
 
-    if isPreview then
+    if tmTarget then
+        targetName = tmTarget.Name;
+        targetHp = tmTarget.HPPercent;
+        targetDistance = tmTarget.Distance;
+        targetIndex = 9098;
+    elseif isPreview then
         targetName = 'Goblin Mugger';
         targetHp = 72;
         targetDistance = 6.3;

@@ -8,6 +8,7 @@ local statusHandler = require('handlers.statushandler');
 local actionTracker = require('handlers.actiontracker');
 local progressbar = require('libs.progressbar');
 local defaultPositions = require('libs.defaultpositions');
+local testMode = require('libs.testmode');
 
 -- Position save/restore state
 local hasAppliedSavedPosition = false;
@@ -225,9 +226,17 @@ enemylist.DrawWindow = function(settings)
 		local maxColumnHeight = 0;  -- Track tallest column for window sizing
 		local currentColumnHeight = 0;
 
-		-- Determine which data source to use (preview mode vs real enemies)
-		local isPreviewMode = showConfig[1] and gConfig.enemyListPreview;
-		local enemySource = isPreviewMode and previewEnemies or allClaimedTargets;
+		-- Determine which data source to use (preview mode vs test mode vs real enemies)
+		local tmEnemies, tmDebuffs, tmTargets = testMode.EnemyList();
+		local isPreviewMode = (showConfig[1] and gConfig.enemyListPreview) or tmEnemies;
+		local enemySource;
+		if tmEnemies then
+			enemySource = tmEnemies;
+		elseif showConfig[1] and gConfig.enemyListPreview then
+			enemySource = previewEnemies;
+		else
+			enemySource = allClaimedTargets;
+		end
 
 		for k,v in pairs(enemySource) do
 			local ent;
@@ -494,7 +503,9 @@ enemylist.DrawWindow = function(settings)
 				-- Positioned at left or right of entry based on anchor setting (offset by user settings)
 				if (gConfig.showEnemyListDebuffs) then
 					local buffIds = nil;
-					if isPreviewMode then
+					if tmDebuffs then
+						buffIds = tmDebuffs[k];
+					elseif isPreviewMode then
 						-- Use preview debuff data
 						buffIds = previewDebuffs[k];
 					elseif entityMgr ~= nil then
@@ -533,7 +544,10 @@ enemylist.DrawWindow = function(settings)
 					local hasValidTarget = false;
 					local targetName = nil;
 
-					if isPreviewMode then
+					if tmTargets then
+						targetName = tmTargets[k];
+						hasValidTarget = targetName ~= nil;
+					elseif isPreviewMode then
 						-- Use preview target data
 						targetName = previewTargets[k];
 						hasValidTarget = targetName ~= nil;

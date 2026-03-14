@@ -5,6 +5,7 @@ local gdi = require('submodules.gdifonts.include');
 local progressbar = require('libs.progressbar');
 local drawing = require('libs.drawing');
 local defaultPositions = require('libs.defaultpositions');
+local testMode = require('libs.testmode');
 
 local jobText;
 local expText;
@@ -77,65 +78,83 @@ end
 * desc : Event called when the Direct3D device is presenting a scene.
 --]]
 expbar.DrawWindow = function(settings)
+    local tm = testMode.ExpBar();
     -- Obtain the player entity..
     local player = GetPlayerSafe();
 
-	if (player == nil) then
+	if (not tm and player == nil) then
 		SetFontsVisible(allFonts, false);
 		return;
 	end
 
-	local mainJob = player:GetMainJob();
-
-    if (player.isZoning or mainJob == 0) then
-		SetFontsVisible(allFonts, false);
-        return;
-	end
-
-    local jobLevel = player:GetMainJobLevel();
-    local subJob = player:GetSubJob();
-    local subJobLevel = player:GetSubJobLevel();
-    local expPoints = { player:GetExpCurrent(), player:GetExpNeeded() };
-    local expPointsProgress = expPoints[1] / expPoints[2];
-
-    local limitPoints = expbar.limitPoints;
-    local limitPointsProgress = limitPoints[1] / limitPoints[2];
-    local meritPoints = expbar.meritPoints;
-
-    -- expbar.capacityPoints[1] = player:GetCapacityPoints(mainJob);
-    -- expbar.jobPoints[1] = player:GetJobPoints(mainJob);
-    local capPoints = expbar.capacityPoints;
-    local capPointsProgress = expbar.capacityPoints[1] / expbar.capacityPoints[2];
-    local jobPoints = expbar.jobPoints;
-
-    local mastered = player:GetJobPointsSpent(mainJob) == 2100;
-    local masteryEnabled = jobLevel >= 99 and mastered and player:HasKeyItem(expbar.mlBreakerItemId);
-    local masteryProgress = 0;
+    local mainJob, jobLevel, subJob, subJobLevel;
+    local expPoints, limitPoints, meritPoints, capPoints, jobPoints;
+    local masteryEnabled, meritMode, progressBarProgress;
+    local mastery;
     local mlJobLevel = 0;
-    if masteryEnabled then
-        expbar.mastery = { player:GetMasteryExp(), player:GetMasteryExpNeeded() };
-        if expbar.mastery[2] > 0 then
-            masteryProgress = expbar.mastery[1] / expbar.mastery[2];
-        end
-        mlJobLevel = player:GetMasteryJobLevel();
-    end
 
-    local meritMode = gConfig.expBarLimitPointsMode and (expPoints[1] == 55999 or ((player:GetIsLimitModeEnabled() or player:GetIsExperiencePointsLocked()) and jobLevel >= 75));
-    -- If player is a max level then only enable meritMode in the xp bar if limit mode is specifically enabled
-    -- this is so we display capacity points by default
-    -- TODO: Tapping on Exp bar switches between merit mode and capacity points
-    if jobLevel >= 99 and not player:GetIsLimitModeEnabled() then
-        meritMode = false
-    end
-    local progressBarProgress = 0
-    if masteryEnabled then
-        progressBarProgress = masteryProgress;
-    elseif meritMode then
-        progressBarProgress = limitPointsProgress;
-    elseif jobLevel >= 99 then
-        progressBarProgress = capPointsProgress;
+    if tm then
+        mainJob = tm.mainJob;
+        jobLevel = tm.jobLevel;
+        subJob = tm.subJob;
+        subJobLevel = tm.subJobLevel;
+        expPoints = tm.expPoints;
+        limitPoints = tm.limitPoints;
+        meritPoints = tm.meritPoints;
+        capPoints = tm.capPoints;
+        jobPoints = tm.jobPoints;
+        masteryEnabled = tm.masteryEnabled;
+        meritMode = tm.meritMode;
+        mastery = tm.mastery;
+        progressBarProgress = tm.progressBarProgress;
     else
-        progressBarProgress = expPointsProgress
+        if (player.isZoning or player:GetMainJob() == 0) then
+            SetFontsVisible(allFonts, false);
+            return;
+        end
+
+        mainJob = player:GetMainJob();
+        jobLevel = player:GetMainJobLevel();
+        subJob = player:GetSubJob();
+        subJobLevel = player:GetSubJobLevel();
+        expPoints = { player:GetExpCurrent(), player:GetExpNeeded() };
+        local expPointsProgress = expPoints[1] / expPoints[2];
+
+        limitPoints = expbar.limitPoints;
+        local limitPointsProgress = limitPoints[1] / limitPoints[2];
+        meritPoints = expbar.meritPoints;
+
+        capPoints = expbar.capacityPoints;
+        local capPointsProgress = expbar.capacityPoints[1] / expbar.capacityPoints[2];
+        jobPoints = expbar.jobPoints;
+
+        local mastered = player:GetJobPointsSpent(mainJob) == 2100;
+        masteryEnabled = jobLevel >= 99 and mastered and player:HasKeyItem(expbar.mlBreakerItemId);
+        local masteryProgress = 0;
+        mlJobLevel = 0;
+        if masteryEnabled then
+            expbar.mastery = { player:GetMasteryExp(), player:GetMasteryExpNeeded() };
+            if expbar.mastery[2] > 0 then
+                masteryProgress = expbar.mastery[1] / expbar.mastery[2];
+            end
+            mlJobLevel = player:GetMasteryJobLevel();
+        end
+        mastery = expbar.mastery;
+
+        meritMode = gConfig.expBarLimitPointsMode and (expPoints[1] == 55999 or ((player:GetIsLimitModeEnabled() or player:GetIsExperiencePointsLocked()) and jobLevel >= 75));
+        if jobLevel >= 99 and not player:GetIsLimitModeEnabled() then
+            meritMode = false
+        end
+        progressBarProgress = 0
+        if masteryEnabled then
+            progressBarProgress = masteryProgress;
+        elseif meritMode then
+            progressBarProgress = limitPointsProgress;
+        elseif jobLevel >= 99 then
+            progressBarProgress = capPointsProgress;
+        else
+            progressBarProgress = expPointsProgress
+        end
     end
 
     local inlineMode = gConfig.expBarInlineMode;
@@ -144,8 +163,17 @@ expbar.DrawWindow = function(settings)
     -- Build text strings once, reuse for both measuring and rendering
     -- All text (including percent) requires expBarShowText to be enabled
     local expStringSeparator = '';
-    local jobString = gConfig.expBarShowText and buildJobString(player, jobLevel, masteryEnabled, mlJobLevel) or nil;
-    local expString = gConfig.expBarShowText and buildExpString(expStringSeparator, masteryEnabled, meritMode, jobLevel, jobPoints, meritPoints, limitPoints, capPoints, expPoints, expbar.mastery) or nil;
+    local jobString;
+    if gConfig.expBarShowText then
+        if tm then
+            local mainJobStr = GetJobStr(mainJob);
+            local subJobStr = GetJobStr(subJob);
+            jobString = mainJobStr .. ' ' .. jobLevel .. ' / ' .. subJobStr .. ' ' .. subJobLevel;
+        else
+            jobString = buildJobString(player, jobLevel, masteryEnabled, mlJobLevel);
+        end
+    end
+    local expString = gConfig.expBarShowText and buildExpString(expStringSeparator, masteryEnabled, meritMode, jobLevel, jobPoints, meritPoints, limitPoints, capPoints, expPoints, mastery) or nil;
     local percentString = (gConfig.expBarShowText and gConfig.expBarShowPercent) and buildPercentString(progressBarProgress, true) or nil;
 
     -- Calculate text width for inline mode positioning

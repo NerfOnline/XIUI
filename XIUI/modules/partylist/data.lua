@@ -7,6 +7,7 @@ require('common');
 local ffi = require('ffi');
 local statusHandler = require('handlers.statushandler');
 local windowBg = require('libs.windowbackground');
+local testMode = require('libs.testmode');
 
 local data = {};
 
@@ -340,6 +341,18 @@ end
 -- ============================================
 
 function data.GetMemberInformation(memIdx)
+    -- Test mode: dynamic simulated alliance data
+    local tmMember = testMode.PartyMember(memIdx);
+    if tmMember then
+        if tmMember.castData then
+            data.partyCasts[tmMember.serverid] = T(tmMember.castData);
+        else
+            data.partyCasts[tmMember.serverid] = nil;
+        end
+        tmMember.castData = nil;
+        return tmMember;
+    end
+
     if (showConfig[1] and gConfig.partyListPreview) then
         local memInfo = {};
         memInfo.hpp = memIdx == 4 and 0.1 or memIdx == 2 and 0.5 or memIdx == 0 and 0.75 or 1;
