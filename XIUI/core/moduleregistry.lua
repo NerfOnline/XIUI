@@ -4,6 +4,7 @@
 ]]--
 
 local chat = require('chat');
+local profiler = require('libs.perfprofiler');
 
 local M = {};
 
@@ -113,7 +114,9 @@ function M.RenderModule(name, gConfig, gAdjustedSettings, eventSystemActive, men
             entry.module.SetHidden(false);
         end
         if entry.module.DrawWindow then
+            local perfStart = profiler.BeginModule(name);
             local ok, err = pcall(entry.module.DrawWindow, gAdjustedSettings[entry.settingsKey]);
+            profiler.EndModule(name, perfStart, true);
             if not ok then
                 local now = os.time();
                 if not moduleErrorTimes[name] or (now - moduleErrorTimes[name] >= MODULE_ERROR_INTERVAL) then

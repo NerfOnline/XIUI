@@ -91,6 +91,7 @@ local progressbar = require('libs.progressbar');
 local diagnostics = require('libs.diagnostics');
 local TextureManager = require('libs.texturemanager');
 local testMode = require('libs.testmode');
+local perfProfiler = require('libs.perfprofiler');
 
 -- Global switch to hard-disable functionality that is limited on HX servers
 HzLimitedMode = true;
@@ -978,10 +979,16 @@ ashita.events.register('d3d_present', 'present_cb', function ()
             -- Cache frame clock for test mode (single os.clock() call per frame)
             testMode.BeginFrame();
 
+            -- Performance profiler frame start
+            perfProfiler.BeginFrame();
+
             -- Render all registered modules
             for name, _ in pairs(uiModules.GetAll()) do
                 uiModules.RenderModule(name, gConfig, gAdjustedSettings, eventSystemActive, menuOpen);
             end
+
+            -- Performance profiler frame end
+            perfProfiler.EndFrame();
 
             configMenu.DrawWindow();
         else
@@ -1137,6 +1144,12 @@ ashita.events.register('command', 'command_cb', function (e)
                     print(chat.header(addon.name):append(chat.message('Valid modules: playerbar, targetbar, partylist, enemylist, castbar, expbar, giltracker, petbar, notifications, treasurepool, inventory, hotbar')));
                 end
             end
+            return;
+        end
+
+        -- Performance profiler: /xiui performance or /xiui perf
+        if (command_args[2]:any('performance', 'perf')) then
+            perfProfiler.Toggle();
             return;
         end
 
