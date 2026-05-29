@@ -1,5 +1,6 @@
 local profileManager = {};
 local chat = require('chat');
+local profileCodec = require('core.profile_codec');
 local addonName = 'xiui';
 local configPath = AshitaCore:GetInstallPath() .. 'config\\addons\\' .. addonName .. '\\';
 local profilesPath = configPath .. 'profiles\\';
@@ -267,6 +268,127 @@ end
 function profileManager.SaveGlobalProfiles(profiles)
     local path = profilesPath .. 'profilelist.lua';
     return profileManager.SaveTable(path, profiles);
+end
+
+local EXPORT_FORMAT_VERSION = 1;
+
+-- ---------------------------------------------------------------------------
+-- Profile share codes (export / import)
+-- ---------------------------------------------------------------------------
+
+local function PrepareSettingsForExport(settings)
+    local copy = deep_copy_table(settings);
+    copy.appliedPositions = nil;
+    return profileCodec.PruneForExport(copy);
+end
+
+local function BuildExportPayload(profileName, settings, defaults)
+    local prepared = PrepareSettingsForExport(settings);
+    local useDelta = (defaults ~= nil);
+    local payloadSettings = prepared;
+
+    if (useDelta) then
+        payloadSettings = profileCodec.DiffTable(prepared, defaults) or {};
+    end
+
+    return {
+        exportVersion = EXPORT_FORMAT_VERSION,
+        sourceName = profileName,
+        userSettings = payloadSettings,
+    }, useDelta;
+end
+
+local function ResolveImportedSettings(payload, defaults, isDelta)
+    local settings = payload.userSettings;
+    if (type(settings) ~= 'table') then
+        if (payload.exportVersion ~= nil or payload.sourceName ~= nil) then
+            return nil, 'missing profile settings';
+        end
+        settings = payload;
+    end
+
+    if (isDelta and defaults ~= nil) then
+        settings = profileCodec.ApplyDelta(defaults, settings);
+    end
+
+    return PrepareSettingsForExport(settings);
+end
+
+function profileManager.GenerateUniqueProfileName(baseName)
+    if (baseName == nil or baseName == '' or baseName == 'Default') then
+        baseName = 'Imported';
+    end
+
+    if (not profileManager.ProfileExists(baseName)) then
+        return baseName;
+    end
+
+    local counter = 1;
+    local candidate = baseName .. ' (' .. counter .. ')';
+    while (profileManager.ProfileExists(candidate)) do
+        counter = counter + 1;
+        candidate = baseName .. ' (' .. counter .. ')';
+    end
+
+    return candidate;
+end
+
+function profileManager.ExportProfileCode(profileName, settings, defaults)
+    if (settings == nil) then
+        settings = profileManager.GetProfileSettings(profileName);
+    end
+    if (settings == nil) then
+        return nil, 'profile not found';
+    end
+
+    local payload, useDelta = BuildExportPayload(profileName, settings, defaults);
+    local binary, binaryLen, packErr = profileCodec.PackPayload(payload, useDelta);
+    if (not binary) then
+        return nil, packErr or 'pack failed';
+    end
+
+    local shareCode = profileCodec.EncodeBinary(binary, binaryLen);
+    return shareCode;
+end
+
+function profileManager.ImportProfileCode(shareCode, desiredName, defaults)
+    if (type(shareCode) ~= 'string' or shareCode:match('^%s*$')) then
+        return nil, 'empty share code';
+    end
+
+    local decoded, decodedLen, decodeErr = profileCodec.Decode(shareCode);
+    if (not decoded) then
+        return nil, decodeErr or 'decode failed';
+    end
+
+    local payload, flags, unpackErr = profileCodec.UnpackPayload(decoded, decodedLen);
+    if (not payload) then
+        return nil, unpackErr or 'unpack failed';
+    end
+
+    local isDelta = (flags ~= nil and bit.band(flags, profileCodec.FLAG_DELTA) ~= 0);
+
+    local settings, resolveErr = ResolveImportedSettings(payload, defaults, isDelta);
+    if (not settings) then
+        return nil, resolveErr or 'invalid profile settings';
+    end
+
+    local baseName = desiredName;
+    if (not baseName or baseName == '') then
+        baseName = payload.sourceName;
+    end
+
+    local newName = profileManager.GenerateUniqueProfileName(baseName);
+    profileManager.SaveProfileSettings(newName, settings);
+
+    local globalProfiles = profileManager.GetGlobalProfiles();
+    if (not table.contains(globalProfiles.names, newName)) then
+        table.insert(globalProfiles.names, newName);
+        table.insert(globalProfiles.order, newName);
+        profileManager.SaveGlobalProfiles(globalProfiles);
+    end
+
+    return newName;
 end
 
 function profileManager.SyncProfilesWithDisk()

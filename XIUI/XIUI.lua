@@ -642,7 +642,38 @@ function DuplicateProfile(name)
     return true;
 end
 
+-- Profile share codes (pasteable export / import)
+function ExportProfileShareCode(name)
+    name = name or config.currentProfile;
 
+    local settings = (name == config.currentProfile) and gConfig or nil;
+    local shareCode, err = profileManager.ExportProfileCode(name, settings, defaultUserSettings);
+    if (not shareCode) then
+        print(chat.header(addon.name):append(chat.message('Profile export failed: ')):append(chat.error(tostring(err))));
+        return nil;
+    end
+
+    return shareCode;
+end
+
+function ImportProfileShareCode(shareCode, desiredName)
+    local newName, err = profileManager.ImportProfileCode(shareCode, desiredName, defaultUserSettings);
+    if (not newName) then
+        print(chat.header(addon.name):append(chat.message('Profile import failed: ')):append(chat.error(tostring(err))));
+        return false;
+    end
+
+    local importedSettings = profileManager.GetProfileSettings(newName);
+    if (importedSettings) then
+        settingsMigration.RunStructureMigrations(importedSettings, defaultUserSettings);
+        DeepMergeWithDefaults(importedSettings, defaultUserSettings);
+        profileManager.SaveProfileSettings(newName, importedSettings);
+    end
+
+    print(chat.header(addon.name):append(chat.message('Imported profile as: ')):append(chat.success(newName)));
+    RequestProfileChange(newName);
+    return true, newName;
+end
 
 function ChangeProfile(name)
     if (not profileManager.ProfileExists(name)) then return false; end
@@ -1519,9 +1550,15 @@ ashita.events.register('command', 'command_cb', function (e)
                 return;
             end
 
-            -- /xiui profile sync
-            if (command_args[3] == 'sync') then
-                profileManager.SyncProfilesWithDisk();
+            -- /xiui profile export
+            if (command_args[3] == 'export') then
+                configMenu.OpenExportProfilePopup();
+                return;
+            end
+
+            -- /xiui profile import
+            if (command_args[3] == 'import') then
+                configMenu.OpenImportProfilePopup();
                 return;
             end
 

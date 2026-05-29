@@ -109,11 +109,75 @@ local profileToDelete = nil;
 local showDeleteProfileConfirm = false;
 local showRenameProfilePopup = false;
 local showNewProfilePopup = false;
-
 -- Triggers for external commands
 local triggerNewProfilePopup = false;
 local triggerDeleteProfilePopup = false;
 local triggerRenameProfilePopup = false;
+
+-- Profile share-code UI
+local triggerExportProfilePopup = false;
+local triggerImportProfilePopup = false;
+local profileCodec = require('core.profile_codec');
+local PROFILE_SHARE_CODE_WRAP = 76;
+local PROFILE_SHARE_BUFFER_SIZE = 4 * 1024 * 1024;
+local profileExportCode = { '' };
+local profileExportCodeRaw = '';
+local profileImportCode = { '' };
+local importProfileName = { '' };
+local profileExportCharCount = 0;
+
+local function WrapProfileShareCodeForDisplay(code)
+    return profileCodec.FormatForDisplay(profileCodec.NormalizeShareCode(code) or '', PROFILE_SHARE_CODE_WRAP);
+end
+
+local function SyncImportCodeDisplay()
+    local compact = profileCodec.NormalizeShareCode(profileImportCode[1]);
+    if (compact and #compact > PROFILE_SHARE_CODE_WRAP) then
+        local wrapped = WrapProfileShareCodeForDisplay(compact);
+        if (profileImportCode[1] ~= wrapped) then
+            profileImportCode[1] = wrapped;
+        end
+    end
+end
+
+local function CopyProfileShareCodeToClipboard(text)
+    if (imgui.SetClipboardText ~= nil) then
+        imgui.SetClipboardText(text);
+    end
+end
+
+local function ProfileShareCodeInputFlags(readOnly)
+    local flags = readOnly and ImGuiInputTextFlags_ReadOnly or 0;
+    if (ImGuiInputTextFlags_NoHorizontalScroll ~= nil) then
+        flags = flags + ImGuiInputTextFlags_NoHorizontalScroll;
+    end
+    return flags;
+end
+
+local function SetExportPopupState(shareCode)
+    profileExportCharCount = #shareCode;
+    profileExportCodeRaw = shareCode;
+    profileExportCode[1] = WrapProfileShareCodeForDisplay(shareCode);
+    CopyProfileShareCodeToClipboard(shareCode);
+end
+
+local function TryImportProfileFromPopup()
+    local code = profileCodec.NormalizeShareCode(profileImportCode[1]);
+    if (code == nil or code == '') then
+        return;
+    end
+
+    local desiredName = importProfileName[1];
+    if (desiredName == '') then
+        desiredName = nil;
+    end
+
+    if (ImportProfileShareCode(code, desiredName)) then
+        profileImportCode[1] = '';
+        importProfileName[1] = '';
+        imgui.CloseCurrentPopup();
+    end
+end
 
 -- XIUI Theme Colors (dark + gold accent)
 local gold = {0.957, 0.855, 0.592, 1.0};           -- #F4DA97 - Primary gold accent
@@ -192,12 +256,60 @@ local function PopThemeStyles()
     imgui.PopStyleColor(34);
 end
 
+local function DrawCenteredProfileButtonRow(buttons)
+    if (#buttons == 0) then return; end
+
+    local style = imgui.GetStyle();
+    local spacing = style.ItemSpacing.x;
+    local maxTextWidth = 0;
+
+    for _, btn in ipairs(buttons) do
+        local textWidth = imgui.CalcTextSize(btn.label);
+        if (textWidth > maxTextWidth) then
+            maxTextWidth = textWidth;
+        end
+    end
+
+    local buttonWidth = maxTextWidth + style.FramePadding.x * 2;
+    local totalWidth = (#buttons * buttonWidth) + ((#buttons - 1) * spacing);
+    local availWidth = imgui.GetContentRegionAvail();
+    local offsetX = math.max(0, (availWidth - totalWidth) * 0.5);
+    imgui.SetCursorPosX(imgui.GetCursorPosX() + offsetX);
+
+    for i, btn in ipairs(buttons) do
+        if (i > 1) then
+            imgui.SameLine(0, spacing);
+        end
+
+        if (btn.before) then
+            btn.before();
+        end
+
+        local clicked = false;
+        if (btn.disabled) then
+            imgui.PushStyleVar(ImGuiStyleVar_Alpha, 0.5);
+            imgui.Button(btn.label, { buttonWidth, 0 });
+            imgui.PopStyleVar();
+        else
+            clicked = imgui.Button(btn.label, { buttonWidth, 0 });
+        end
+
+        if (btn.after) then
+            btn.after();
+        end
+
+        if (clicked and btn.onClick) then
+            btn.onClick();
+        end
+    end
+end
+
 local function DrawProfilesWindow()
     if (not showProfilesWindow[1]) then return; end
 
     PushThemeStyles();
 
-    imgui.SetNextWindowSize({ 350, 145 }, ImGuiCond_Always);
+    imgui.SetNextWindowSize({ 325, 175 }, ImGuiCond_Always);
     -- Using + for flags as they are typically integers
     if (imgui.Begin("Profiles", showProfilesWindow, ImGuiWindowFlags_NoCollapse + ImGuiWindowFlags_NoResize)) then
 
@@ -224,64 +336,69 @@ local function DrawProfilesWindow()
         imgui.Spacing();
         imgui.Spacing();
 
-        -- Profile action buttons (single row)
-        if (imgui.Button("New")) then
-            newProfileName[1] = "";
-            showNewProfilePopup = true;
-            triggerNewProfilePopup = true;
-        end
-
-        imgui.SameLine();
-
-        if (imgui.Button("Copy")) then
-            DuplicateProfile(currentProfile);
-        end
-
-        imgui.SameLine();
-
-        -- Rename (disabled for Default)
-        if (currentProfile == "Default") then
-            imgui.PushStyleVar(ImGuiStyleVar_Alpha, 0.5);
-            imgui.Button("Rename");
-            imgui.PopStyleVar();
-        else
-            if (imgui.Button("Rename")) then
-                renameProfileName[1] = currentProfile;
-                showRenameProfilePopup = true;
-                triggerRenameProfilePopup = true;
-            end
-        end
-
-        imgui.SameLine();
-
-        if (imgui.Button("Sync")) then
-            local profileManager = require('core.profile_manager');
-            profileManager.SyncProfilesWithDisk();
-        end
-
-        imgui.SameLine();
-
-        -- Delete (disabled for Default, red tint)
-        if (currentProfile == "Default") then
-            imgui.PushStyleVar(ImGuiStyleVar_Alpha, 0.5);
-            imgui.PushStyleColor(ImGuiCol_Button, { 0.5, 0.2, 0.2, 1.0 });
-            imgui.PushStyleColor(ImGuiCol_ButtonHovered, { 0.6, 0.3, 0.3, 1.0 });
-            imgui.PushStyleColor(ImGuiCol_ButtonActive, { 0.7, 0.3, 0.3, 1.0 });
-            imgui.Button("Del");
-            imgui.PopStyleColor(3);
-            imgui.PopStyleVar();
-        else
+        local function PushDeleteButtonStyle()
             imgui.PushStyleColor(ImGuiCol_Button, { 0.5, 0.2, 0.2, 1.0 });
             imgui.PushStyleColor(ImGuiCol_ButtonHovered, { 0.7, 0.3, 0.3, 1.0 });
             imgui.PushStyleColor(ImGuiCol_ButtonActive, { 0.8, 0.2, 0.2, 1.0 });
-            if (imgui.Button("Del")) then
-                profileToDelete = currentProfile;
-                showDeleteProfileConfirm = true;
-                triggerDeleteProfilePopup = true;
-            end
+        end
+
+        local function PopDeleteButtonStyle()
             imgui.PopStyleColor(3);
         end
 
+        DrawCenteredProfileButtonRow({
+            {
+                label = 'New',
+                onClick = function()
+                    newProfileName[1] = "";
+                    showNewProfilePopup = true;
+                    triggerNewProfilePopup = true;
+                end,
+            },
+            {
+                label = 'Copy',
+                onClick = function()
+                    DuplicateProfile(currentProfile);
+                end,
+            },
+            {
+                label = 'Rename',
+                disabled = (currentProfile == 'Default'),
+                onClick = function()
+                    renameProfileName[1] = currentProfile;
+                    showRenameProfilePopup = true;
+                    triggerRenameProfilePopup = true;
+                end,
+            },
+            {
+                label = 'Del',
+                disabled = (currentProfile == 'Default'),
+                before = PushDeleteButtonStyle,
+                after = PopDeleteButtonStyle,
+                onClick = function()
+                    profileToDelete = currentProfile;
+                    showDeleteProfileConfirm = true;
+                    triggerDeleteProfilePopup = true;
+                end,
+            },
+        });
+
+        imgui.Spacing();
+
+        DrawCenteredProfileButtonRow({
+            {
+                label = 'Export',
+                onClick = function()
+                    config.OpenExportProfilePopup();
+                end,
+            },
+            {
+                label = 'Import',
+                onClick = function()
+                    config.OpenImportProfilePopup();
+                end,
+            },
+        });
 
 
         imgui.End();
@@ -559,6 +676,14 @@ local function DrawProfilePopups()
         imgui.OpenPopup("Delete Profile");
         triggerDeleteProfilePopup = false;
     end
+    if (triggerExportProfilePopup) then
+        imgui.OpenPopup("Export Profile");
+        triggerExportProfilePopup = false;
+    end
+    if (triggerImportProfilePopup) then
+        imgui.OpenPopup("Import Profile");
+        triggerImportProfilePopup = false;
+    end
 
     -- New Profile Popup
     if (imgui.BeginPopupModal("New Profile", true, ImGuiWindowFlags_AlwaysAutoResize)) then
@@ -622,6 +747,58 @@ local function DrawProfilePopups()
         if (imgui.Button("Cancel", { 120, 0 })) then
             imgui.CloseCurrentPopup();
         end
+        imgui.EndPopup();
+    end
+
+    -- Export Profile Popup
+    if (imgui.BeginPopupModal("Export Profile", true, ImGuiWindowFlags_AlwaysAutoResize)) then
+        isModalOpen = true;
+
+        imgui.TextWrapped("Share code has been automatically copied to clipboard. You can also double click to select all and use Ctrl+C to copy.");
+
+        imgui.InputTextMultiline("##ProfileExportCode", profileExportCode, PROFILE_SHARE_BUFFER_SIZE, { 480, 140 }, ProfileShareCodeInputFlags(true));
+
+        imgui.TextDisabled(string.format("%d characters", profileExportCharCount));
+        imgui.NewLine();
+        DrawCenteredProfileButtonRow({
+            {
+                label = 'Copy',
+                onClick = function()
+                    CopyProfileShareCodeToClipboard(profileExportCodeRaw);
+                end,
+            },
+            {
+                label = 'Cancel',
+                onClick = function()
+                    imgui.CloseCurrentPopup();
+                end,
+            },
+        });
+        imgui.EndPopup();
+    end
+
+    -- Import Profile Popup
+    if (imgui.BeginPopupModal("Import Profile", true, ImGuiWindowFlags_AlwaysAutoResize)) then
+        isModalOpen = true;
+        imgui.Text("Profile Name (Optional):");
+        imgui.InputText("##ImportProfileName", importProfileName, 32);
+        imgui.TextWrapped("Paste a profile share code below. A new profile will be created and set as your active profile.");
+        if (imgui.InputTextMultiline("##ProfileImportCode", profileImportCode, PROFILE_SHARE_BUFFER_SIZE, { 480, 140 }, ProfileShareCodeInputFlags(false))) then
+            SyncImportCodeDisplay();
+        end
+        imgui.NewLine();
+        DrawCenteredProfileButtonRow({
+            {
+                label = 'Import',
+                onClick = TryImportProfileFromPopup,
+            },
+            {
+                label = 'Cancel',
+                onClick = function()
+                    imgui.CloseCurrentPopup();
+                end,
+            },
+        });
         imgui.EndPopup();
     end
     
@@ -1018,6 +1195,25 @@ function config.OpenRenameProfilePopup(name)
     showConfig[1] = true;
     triggerRenameProfilePopup = true;
     renameProfileName[1] = name;
+end
+
+function config.OpenExportProfilePopup()
+    showConfig[1] = true;
+
+    local shareCode = ExportProfileShareCode(GetCurrentProfileName());
+    if (not shareCode) then
+        return;
+    end
+
+    SetExportPopupState(shareCode);
+    triggerExportProfilePopup = true;
+end
+
+function config.OpenImportProfilePopup()
+    showConfig[1] = true;
+    profileImportCode[1] = '';
+    importProfileName[1] = '';
+    triggerImportProfilePopup = true;
 end
 
 function config.OpenResetSettingsPopup()
