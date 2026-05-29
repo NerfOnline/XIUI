@@ -588,10 +588,10 @@ function M.IsActionAvailable(bind)
     local subJobId = player:GetSubJob();
     local subJobLevel = player:GetSubJobLevel();
 
-    -- Guard: If job data is invalid (e.g., during zoning), assume available
-    -- Don't cache this result - return nil as reason to signal "don't cache"
-    if mainJobId == 0 or mainJobLevel == 0 then
-        return true, "pending";  -- "pending" signals not to cache this result
+    -- Player memory is unreliable while zoning or before job data is valid.
+    -- Return "pending" so slotrenderer does not cache a false unavailable result.
+    if player.isZoning or mainJobId == 0 or mainJobLevel == 0 then
+        return true, "pending";
     end
 
     if bind.actionType == 'macro' then

@@ -49,6 +49,7 @@ local hotbarConfig = require('config.hotbar');
 local slotrenderer = require('modules.hotbar.slotrenderer');
 local petpalette = require('modules.hotbar.petpalette');
 local palette = require('modules.hotbar.palette');
+local playerdata = require('modules.hotbar.playerdata');
 local macrosLib = require('libs.ffxi.macros');
 
 local M = {};
@@ -432,13 +433,28 @@ end
 -- Event Handlers
 -- ============================================
 
+-- Player memory (abilities, spells, inventory) is unreliable during/after zones.
+-- ClearAvailabilityState resets hotbar dimming caches; zone-in re-clears after
+local ZONE_STABILIZATION_DELAY = 3;
+
+local function ClearAvailabilityState()
+    playerdata.ClearCache();
+    slotrenderer.ClearAvailabilityCache();
+    slotrenderer.ClearItemQuantityCache();
+end
+
 function M.HandleZonePacket()
     -- Flush any pending macro/slot saves before zone transition
     macropalette.FlushPendingSave();
     data.Clear();
     petpalette.ClearPetState();
-    -- Clear availability cache since player state is invalid during zone
-    slotrenderer.ClearAvailabilityCache();
+    ClearAvailabilityState();
+end
+
+function M.HandleZoneInPacket(e)
+    ClearAvailabilityState();
+    ashita.tasks.once(ZONE_STABILIZATION_DELAY, ClearAvailabilityState);
+    M.HandleJobChangePacket(e);
 end
 
 function M.HandleJobChangePacket(e)
@@ -455,7 +471,7 @@ function M.HandleJobChangePacket(e)
             if crossbarInitialized then
                 crossbar.ClearIconCache();
             end
-            slotrenderer.ClearAvailabilityCache();
+            ClearAvailabilityState();
             petpalette.CheckPetState();
         elseif attempt < maxAttempts then
             -- Not logged in yet or job not ready - retry

@@ -1689,9 +1689,9 @@ ashita.events.register('packet_in', 'packet_in_cb', function (e)
         ClearEntityCache();
         ResetD3D8Device();
         bLoggedIn = true;
-        -- Initialize hotbar job on zone-in (handles initial login and job change during zone)
+        -- Zone-in: refresh hotbar job and clear stale icon dimming caches
         if gConfig.hotbarEnabled then
-            hotbar.HandleJobChangePacket(e);
+            hotbar.HandleZoneInPacket(e);
         end
     elseif (e.id == 0x0029) then
         local messagePacket = ParseMessagePacket(e.data);
