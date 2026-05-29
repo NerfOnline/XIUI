@@ -1,10 +1,116 @@
 --[[
 * XIUI Settings Migration
 * Handles migration from older settings formats and HXUI
+*
+* Profile load order (every path must use PrepareProfileSettings):
+*   1. RunStructureMigrations  — reshape legacy keys on raw saved data
+*   2. DeepMergeWithDefaults     — fill any keys still missing
+*
+* settingsSchemaVersion on each profile is stamped with addon.version after migration.
 ]]--
 
 local M = {};
 local profileManager = require('core.profile_manager');
+local formatLib = require('libs.format');
+
+-- Profile settingsSchemaVersion uses addon.version (e.g. '1.8.1').
+-- Milestones below gate idempotent migrations that predate the profile system.
+local SCHEMA_PARTY_PER_PARTY = '1.7.2';
+local SCHEMA_PET_PER_TYPE = '1.7.0';
+
+local function ParseVersionParts(version)
+    if type(version) == 'number' then
+        return {}; -- legacy integer schema stamps always re-migrate
+    end
+    if type(version) ~= 'string' or version == '' then
+        return {};
+    end
+    local parts = {};
+    for segment in string.gmatch(version, '%d+') do
+        table.insert(parts, tonumber(segment) or 0);
+    end
+    return parts;
+end
+
+function M.CompareVersions(a, b)
+    local pa = ParseVersionParts(a);
+    local pb = ParseVersionParts(b);
+    local maxLen = math.max(#pa, #pb);
+    for i = 1, maxLen do
+        local va = pa[i] or 0;
+        local vb = pb[i] or 0;
+        if va < vb then return -1; end
+        if va > vb then return 1; end
+    end
+    return 0;
+end
+
+function M.IsSchemaAtLeast(profileVersion, minimumVersion)
+    return M.CompareVersions(profileVersion, minimumVersion) >= 0;
+end
+
+function M.GetTargetSchemaVersion()
+    return (addon and addon.version) or '0.0.0';
+end
+
+local function HasOldPartyFlatKeys(gConfig)
+    return gConfig.partyListScaleX ~= nil
+        or gConfig.partyListScaleY ~= nil
+        or gConfig.partyListFontSize ~= nil
+        or gConfig.partyList2ScaleX ~= nil
+        or gConfig.partyList3ScaleX ~= nil;
+end
+
+local function HasOldPetBarFlatKeys(gConfig)
+    return gConfig.petBarScaleX ~= nil
+        or gConfig.petBarHpScaleX ~= nil
+        or gConfig.petBarShowVitals ~= nil;
+end
+
+local function HasOldFlatHotbarKeys(gConfig)
+    return gConfig.hotbarKeybindFontSize ~= nil
+        or gConfig.hotbarLabelFontSize ~= nil
+        or gConfig.hotbarBgScale ~= nil
+        or gConfig.hotbarBorderScale ~= nil
+        or gConfig.hotbarBackgroundOpacity ~= nil
+        or gConfig.hotbarBorderOpacity ~= nil;
+end
+
+local function HasNotificationSplitFlags(gConfig)
+    return gConfig.notificationsSplitPartyInvite == true
+        or gConfig.notificationsSplitTradeInvite == true
+        or gConfig.notificationsSplitTreasurePool == true
+        or gConfig.notificationsSplitItemObtained == true
+        or gConfig.notificationsSplitKeyItemObtained == true
+        or gConfig.notificationsSplitGilObtained == true;
+end
+
+local function HasPendingLegacyKeys(gConfig)
+    return HasOldPartyFlatKeys(gConfig)
+        or HasOldPetBarFlatKeys(gConfig)
+        or HasOldFlatHotbarKeys(gConfig)
+        or gConfig.castCostScaleX ~= nil
+        or gConfig.treasurePoolOpacity ~= nil
+        or (gConfig.windowPositions and gConfig.windowPositions.Notifications ~= nil);
+end
+
+-- Copy a legacy flat settings.lua table into a profile table
+function M.MergeLegacySettingsInto(target, result)
+    if (result.userSettings ~= nil and type(result.userSettings) == 'table') then
+        for k, v in pairs(result.userSettings) do target[k] = v; end
+        for k, v in pairs(result) do
+            if (k ~= 'profiles' and k ~= 'profileOrder' and k ~= 'userSettings' and result.userSettings[k] == nil) then
+                target[k] = v;
+            end
+        end
+    else
+        for k, v in pairs(result) do
+            if (k ~= 'profiles' and k ~= 'profileOrder') then
+                target[k] = v;
+            end
+        end
+    end
+end
 
 -- Migrate settings from HXUI to XIUI (one-time migration for users upgrading from HXUI)
 -- IMPORTANT: This must be called BEFORE settings.load() so that copied files are picked up
@@ -93,7 +199,7 @@ end
 
 -- Migrate party list layout settings (convert old settings to layout-specific format)
 function M.MigratePartyListLayoutSettings(gConfig, defaults)
-    if not gConfig.partyListLayout1 then
+    if HasOldPartyFlatKeys(gConfig) or not gConfig.partyListLayout1 then
         -- User has old settings format, migrate to Layout 1
         gConfig.partyListLayout1 = T{
             -- Migrate main party settings
@@ -174,7 +280,7 @@ end
 
 -- Migrate to new per-party settings structure (partyA, partyB, partyC)
 function M.MigratePerPartySettings(gConfig, defaults)
-    if gConfig.partyA then
+    if gConfig.partyA and M.IsSchemaAtLeast(gConfig.settingsSchemaVersion, SCHEMA_PARTY_PER_PARTY) and not HasOldPartyFlatKeys(gConfig) then
         return; -- Already migrated
     end
 
@@ -390,7 +496,8 @@ end
 function M.MigratePerPetTypeSettings(gConfig, defaults)
     -- Skip if already migrated (check for petBarAvatar with actual properties)
     -- Also validate it's actually a table (not corrupted)
-    if gConfig.petBarAvatar and type(gConfig.petBarAvatar) == 'table' and gConfig.petBarAvatar.hpScaleX ~= nil then
+    if gConfig.petBarAvatar and type(gConfig.petBarAvatar) == 'table' and gConfig.petBarAvatar.hpScaleX ~= nil
+        and not HasOldPetBarFlatKeys(gConfig) and M.IsSchemaAtLeast(gConfig.settingsSchemaVersion, SCHEMA_PET_PER_TYPE) then
         return;
     end
 
@@ -649,35 +756,36 @@ end
 
 -- Migrate flat castCost* settings to nested castCost table
 function M.MigrateCastCostSettings(gConfig, defaults)
-    -- Check if migration is needed (old flat settings exist, new nested doesn't)
-    if gConfig.castCostScaleX ~= nil and gConfig.castCost == nil then
+    -- Migrate whenever legacy flat keys exist (even if defaults were merged in first)
+    if gConfig.castCostScaleX ~= nil then
+        local existing = (type(gConfig.castCost) == 'table') and gConfig.castCost or {};
         -- Create nested structure from old flat settings
         gConfig.castCost = T{
             -- Display options
-            showName = gConfig.castCostShowName,
-            showMpCost = gConfig.castCostShowMpCost,
-            showRecast = gConfig.castCostShowRecast,
-            showCooldown = gConfig.castCostShowCooldown,
+            showName = gConfig.castCostShowName ~= nil and gConfig.castCostShowName or existing.showName,
+            showMpCost = gConfig.castCostShowMpCost ~= nil and gConfig.castCostShowMpCost or existing.showMpCost,
+            showRecast = gConfig.castCostShowRecast ~= nil and gConfig.castCostShowRecast or existing.showRecast,
+            showCooldown = gConfig.castCostShowCooldown ~= nil and gConfig.castCostShowCooldown or existing.showCooldown,
 
             -- Font sizes
-            nameFontSize = gConfig.castCostNameFontSize or 12,
-            costFontSize = gConfig.castCostCostFontSize or 12,
-            timeFontSize = gConfig.castCostTimeFontSize or 10,
-            recastFontSize = gConfig.castCostRecastFontSize or 10,
+            nameFontSize = gConfig.castCostNameFontSize or existing.nameFontSize or 12,
+            costFontSize = gConfig.castCostCostFontSize or existing.costFontSize or 12,
+            timeFontSize = gConfig.castCostTimeFontSize or existing.timeFontSize or 10,
+            recastFontSize = gConfig.castCostRecastFontSize or existing.recastFontSize or 10,
 
             -- Layout
-            minWidth = gConfig.castCostMinWidth or 100,
-            padding = gConfig.castCostPadding or 8,
-            paddingY = gConfig.castCostPaddingY or 8,
-            alignBottom = gConfig.castCostAlignBottom or false,
-            barScaleY = gConfig.castCostBarScaleY or 1.0,
+            minWidth = gConfig.castCostMinWidth or existing.minWidth or 100,
+            padding = gConfig.castCostPadding or existing.padding or 8,
+            paddingY = gConfig.castCostPaddingY or existing.paddingY or 8,
+            alignBottom = gConfig.castCostAlignBottom ~= nil and gConfig.castCostAlignBottom or existing.alignBottom or false,
+            barScaleY = gConfig.castCostBarScaleY or existing.barScaleY or 1.0,
 
             -- Background/Border
-            backgroundTheme = gConfig.castCostBackgroundTheme or 'Window1',
-            bgScale = gConfig.castCostScaleX or 1.0,
-            borderScale = gConfig.castCostBorderScale or 1.0,
-            backgroundOpacity = gConfig.castCostBackgroundOpacity or 1.0,
-            borderOpacity = gConfig.castCostBorderOpacity or 1.0,
+            backgroundTheme = gConfig.castCostBackgroundTheme or existing.backgroundTheme or 'Window1',
+            bgScale = gConfig.castCostScaleX or existing.bgScale or 1.0,
+            borderScale = gConfig.castCostBorderScale or existing.borderScale or 1.0,
+            backgroundOpacity = gConfig.castCostBackgroundOpacity or existing.backgroundOpacity or 1.0,
+            borderOpacity = gConfig.castCostBorderOpacity or existing.borderOpacity or 1.0,
         };
 
         -- Clean up old flat settings
@@ -804,8 +912,12 @@ end
 -- Migrate from split windows to notification groups
 -- Converts old notificationsSplit* flags to notificationTypeGroup assignments
 function M.MigrateNotificationGroups(gConfig, defaults)
-    -- Skip if already migrated (notificationGroupCount exists and groups are initialized)
-    if gConfig.notificationGroupCount ~= nil and gConfig.notificationGroup1 ~= nil and type(gConfig.notificationGroup1) == 'table' and gConfig.notificationGroup1.scaleX ~= nil then
+    -- Skip if already migrated unless legacy split-window flags still need conversion
+    if not HasNotificationSplitFlags(gConfig)
+        and gConfig.notificationGroupCount ~= nil
+        and gConfig.notificationGroup1 ~= nil
+        and type(gConfig.notificationGroup1) == 'table'
+        and gConfig.notificationGroup1.scaleX ~= nil then
         return;
     end
 
@@ -1089,9 +1201,57 @@ function M.MigrateSlotMacroRefs(gConfig)
     return keysAdded, fieldsStripped;
 end
 
--- Run structure migrations (called AFTER settings.load())
--- These handle migrating old settings structures to new ones
+-- Migrate legacy flat hotbar visual keys into hotbarGlobal
+function M.MigrateFlatHotbarSettings(gConfig, defaults)
+    if not HasOldFlatHotbarKeys(gConfig) then
+        return;
+    end
+
+    if not gConfig.hotbarGlobal then
+        gConfig.hotbarGlobal = {};
+    end
+
+    local global = gConfig.hotbarGlobal;
+    local flatToGlobal = {
+        hotbarKeybindFontSize = 'keybindFontSize',
+        hotbarLabelFontSize = 'labelFontSize',
+        hotbarBgScale = 'bgScale',
+        hotbarBorderScale = 'borderScale',
+        hotbarBackgroundOpacity = 'backgroundOpacity',
+        hotbarBorderOpacity = 'borderOpacity',
+    };
+
+    for flatKey, globalKey in pairs(flatToGlobal) do
+        if gConfig[flatKey] ~= nil and global[globalKey] == nil then
+            global[globalKey] = gConfig[flatKey];
+        end
+        gConfig[flatKey] = nil;
+    end
+end
+
+-- Migrate treasurePoolOpacity to treasurePoolBackgroundOpacity
+function M.MigrateTreasurePoolSettings(gConfig, defaults)
+    if gConfig.treasurePoolOpacity == nil then
+        return;
+    end
+
+    if gConfig.treasurePoolBackgroundOpacity == nil then
+        gConfig.treasurePoolBackgroundOpacity = gConfig.treasurePoolOpacity;
+    end
+    gConfig.treasurePoolOpacity = nil;
+end
+
+-- Run structure migrations on raw profile data (before defaults merge).
+-- Returns true when the profile should be persisted to disk.
 function M.RunStructureMigrations(gConfig, defaults)
+    if not gConfig then
+        return false;
+    end
+
+    local targetVersion = M.GetTargetSchemaVersion();
+    local priorSchema = gConfig.settingsSchemaVersion;
+    local hadLegacyKeys = HasPendingLegacyKeys(gConfig);
+
     M.MigratePartyListLayoutSettings(gConfig, defaults);
     M.MigratePerPartySettings(gConfig, defaults);
     M.MigratePerPetTypeSettings(gConfig, defaults);
@@ -1103,15 +1263,32 @@ function M.RunStructureMigrations(gConfig, defaults)
     M.MigrateBlockedGameKeys(gConfig, defaults);
     M.MigrateNotificationGroups(gConfig, defaults);
     M.MigrateCrossbarComboModeSettings(gConfig, defaults);
-    M.MigrateLegacyPositionFields(gConfig);
+    M.MigrateFlatHotbarSettings(gConfig, defaults);
+    M.MigrateTreasurePoolSettings(gConfig, defaults);
+    local positionsMigrated = M.MigrateLegacyPositionFields(gConfig);
+    local windowAliasesMigrated = profileManager.NormalizeWindowPositions(gConfig.windowPositions);
     M.MigrateSlotMacroRefs(gConfig);
+
+    local needsVersionStamp = M.CompareVersions(priorSchema, targetVersion) < 0;
+    if needsVersionStamp then
+        gConfig.settingsSchemaVersion = targetVersion;
+    end
+
+    return needsVersionStamp
+        or hadLegacyKeys
+        or positionsMigrated
+        or windowAliasesMigrated;
 end
 
--- Legacy function for backward compatibility (if any external code calls it)
-function M.RunAllMigrations(gConfig, defaults)
-    -- NOTE: MigrateFromHXUI should be called separately BEFORE settings.load()
-    -- This function now only runs structure migrations
-    M.RunStructureMigrations(gConfig, defaults);
+-- Migrate first, then fill missing keys from defaults. Use for every profile load path.
+function M.PrepareProfileSettings(gConfig, defaults)
+    if gConfig == nil then
+        gConfig = {};
+    end
+
+    local changed = M.RunStructureMigrations(gConfig, defaults);
+    formatLib.DeepMergeWithDefaults(gConfig, defaults);
+    return gConfig, changed;
 end
 
 return M;

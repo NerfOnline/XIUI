@@ -434,11 +434,41 @@ local function ParseImguiIni()
     end
     
     f:close();
+
     return positions;
 end
 
+-- Legacy ImGui window names -> current profile windowPositions keys
+local WINDOW_POSITION_ALIASES = {
+    Notifications = 'Notifications_Group1',
+};
+
+function profileManager.NormalizeWindowPositions(positions)
+    if not positions then
+        return false;
+    end
+
+    local migrated = false;
+    for oldName, newName in pairs(WINDOW_POSITION_ALIASES) do
+        local pos = positions[oldName];
+        if pos then
+            if not positions[newName] then
+                positions[newName] = { x = pos.x, y = pos.y };
+            end
+            positions[oldName] = nil;
+            migrated = true;
+        end
+    end
+
+    return migrated;
+end
+
 function profileManager.GetImguiPositions()
-    return ParseImguiIni();
+    local positions = ParseImguiIni();
+    if positions then
+        profileManager.NormalizeWindowPositions(positions);
+    end
+    return positions;
 end
 
 return profileManager;

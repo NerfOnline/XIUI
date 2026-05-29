@@ -320,6 +320,69 @@ defaultUserSettings = deep_copy_table(settingsDefaults.user_settings);
 -- Run HXUI file migration BEFORE loading settings
 local migrationResult = settingsMigration.MigrateFromHXUI();
 
+-- Default window layout for profiles with no saved positions
+local function GetDefaultWindowPositions()
+    local defPos = require('libs.defaultpositions');
+    local px, py = defPos.GetPlayerBarPosition();
+    local tx, ty = defPos.GetTargetBarPosition();
+    local pl1x, pl1y = defPos.GetPartyListPosition();
+    local pl2x, pl2y = defPos.GetPartyList2Position();
+    local pl3x, pl3y = defPos.GetPartyList3Position();
+    local cx, cy = defPos.GetCastBarPosition();
+    local nx, ny = defPos.GetNotificationsPosition();
+    local tpx, tpy = defPos.GetTreasurePoolPosition();
+    local petx, pety = defPos.GetPetBarPosition();
+    local ex, ey = defPos.GetExpBarPosition();
+    local gx, gy = defPos.GetGilTrackerPosition();
+    local ix, iy = defPos.GetInventoryPosition();
+    local elx, ely = defPos.GetEnemyListPosition();
+    local ccx, ccy = defPos.GetCastCostPosition();
+
+    local staggerY = 35;
+    return {
+        PlayerBar = { x = px, y = py },
+        TargetBar = { x = tx, y = ty },
+        PartyList = { x = pl1x, y = pl1y },
+        PartyList2 = { x = pl2x, y = pl2y },
+        PartyList3 = { x = pl3x, y = pl3y },
+        CastBar = { x = cx, y = cy },
+        Notifications_Group1 = { x = nx, y = ny },
+        Notifications_Group2 = { x = nx, y = ny + 180 },
+        TreasurePool = { x = tpx, y = tpy },
+        PetBar = { x = petx, y = pety },
+        ExpBar = { x = ex, y = ey },
+        GilTracker = { x = gx, y = gy },
+        EnemyList = { x = elx, y = ely },
+        CastCost = { x = ccx, y = ccy },
+        InventoryTracker = { x = ix, y = iy },
+        SatchelTracker = { x = ix, y = iy + staggerY },
+        SafeTracker = { x = ix, y = iy + staggerY * 2 },
+        StorageTracker = { x = ix, y = iy + staggerY * 3 },
+        LockerTracker = { x = ix, y = iy + staggerY * 4 },
+        WardrobeTracker = { x = ix, y = iy + staggerY * 5 },
+    };
+end
+
+-- Migrate, merge defaults, and persist when the on-disk profile changed
+local function LoadProfileSettings(profileName)
+    local profileSettings, changed = settingsMigration.PrepareProfileSettings(
+        profileManager.GetProfileSettings(profileName),
+        defaultUserSettings
+    );
+
+    if (changed) then
+        profileManager.SaveProfileSettings(profileName, profileSettings);
+    end
+
+    profileSettings.appliedPositions = {};
+
+    if (not profileSettings.windowPositions or next(profileSettings.windowPositions) == nil) then
+        profileSettings.windowPositions = GetDefaultWindowPositions();
+    end
+
+    return profileSettings;
+end
+
 -- ==========================================================
 -- = MIGRATION LOGIC (Legacy -> Profile System) =
 -- ==========================================================
@@ -340,6 +403,7 @@ if (rawSettings.profiles ~= nil) then
 
     for name, data in pairs(rawSettings.profiles) do
         if not profileManager.ProfileExists(name) then
+            settingsMigration.PrepareProfileSettings(data, defaultUserSettings);
             profileManager.SaveProfileSettings(name, data);
         end
         if not table.contains(globalProfiles.names, name) then
@@ -411,31 +475,18 @@ local function MigrateAllLegacySettings()
                      print(chat.header(addon.name):append(chat.message('Created legacy settings backup at: ')):append(chat.success(backupSettingsPath)));
                 end
 
-                -- 3. Create Legacy Profile
+                -- 3. Create Legacy Profile from raw saved settings (not pre-seeded defaults)
                 local profileName = 'Legacy ' .. char.name;
-                local legacyData = deep_copy_table(defaultUserSettings);
-
-                -- Merge settings
-                if (result.userSettings ~= nil and type(result.userSettings) == 'table') then
-                    for k, v in pairs(result.userSettings) do legacyData[k] = v; end
-                    for k, v in pairs(result) do
-                        if (k ~= 'profiles' and k ~= 'profileOrder' and k ~= 'userSettings' and result.userSettings[k] == nil) then
-                            legacyData[k] = v;
-                        end
-                    end
-                else
-                    for k, v in pairs(result) do
-                        if (k ~= 'profiles' and k ~= 'profileOrder') then
-                            legacyData[k] = v;
-                        end
-                    end
-                end
+                local legacyData = {};
+                settingsMigration.MergeLegacySettingsInto(legacyData, result);
 
                 -- Import window positions from imgui.ini (if available)
                 local legacyPositions = profileManager.GetImguiPositions();
                 if (legacyPositions) then
                     legacyData.windowPositions = legacyPositions;
                 end
+
+                settingsMigration.PrepareProfileSettings(legacyData, defaultUserSettings);
 
                 -- Save Profile
                 profileManager.SaveProfileSettings(profileName, legacyData);
@@ -499,68 +550,9 @@ if (not profileManager.ProfileExists(currentProfileName)) then
     settings.save();
 end
 
-gConfig = profileManager.GetProfileSettings(currentProfileName);
-if (gConfig == nil) then
-    gConfig = deep_copy_table(defaultUserSettings);
-else
-    -- Merge with defaults to fill in any missing keys (from older versions)
-    DeepMergeWithDefaults(gConfig, defaultUserSettings);
-end
-
-gConfig.appliedPositions = {};
-
--- Forward-declare GetDefaultWindowPositions so it can be used at load time
-local function GetDefaultWindowPositions()
-    local defPos = require('libs.defaultpositions');
-    local px, py = defPos.GetPlayerBarPosition();
-    local tx, ty = defPos.GetTargetBarPosition();
-    local pl1x, pl1y = defPos.GetPartyListPosition();
-    local pl2x, pl2y = defPos.GetPartyList2Position();
-    local pl3x, pl3y = defPos.GetPartyList3Position();
-    local cx, cy = defPos.GetCastBarPosition();
-    local nx, ny = defPos.GetNotificationsPosition();
-    local tpx, tpy = defPos.GetTreasurePoolPosition();
-    local petx, pety = defPos.GetPetBarPosition();
-    local ex, ey = defPos.GetExpBarPosition();
-    local gx, gy = defPos.GetGilTrackerPosition();
-    local ix, iy = defPos.GetInventoryPosition();
-    local elx, ely = defPos.GetEnemyListPosition();
-    local ccx, ccy = defPos.GetCastCostPosition();
-
-    local staggerY = 35;
-    return {
-        PlayerBar = { x = px, y = py },
-        TargetBar = { x = tx, y = ty },
-        PartyList = { x = pl1x, y = pl1y },
-        PartyList2 = { x = pl2x, y = pl2y },
-        PartyList3 = { x = pl3x, y = pl3y },
-        CastBar = { x = cx, y = cy },
-        Notifications_Group1 = { x = nx, y = ny },
-        Notifications_Group2 = { x = nx, y = ny + 180 },
-        TreasurePool = { x = tpx, y = tpy },
-        PetBar = { x = petx, y = pety },
-        ExpBar = { x = ex, y = ey },
-        GilTracker = { x = gx, y = gy },
-        EnemyList = { x = elx, y = ely },
-        CastCost = { x = ccx, y = ccy },
-        InventoryTracker = { x = ix, y = iy },
-        SatchelTracker = { x = ix, y = iy + staggerY },
-        SafeTracker = { x = ix, y = iy + staggerY * 2 },
-        StorageTracker = { x = ix, y = iy + staggerY * 3 },
-        LockerTracker = { x = ix, y = iy + staggerY * 4 },
-        WardrobeTracker = { x = ix, y = iy + staggerY * 5 },
-    };
-end
-
--- Inject default positions if profile has none (brand new profile)
-if (not gConfig.windowPositions or next(gConfig.windowPositions) == nil) then
-    gConfig.windowPositions = GetDefaultWindowPositions();
-end
+gConfig = LoadProfileSettings(currentProfileName);
 
 gConfigVersion = 0;
-settingsMigration.RunStructureMigrations(gConfig, defaultUserSettings);
-
--- Show migration message
 
 
 -- State variables
@@ -660,16 +652,7 @@ function ChangeProfile(name)
 
     uiModules.HideAll();
 
-    gConfig = profileManager.GetProfileSettings(name);
-    DeepMergeWithDefaults(gConfig, defaultUserSettings);  -- Fill missing settings from defaults
-    gConfig.appliedPositions = {}; -- Ensure we re-apply positions for the new profile
-
-    -- If profile has no saved positions, inject defaults
-    if (not gConfig.windowPositions or next(gConfig.windowPositions) == nil) then
-        gConfig.windowPositions = GetDefaultWindowPositions();
-    end
-
-    settingsMigration.RunStructureMigrations(gConfig, defaultUserSettings);
+    gConfig = LoadProfileSettings(name);
     UpdateSettings();
     return true;
 end
@@ -948,20 +931,7 @@ settings.register('settings', 'settings_update', function (s)
         end
 
         -- Reload profile settings
-        local newGConfig = profileManager.GetProfileSettings(currentProfileName);
-        if (newGConfig) then
-            gConfig = newGConfig;
-            DeepMergeWithDefaults(gConfig, defaultUserSettings);  -- Fill missing settings from defaults
-        else
-            -- Fallback
-             gConfig = deep_copy_table(defaultUserSettings);
-        end
-
-        -- Initialize runtime state
-        gConfig.appliedPositions = {};
-
-        -- Run migrations
-        settingsMigration.RunStructureMigrations(gConfig, defaultUserSettings);
+        gConfig = LoadProfileSettings(currentProfileName);
 
         -- Update visuals
         UpdateSettings();
