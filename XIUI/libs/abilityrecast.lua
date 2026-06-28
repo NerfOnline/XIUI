@@ -134,13 +134,33 @@ function M.FindAbilityRecast(abilityId)
     return nil, 0;  -- Not found (ability may be ready or not tracked)
 end
 
+-- Puppetmaster maneuvers share one recast timer; dat/memory associates it with Fire Maneuver.
+local MANEUVER_ABILITY_IDS = {
+    [653] = true, [654] = true, [655] = true, [656] = true,
+    [657] = true, [658] = true, [659] = true, [660] = true,
+};
+local MANEUVER_RECAST_ABILITY_ID = 653;
+
+local function ResolveAbilityRecastLookupId(abilityId)
+    if MANEUVER_ABILITY_IDS[abilityId] then
+        return MANEUVER_RECAST_ABILITY_ID;
+    end
+    return abilityId;
+end
+
 -- Get ability recast by ability ID (scans slots to find it)
 -- Returns: remaining recast time in seconds, or 0 if ready/not found
 -- @param abilityId: The ability ID (not timer ID)
 function M.GetAbilityRecastByAbilityId(abilityId)
+    abilityId = ResolveAbilityRecastLookupId(abilityId);
     local timerId, rawTimer = M.FindAbilityRecast(abilityId);
     if rawTimer <= 0 then return 0; end
     return rawTimer / 60;
+end
+
+-- True when ability id is any elemental maneuver (shared 10s recast).
+function M.IsManeuverAbilityId(abilityId)
+    return abilityId ~= nil and MANEUVER_ABILITY_IDS[abilityId] == true;
 end
 
 return M;

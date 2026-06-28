@@ -2,20 +2,15 @@
 * XIUI hotbar - Data Module
 * Handles state, font storage, and primitive handles
 ]]--
-
 require('common');
-
 local gameState = require('core.gamestate');
-
 local M = {};
 
 -- Callback for slot data changes (used by macropalette for debounced saves)
 local onSlotDataChanged = nil;
-
 function M.SetSlotDataChangedCallback(callback)
     onSlotDataChanged = callback;
 end
-
 local function NotifySlotDataChanged()
     if onSlotDataChanged then
         onSlotDataChanged();
@@ -30,7 +25,6 @@ local function getPetPalette()
     end
     return petpalette;
 end
-
 local palette = nil;
 local function getPalette()
     if not palette then
@@ -54,7 +48,6 @@ local macroIdLookupDirty = true;
 -- macros (e.g. Ramrock's macroDB[3]="Heel") in the lookup while the new
 -- profile (Mazungu) had macroDB[3]="SendPep".
 local macroIdLookupSource = nil;
-
 local function RebuildMacroLookup()
     macroIdLookup = {};
     macroIdLookupSource = (gConfig and gConfig.macroDB) or nil;
@@ -72,7 +65,6 @@ local function RebuildMacroLookup()
     end
     macroIdLookupDirty = false;
 end
-
 local function GetMacroFromLookup(macroId, paletteKey)
     -- Rebuild if explicitly dirty OR if gConfig.macroDB has been reassigned
     -- (i.e. profile switched out from under us).
@@ -105,13 +97,125 @@ local storageKeyCacheSource = nil;
 
 M.NUM_BARS = 6;                    -- Total number of hotbars
 M.SLOTS_PER_BAR = 12;              -- Default slots per hotbar
-M.MAX_SLOTS_PER_BAR = 12;          -- Maximum slots per hotbar
+M.MAX_SLOTS_PER_BAR = 24;          -- Maximum slots per hotbar
 
 -- Layout constants
 M.PADDING = 4;
 M.BUTTON_GAP = 8;
 M.LABEL_GAP = -8;  -- Default label position offset (was 4, moved up by 12px)
 M.ROW_GAP = 6;
+
+-- ============================================
+-- Performance: Pre-allocated Table Pools
+-- ============================================
+-- Avoid hundreds of short-lived tables per frame from GetKeybindForSlot,
+-- GetBarLayout, GetBarSettings (merge path), and GetCrossbarSlotData.
+
+local CROSSBAR_COMBO_MODES = {'L2', 'R2', 'L2R2', 'R2L2', 'L2x2', 'R2x2', 'Shared'};
+local CROSSBAR_SLOTS = 8;
+local function WipeTable(t)
+    for k in pairs(t) do
+        t[k] = nil;
+    end
+end
+local keybindPool = {};
+for bar = 1, M.NUM_BARS do
+    keybindPool[bar] = {};
+    for slot = 1, M.MAX_SLOTS_PER_BAR do
+        keybindPool[bar][slot] = {};
+    end
+end
+local barSettingsPool = {};
+for bar = 1, M.NUM_BARS do
+    barSettingsPool[bar] = {};
+end
+local barLayoutPool = {};
+for bar = 1, M.NUM_BARS do
+    barLayoutPool[bar] = {};
+end
+local crossbarPool = {};
+for _, mode in ipairs(CROSSBAR_COMBO_MODES) do
+    crossbarPool[mode] = {};
+    for slot = 1, CROSSBAR_SLOTS do
+        crossbarPool[mode][slot] = {};
+    end
+end
+local function FillMacroSlotResult(result, macroData, barIndex, slotIndex)
+    result.context = 'battle';
+    result.hotbar = barIndex;
+    result.slot = slotIndex;
+    result.actionType = macroData.actionType;
+    result.action = macroData.action;
+    result.target = macroData.target;
+    result.displayName = macroData.displayName or macroData.action;
+    result.equipSlot = macroData.equipSlot;
+    result.macroText = macroData.macroText;
+    result.itemId = macroData.itemId;
+    result.customIconType = macroData.customIconType;
+    result.customIconId = macroData.customIconId;
+    result.customIconPath = macroData.customIconPath;
+    result.recastSourceType = macroData.recastSourceType;
+    result.recastSourceAction = macroData.recastSourceAction;
+    result.recastSourceItemId = macroData.recastSourceItemId;
+end
+local function FillCrossbarMacroResult(result, liveMacro, slotAction)
+    result.actionType = liveMacro.actionType;
+    result.action = liveMacro.action;
+    result.target = liveMacro.target;
+    result.displayName = liveMacro.displayName;
+    result.equipSlot = liveMacro.equipSlot;
+    result.macroText = liveMacro.macroText;
+    result.itemId = liveMacro.itemId;
+    result.customIconType = liveMacro.customIconType;
+    result.customIconId = liveMacro.customIconId;
+    result.customIconPath = liveMacro.customIconPath;
+    result.macroRef = slotAction.macroRef;
+    result.macroPaletteKey = slotAction.macroPaletteKey;
+    result.recastSourceType = liveMacro.recastSourceType;
+    result.recastSourceAction = liveMacro.recastSourceAction;
+    result.recastSourceItemId = liveMacro.recastSourceItemId;
+end
+
+-- Cache key for icon/abbrev memoization (display + crossbar).
+function M.BuildSlotIconCacheKey(bind)
+    if not bind or not bind.actionType then
+        return 'nil';
+    end
+    local iconPart = '';
+    if bind.customIconType or bind.customIconId or bind.customIconPath then
+        iconPart = ':icon:' .. (bind.customIconType or '') .. ':'
+            .. tostring(bind.customIconId or '') .. ':' .. (bind.customIconPath or '');
+    end
+    return (bind.actionType or '') .. ':' .. (bind.action or '') .. ':'
+        .. (bind.target or '') .. iconPart;
+end
+
+-- Shallow copy for drag payloads and other long-lived references.
+-- GetKeybindForSlot / GetCrossbarSlotData return pooled tables that are reused every frame.
+function M.SnapshotSlotBind(bind)
+    if not bind then return nil; end
+    return {
+        context = bind.context,
+        hotbar = bind.hotbar,
+        slot = bind.slot,
+        actionType = bind.actionType,
+        action = bind.action,
+        target = bind.target,
+        displayName = bind.displayName,
+        equipSlot = bind.equipSlot,
+        macroText = bind.macroText,
+        itemId = bind.itemId,
+        customIconType = bind.customIconType,
+        customIconId = bind.customIconId,
+        customIconPath = bind.customIconPath,
+        recastSourceType = bind.recastSourceType,
+        recastSourceAction = bind.recastSourceAction,
+        recastSourceItemId = bind.recastSourceItemId,
+        macroRef = bind.macroRef,
+        macroPaletteKey = bind.macroPaletteKey,
+        id = bind.id,
+    };
+end
 
 -- ============================================
 -- Job State
@@ -146,7 +250,6 @@ local function getStorageKey(barSettings, jobId, subjobId)
     local normalizedSubjobId = normalizeJobId(subjobId or 0);
     return string.format('%d:%d', normalizedJobId, normalizedSubjobId);
 end
-
 
 -- Helper to get slotActions with storage key
 -- Handles: 'global' and composite keys ('15:10', '15:10:avatar:ifrit', '15:10:palette:name')
@@ -258,7 +361,6 @@ function M.GetStorageKeyForBar(barIndex)
     if not storageKeyCacheDirty and storageKeyCache[barIndex] then
         return storageKeyCache[barIndex];
     end
-
     local configKey = 'hotbarBar' .. barIndex;
     local barSettings = gConfig and gConfig[configKey];
     local jobId = M.jobId or 1;
@@ -268,12 +370,10 @@ function M.GetStorageKeyForBar(barIndex)
 
     -- Build base job:subjob key (used for base slots - subjob-specific)
     local baseKey = string.format('%d:%d', normalizedJobId, normalizedSubjobId);
-
     if not barSettings then
         storageKeyCache[barIndex] = baseKey;
         return baseKey;
     end
-
     local result;
 
     -- Global mode (non-job-specific)
@@ -290,7 +390,6 @@ function M.GetStorageKeyForBar(barIndex)
                 petKey = pp.GetEffectivePetKey(barIndex);
             end
         end
-
         if petKey then
             result = string.format('%s:%s', baseKey, petKey);
         else
@@ -327,7 +426,6 @@ function M.GetStorageKeyForBar(barIndex)
     if allCached then
         storageKeyCacheDirty = false;
     end
-
     return result;
 end
 
@@ -339,7 +437,6 @@ function M.GetAvailablePalettes(barIndex)
     local barSettings = gConfig and gConfig[configKey];
     local jobId = M.jobId or 1;
     local subjobId = M.subjobId or 0;
-
     local palettes = {};
 
     -- Add pet palettes if pet-aware mode is enabled
@@ -366,7 +463,6 @@ function M.GetAvailablePalettes(barIndex)
             });
         end
     end
-
     return palettes;
 end
 
@@ -393,7 +489,6 @@ function M.GetCurrentPaletteDisplayName(barIndex)
     if p then
         return p.GetActivePaletteDisplayName(barIndex);
     end
-
     return nil;
 end
 
@@ -439,7 +534,6 @@ function M.GetCrossbarStorageKeyForCombo(comboMode)
     if not crossbarSettings then
         return string.format('%d:%d', M.jobId or 1, M.subjobId or 0);
     end
-
     local jobId = M.jobId or 1;
     local subjobId = M.subjobId or 0;
     local normalizedJobId = normalizeJobId(jobId);
@@ -520,7 +614,6 @@ function M.GetCrossbarPaletteDisplayName(comboMode)
             return paletteName;
         end
     end
-
     return 'Base';
 end
 
@@ -528,7 +621,6 @@ end
 function M.GetBarSettings(barIndex)
     local configKey = 'hotbarBar' .. barIndex;
     local barConfig = gConfig and gConfig[configKey];
-
     if not barConfig then
         -- Return fallback defaults
         return {
@@ -572,12 +664,11 @@ function M.GetBarSettings(barIndex)
 
     -- If useGlobalSettings is true, merge global visual settings
     if barConfig.useGlobalSettings and gConfig.hotbarGlobal then
-        local merged = {};
-        -- Start with global settings
+        local merged = barSettingsPool[barIndex];
+        WipeTable(merged);
         for k, v in pairs(gConfig.hotbarGlobal) do
             merged[k] = v;
         end
-        -- Override with per-bar settings (layout and per-bar-only keys)
         for k, v in pairs(barConfig) do
             if PER_BAR_ONLY_KEYS[k] then
                 merged[k] = v;
@@ -585,7 +676,6 @@ function M.GetBarSettings(barIndex)
         end
         return merged;
     end
-
     return barConfig;
 end
 
@@ -594,19 +684,18 @@ function M.GetBarLayout(barIndex)
     local barSettings = M.GetBarSettings(barIndex);
     local rows = barSettings.rows or 1;
     local columns = barSettings.columns or 12;
-
-    -- Always calculate slots from rows * columns (ignore stored slots value)
-    local slots = rows * columns;
-
-    -- Ensure slots doesn't exceed max
-    slots = math.min(slots, M.MAX_SLOTS_PER_BAR);
-
-    return {
-        isVertical = rows > 1,
-        columns = columns,
-        rows = rows,
-        slots = slots,
-    };
+    if columns < 1 then columns = 1; end
+    local slots = math.min(rows * columns, M.MAX_SLOTS_PER_BAR);
+    -- Total slots are capped at MAX_SLOTS_PER_BAR, so derive the rows actually
+    -- rendered from the slot count. This keeps the reserved height in sync with
+    -- what is drawn when rows * columns would exceed the cap.
+    local renderedRows = math.max(1, math.ceil(slots / columns));
+    local layout = barLayoutPool[barIndex];
+    layout.isVertical = renderedRows > 1;
+    layout.columns = columns;
+    layout.rows = renderedRows;
+    layout.slots = slots;
+    return layout;
 end
 
 -- Get number of slots for a bar
@@ -708,12 +797,16 @@ local function GetMacroById(macroId, paletteKey)
             end
         end
     end
-
     return nil;
 end
 
 -- Get action assignment for a specific bar and slot
 function M.GetKeybindForSlot(barIndex, slotIndex)
+    local poolSlot = tonumber(slotIndex);
+    if not poolSlot or poolSlot < 1 or poolSlot > M.MAX_SLOTS_PER_BAR then
+        return nil;
+    end
+
     -- First check for custom slot actions in per-bar settings
     local configKey = 'hotbarBar' .. barIndex;
     if gConfig and gConfig[configKey] then
@@ -749,31 +842,18 @@ function M.GetKeybindForSlot(barIndex, slotIndex)
                     -- Custom non-macro slot - use inline fields directly
                     macroData = slotAction;
                 end
-
-                -- Return slot action in the same format as parsed keybinds
-                return {
-                    context = 'battle',
-                    hotbar = barIndex,
-                    slot = slotIndex,
-                    actionType = macroData.actionType,
-                    action = macroData.action,
-                    target = macroData.target,
-                    displayName = macroData.displayName or macroData.action,
-                    equipSlot = macroData.equipSlot,
-                    macroText = macroData.macroText,
-                    itemId = macroData.itemId,
-                    customIconType = macroData.customIconType,
-                    customIconId = macroData.customIconId,
-                    customIconPath = macroData.customIconPath,
-                    -- Recast source override (for macros showing cooldown from different action)
-                    recastSourceType = macroData.recastSourceType,
-                    recastSourceAction = macroData.recastSourceAction,
-                    recastSourceItemId = macroData.recastSourceItemId,
-                };
+                local barPool = keybindPool[barIndex];
+                if not barPool then
+                    return nil;
+                end
+                -- Pooled table: valid only until the next GetKeybindForSlot call for this slot.
+                local result = barPool[poolSlot];
+                WipeTable(result);
+                FillMacroSlotResult(result, macroData, barIndex, slotIndex);
+                return result;
             end
         end
     end
-
     return nil;
 end
 
@@ -850,8 +930,10 @@ end
 -- slotIndex: 1-8
 -- Returns nil if no data exists
 function M.GetCrossbarSlotData(comboMode, slotIndex)
+    if not slotIndex or slotIndex < 1 or slotIndex > CROSSBAR_SLOTS then
+        return nil;
+    end
     local jobId = M.jobId or 1;
-
     if not gConfig.hotbarCrossbar then return nil; end
 
     -- Map L2R2/R2L2 to Shared when shared expanded bar is enabled
@@ -862,7 +944,6 @@ function M.GetCrossbarSlotData(comboMode, slotIndex)
     local jobSlotActions = getCrossbarSlotActionsForJob(gConfig.hotbarCrossbar.slotActions, storageKey);
     if not jobSlotActions then return nil; end
     if not jobSlotActions[effectiveComboMode] then return nil; end
-
     local slotAction = jobSlotActions[effectiveComboMode][slotIndex];
     if not slotAction then return nil; end
 
@@ -875,24 +956,14 @@ function M.GetCrossbarSlotData(comboMode, slotIndex)
         if not liveMacro then
             return nil;  -- Macro reference is orphaned
         end
-        return {
-            actionType = liveMacro.actionType,
-            action = liveMacro.action,
-            target = liveMacro.target,
-            displayName = liveMacro.displayName,
-            equipSlot = liveMacro.equipSlot,
-            macroText = liveMacro.macroText,
-            itemId = liveMacro.itemId,
-            customIconType = liveMacro.customIconType,
-            customIconId = liveMacro.customIconId,
-            customIconPath = liveMacro.customIconPath,
-            macroRef = slotAction.macroRef,
-            macroPaletteKey = slotAction.macroPaletteKey,
-            -- Recast source override (for macros showing cooldown from different action)
-            recastSourceType = liveMacro.recastSourceType,
-            recastSourceAction = liveMacro.recastSourceAction,
-            recastSourceItemId = liveMacro.recastSourceItemId,
-        };
+        local poolRow = crossbarPool[effectiveComboMode];
+        if not poolRow then
+            return nil;
+        end
+        local result = poolRow[slotIndex];
+        WipeTable(result);
+        FillCrossbarMacroResult(result, liveMacro, slotAction);
+        return result;
     end
 
     -- Custom non-macro slot - return inline data directly
@@ -906,7 +977,6 @@ end
 -- This is exposed on M so external writers (macropalette, migrations) can reuse it.
 function M.BuildSlotDataForWrite(slotData)
     if not slotData then return nil; end
-
     local macroRef = slotData.macroRef or slotData.id;
     if macroRef then
         return {
@@ -914,7 +984,6 @@ function M.BuildSlotDataForWrite(slotData)
             macroPaletteKey = slotData.macroPaletteKey,
         };
     end
-
     return {
         actionType = slotData.actionType,
         action = slotData.action,
@@ -955,9 +1024,7 @@ function M.SetCrossbarSlotData(comboMode, slotIndex, slotData)
     -- Use per-combo-mode storage key (considers pet-aware and palette settings per combo)
     local storageKey = M.GetCrossbarStorageKeyForCombo(effectiveComboMode);
     local comboSlots = ensureCrossbarSlotActionsStructure(gConfig.hotbarCrossbar, storageKey, effectiveComboMode);
-
     comboSlots[slotIndex] = M.BuildSlotDataForWrite(slotData);
-
     NotifySlotDataChanged();
 end
 
@@ -979,7 +1046,6 @@ function M.ClearCrossbarSlotData(comboMode, slotIndex)
 
     -- Clear the slot
     jobSlotActions[effectiveComboMode][slotIndex] = nil;
-
     NotifySlotDataChanged();
 end
 
@@ -1009,18 +1075,15 @@ end
 function M.SetSlotData(barIndex, slotIndex, slotData)
     local configKey = 'hotbarBar' .. barIndex;
     if not gConfig or not gConfig[configKey] then return; end
-
     local barSettings = gConfig[configKey];
     local storageKey = M.GetStorageKeyForBar(barIndex);
     local jobSlotActions = ensureSlotActionsStructure(barSettings, storageKey);
-
     if slotData then
         jobSlotActions[slotIndex] = M.BuildSlotDataForWrite(slotData);
     else
         -- Mark as explicitly cleared
         jobSlotActions[slotIndex] = { cleared = true };
     end
-
     NotifySlotDataChanged();
 end
 
@@ -1028,11 +1091,9 @@ end
 function M.ClearSlotData(barIndex, slotIndex)
     local configKey = 'hotbarBar' .. barIndex;
     if not gConfig or not gConfig[configKey] then return; end
-
     local barSettings = gConfig[configKey];
     local storageKey = M.GetStorageKeyForBar(barIndex);
     local jobSlotActions = getSlotActionsForJob(barSettings.slotActions, storageKey);
-
     if jobSlotActions then
         -- Mark as explicitly cleared
         jobSlotActions[slotIndex] = { cleared = true };
@@ -1066,10 +1127,8 @@ end
 
 function M.SetPreview(enabled)
 end
-
 function M.ClearPreview()
 end
-
 function M.ClearError()
 end
 
@@ -1081,13 +1140,11 @@ end
 function M.Initialize()
     M.SetPlayerJob();
 end
-
 function M.SetPlayerJob()
     -- Gate on login state - memory only reliable when player entity is visible
     if not gameState.CheckLoggedIn() then
         return false;
     end
-
     local player = AshitaCore:GetMemoryManager():GetPlayer()
     local currentJobId = player:GetMainJob();
     if currentJobId == 0 then
@@ -1099,7 +1156,6 @@ function M.SetPlayerJob()
     if M.jobId ~= currentJobId or M.subjobId ~= currentSubjobId then
         M.InvalidateStorageKeyCache();
     end
-
     M.jobId = currentJobId;
     M.subjobId = currentSubjobId;
     return true;
@@ -1113,5 +1169,4 @@ end
 function M.Cleanup()
     M.Clear();
 end
-
 return M;

@@ -8,10 +8,8 @@
 --[[    BSD License Disclaimer
         Copyright © 2020, SirEdeonX, Akirane, Technyze
         All rights reserved.
-
         Redistribution and use in source and binary forms, with or without
         modification, are permitted provided that the following conditions are met:
-
             * Redistributions of source code must retain the above copyright
               notice, this list of conditions and the following disclaimer.
             * Redistributions in binary form must reproduce the above copyright
@@ -20,7 +18,6 @@
             * Neither the name of ui.xivhotbar/xivhotbar2 nor the
               names of its contributors may be used to endorse or promote products
               derived from this software without specific prior written permission.
-
         THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
         ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
         WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -32,12 +29,10 @@
         (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
         SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ]]
-
 require('common');
 require('handlers.helpers');
 local dragdrop = require('libs.dragdrop');
 local imtext = require('libs.imtext');
-
 local data = require('modules.hotbar.data');
 local display = require('modules.hotbar.display');
 local actions = require('modules.hotbar.actions');
@@ -46,12 +41,12 @@ local crossbar = require('modules.hotbar.crossbar');
 local controller = require('modules.hotbar.controller');
 local textures = require('modules.hotbar.textures');
 local hotbarConfig = require('config.hotbar');
-local paletteManager = require('config.palettemanager');
 local slotrenderer = require('modules.hotbar.slotrenderer');
 local petpalette = require('modules.hotbar.petpalette');
+local petregistry = require('modules.hotbar.petregistry');
 local palette = require('modules.hotbar.palette');
+local playerdata = require('modules.hotbar.playerdata');
 local macrosLib = require('libs.ffxi.macros');
-
 local M = {};
 
 -- ============================================
@@ -76,6 +71,11 @@ M.visible = true;
 -- Track hotbar enable/disable state for transitions
 local wasHotbarEnabled = nil;
 
+-- Separate tracker for re-syncing job on re-enable. Job-change / zone packets are
+-- gated by gConfig.hotbarEnabled in XIUI.lua, so a job change made while the module
+-- is disabled is missed; this lets us re-sync when it is turned back on.
+local jobSyncEnabledState = nil;
+
 -- True if any hotbar bar or crossbar combo-mode has petAware enabled.
 -- Used to short-circuit the pet-change callback's cache wipes when no
 -- bar would actually rebind its slots in response.
@@ -99,6 +99,56 @@ local function AnyBarIsPetAware()
 end
 
 -- ============================================
+-- Availability cache invalidation (must be above Initialize; pet callback uses it)
+-- ============================================
+
+local trackedJobSignature = nil;
+local trackedLevelSignature = nil;
+local trackedEquipmentSignature = nil;
+local trackedPetSignature = nil;
+local trackedAvailBuffSignature = nil;
+local function ClearSlotAvailabilityCaches()
+    slotrenderer.ClearAvailabilityCache();
+    slotrenderer.ClearMPCostCache();
+    slotrenderer.ClearItemQuantityCache();
+    playerdata.InvalidateInventoryCache();
+end
+
+local function InvalidateForJobChange()
+    playerdata.InvalidateAvailabilityLookup();
+    ClearSlotAvailabilityCaches();
+    playerdata.ResetMemoryReady();
+end
+
+-- Re-read job from memory and refresh palettes, caches, and pet state.
+-- Returns false when the job is not readable yet (login/zoning).
+-- Driven by 0x001B for speed and by the per-frame poll for correctness when
+-- memory still reports the old job at packet time.
+local function ApplyJobChange()
+    if not data.SetPlayerJob() then
+        return false;
+    end
+    macropalette.SyncToCurrentJob();
+    palette.ValidatePalettesForJob(data.jobId, data.subjobId);
+    display.ClearIconCache();
+    actions.ClearNoIconCache();
+    if crossbarInitialized then
+        crossbar.ClearIconCache();
+    end
+    petpalette.CheckPetState();
+    return true;
+end
+
+local function OnZoneTransition()
+    playerdata.ResetMemoryReady();
+    ClearSlotAvailabilityCaches();
+    trackedLevelSignature = nil;
+    trackedEquipmentSignature = nil;
+    trackedPetSignature = nil;
+    trackedAvailBuffSignature = nil;
+end
+
+-- ============================================
 -- Module Lifecycle
 -- ============================================
 
@@ -114,13 +164,13 @@ function M.Initialize(settings)
 
     -- Initialize data module (sets player job)
     data.Initialize();
+    playerdata.SeedPacketOwnershipFromMemory();
 
     -- Validate palettes on reload (not just on job change packets)
     -- Helper function to validate palettes once job is ready
     local function ValidatePalettesWhenReady(attempt)
         attempt = attempt or 1;
         local maxAttempts = 20;
-
         if data.SetPlayerJob() then
             palette.ValidatePalettesForJob(data.jobId, data.subjobId);
             macropalette.SyncToCurrentJob();
@@ -137,7 +187,6 @@ function M.Initialize(settings)
             end);
         end
     end
-
     if data.jobId then
         palette.ValidatePalettesForJob(data.jobId, data.subjobId);
     else
@@ -164,7 +213,7 @@ function M.Initialize(settings)
         -- whose absence could leave a bar showing pet-keyed slots after the
         -- user toggled petAware off mid-pet. Always run it.
         data.InvalidateStorageKeyCache();
-
+        ClearSlotAvailabilityCaches();
         if not AnyBarIsPetAware() then return; end
 
         -- Clear ALL caches when pet changes to force full refresh
@@ -212,13 +261,12 @@ function M.Initialize(settings)
     local crossbarNeeded = crossbarMode == 'crossbar' or crossbarMode == 'both';
     if crossbarNeeded and crossbarConfig then
         crossbar.Initialize(crossbarConfig, gAdjustedSettings.crossbarSettings);
-        
+
         -- Get custom button mapping if Generic DirectInput is selected
         local customButtonMapping = nil;
         if crossbarConfig.controllerScheme == 'dinput' and crossbarConfig.customControllerMappings and crossbarConfig.customControllerMappings.dinput then
             customButtonMapping = crossbarConfig.customControllerMappings.dinput;
         end
-        
         controller.Initialize({
             expandedCrossbarEnabled = crossbarConfig.enableExpandedCrossbar ~= false,
             doubleTapEnabled = crossbarConfig.enableDoubleTap or false,
@@ -240,12 +288,14 @@ function M.Initialize(settings)
     -- Check pet state on initialization (detects existing pet after reload)
     ashita.tasks.once(0.1, function()
         petpalette.CheckPetState();
+        slotrenderer.ClearAvailabilityCache();
     end);
 
     -- Initialize state tracking
     wasHotbarEnabled = (gConfig.hotbarEnabled ~= false);
-
     M.initialized = true;
+    playerdata.ResetMemoryReady();
+    playerdata.InvalidateAvailabilityLookup();
 end
 
 -- Update visual elements when settings change
@@ -275,7 +325,6 @@ function M.UpdateVisuals(settings)
     -- Handle crossbar enable/disable based on mode
     local crossbarMode = gConfig and gConfig.hotbarCrossbar and gConfig.hotbarCrossbar.mode or 'hotbar';
     local crossbarNeeded = crossbarMode == 'crossbar' or crossbarMode == 'both';
-
     if crossbarNeeded and not crossbarInitialized then
         -- Initialize crossbar when newly needed
         crossbar.Initialize(gConfig.hotbarCrossbar, gAdjustedSettings.crossbarSettings);
@@ -306,7 +355,7 @@ function M.UpdateVisuals(settings)
         controller.SetExpandedCrossbarEnabled(gConfig.hotbarCrossbar.enableExpandedCrossbar ~= false);
         controller.SetDoubleTapEnabled(gConfig.hotbarCrossbar.enableDoubleTap or false);
         controller.SetDoubleTapWindow(gConfig.hotbarCrossbar.doubleTapWindow or 0.3);
-        
+
         -- Update controller scheme with custom mapping if applicable
         local customMapping = nil;
         if gConfig.hotbarCrossbar.controllerScheme == 'dinput' and gConfig.hotbarCrossbar.customControllerMappings and gConfig.hotbarCrossbar.customControllerMappings.dinput then
@@ -320,12 +369,88 @@ function M.UpdateVisuals(settings)
     -- Update state tracking for hotbar enable/disable
     wasHotbarEnabled = (gConfig and gConfig.hotbarEnabled ~= false);
 end
+local function UpdateActionDataState()
+    -- Re-sync the job when the module transitions from disabled to enabled, since
+    -- job-change packets are ignored while disabled (see XIUI.lua). Runs every frame
+    -- regardless of enabled/visible state because it sits ahead of those gates.
+    local hotbarEnabled = (gConfig and gConfig.hotbarEnabled ~= false);
+    if hotbarEnabled and jobSyncEnabledState == false then
+        M.HandleJobChangePacket();
+    end
+    jobSyncEnabledState = hotbarEnabled;
+    local player = AshitaCore:GetMemoryManager():GetPlayer();
+    if not player or player.isZoning then
+        return;
+    end
+    if not petregistry.IsJugBrothCacheBuildActive() then
+        petregistry.StartJugBrothCacheBuild();
+    end
+    if not petregistry.IsJugBrothItemMapBuildComplete() then
+        local mainJobId = player:GetMainJob() or 0;
+        local subJobId = player:GetSubJob() or 0;
+        if mainJobId == petregistry.JOB_BST or subJobId == petregistry.JOB_BST then
+            petregistry.TickJugBrothCacheBuild(32);
+        end
+    end
+    local jobSig = playerdata.GetJobSignature();
+    if jobSig and jobSig ~= trackedJobSignature then
+        -- Memory is polled every frame, so this catches the true current job even
+        -- when the 0x001B handler ran a frame too early against stale memory (which
+        -- used to leave the hotbar stuck on the previous job). ApplyJobChange reads
+        -- the same memory GetJobSignature did, so the two always agree.
+        if ApplyJobChange() then
+            if trackedJobSignature ~= nil then
+                InvalidateForJobChange();
+            end
+            trackedJobSignature = jobSig;
+        end
+    end
+    local levelSig = playerdata.GetLevelSignature();
+    if levelSig and levelSig ~= trackedLevelSignature then
+        if trackedLevelSignature ~= nil then
+            ClearSlotAvailabilityCaches();
+        end
+        trackedLevelSignature = levelSig;
+    end
+    local equipmentSignature = playerdata.GetEquipmentSignature();
+    if equipmentSignature ~= trackedEquipmentSignature then
+        if trackedEquipmentSignature ~= nil then
+            ClearSlotAvailabilityCaches();
+        end
+        trackedEquipmentSignature = equipmentSignature;
+    end
+    local availBuffSignature = playerdata.GetSpellAvailBuffSignature();
+    if availBuffSignature ~= trackedAvailBuffSignature then
+        if trackedAvailBuffSignature ~= nil then
+            ClearSlotAvailabilityCaches();
+        end
+        trackedAvailBuffSignature = availBuffSignature;
+    end
+    local mainJobId = player:GetMainJob() or 0;
+    local petSignature = playerdata.GetPetAvailabilitySignature(mainJobId);
+    if petSignature ~= trackedPetSignature then
+        if trackedPetSignature ~= nil then
+            ClearSlotAvailabilityCaches();
+        end
+        trackedPetSignature = petSignature;
+    end
+    local wasMemoryReady = playerdata.IsPlayerMemoryReady();
+    playerdata.TickMemoryReadyProbe();
+    if not wasMemoryReady and playerdata.IsPlayerMemoryReady() then
+        ClearSlotAvailabilityCaches();
+    end
+    local wasAvailReady = playerdata.IsAvailabilityLookupReady();
+    playerdata.TickAvailabilityLookup(128);
+    if not wasAvailReady and playerdata.IsAvailabilityLookupReady() then
+        ClearSlotAvailabilityCaches();
+    end
+end
 
 -- Main render function - called every frame
 function M.DrawWindow(settings)
     if not M.initialized then return; end
+    UpdateActionDataState();
     if not M.visible then return; end
-
     imtext.SetConfigFromSettings(settings and settings.font_settings);
 
     -- Reset deferred tooltip state for this frame
@@ -339,7 +464,6 @@ function M.DrawWindow(settings)
         textures:Initialize();
         texturesInitialized = true;
     end
-
     if gConfig and gConfig.hotbarEnabled == false then
         display.HideWindow();
         if crossbarInitialized then
@@ -367,11 +491,9 @@ function M.DrawWindow(settings)
         crossbar.SetHidden(true);
     end
 
-    -- Always draw macro palette, keybind modal and palette manager (regardless of
-    -- mode), so they render whether or not the config menu is open.
+    -- Always draw macro palette and keybind modal (regardless of mode)
     macropalette.DrawPalette();
     hotbarConfig.DrawKeybindModal();
-    paletteManager.Draw();
 
     -- Render drag preview (must be called at end of frame, after all drop zones)
     dragdrop.Render();
@@ -427,7 +549,6 @@ function M.Cleanup()
 
     -- Restore native macro bar UI to original game state (undo all memory patches)
     macrosLib.restore_default();
-
     M.initialized = false;
 end
 
@@ -435,51 +556,76 @@ end
 -- Event Handlers
 -- ============================================
 
+-- Player memory (abilities, spells, inventory) is unreliable during/after zones.
+-- ClearAvailabilityState resets hotbar dimming caches on zone transitions.
+
+local function ClearAvailabilityState()
+    playerdata.ClearCache();
+    slotrenderer.ClearAvailabilityCache();
+    slotrenderer.ClearItemQuantityCache();
+end
+
 function M.HandleZonePacket()
     -- Flush any pending macro/slot saves before zone transition
     macropalette.FlushPendingSave();
     data.Clear();
     petpalette.ClearPetState();
-    -- Clear availability cache since player state is invalid during zone
-    slotrenderer.ClearAvailabilityCache();
+    ClearAvailabilityState();
+    playerdata.ResetMemoryReady();
+    playerdata.ResetPacketOwnership();
+    trackedLevelSignature = nil;
+    trackedEquipmentSignature = nil;
+    trackedPetSignature = nil;
+    trackedAvailBuffSignature = nil;
+end
+
+function M.HandleZoneInPacket(e)
+    ClearAvailabilityState();
+    OnZoneTransition();
+    M.HandleJobChangePacket(e);
 end
 
 function M.HandleJobChangePacket(e)
     local function TrySetJob(attempt)
         attempt = attempt or 1;
         local maxAttempts = 20;
-
-        if data.SetPlayerJob() then
-            -- Job successfully read - proceed with refresh
-            macropalette.SyncToCurrentJob();
-            palette.ValidatePalettesForJob(data.jobId, data.subjobId);
-            display.ClearIconCache();
-            actions.ClearNoIconCache();
-            if crossbarInitialized then
-                crossbar.ClearIconCache();
+        if ApplyJobChange() then
+            -- Job read and applied. The per-frame poll is the safety net that
+            -- corrects this later if memory was still reporting the old job here.
+            local jobSig = playerdata.GetJobSignature();
+            if jobSig and jobSig ~= trackedJobSignature then
+                if trackedJobSignature ~= nil then
+                    InvalidateForJobChange();
+                end
+                trackedJobSignature = jobSig;
             end
-            slotrenderer.ClearAvailabilityCache();
-            petpalette.CheckPetState();
         elseif attempt < maxAttempts then
             -- Not logged in yet or job not ready - retry
-            local delay = math.min(0.5, 0.2 + (attempt * 0.05));
+            local delay = math.min(0.5, 0.05 + (attempt * 0.025));
             ashita.tasks.once(delay, function()
                 TrySetJob(attempt + 1);
             end);
         end
     end
-
-    -- Initial delay to allow zone transition to complete
-    ashita.tasks.once(0.5, function()
+    ashita.tasks.once(0, function()
         TrySetJob(1);
     end);
 end
 
--- Reapply the current job's palettes to the live bars without an addon reload.
--- Used after palette-library edits (e.g. "Use Shared Library") so the active
--- hotbar/crossbar immediately reflect the new palette set. Synchronous: the job
--- is already known here, so there's no need for the packet retry loop.
+function M.HandleSpellListPacket(e)
+    playerdata.HandleSpellListPacket(e);
+    ClearSlotAvailabilityCaches();
+    playerdata.InvalidateAvailabilityLookup();
+end
+
+function M.HandleAbilityListPacket(e)
+    playerdata.HandleAbilityListPacket(e);
+    ClearSlotAvailabilityCaches();
+    playerdata.InvalidateAvailabilityLookup();
+end
+
 function M.RefreshForCurrentJob()
+    -- Palette manager hook: reapply current job without reload.
     if not data.SetPlayerJob() then
         return false;
     end
@@ -490,7 +636,7 @@ function M.RefreshForCurrentJob()
     if crossbarInitialized then
         crossbar.ClearIconCache();
     end
-    slotrenderer.ClearAvailabilityCache();
+    ClearSlotAvailabilityCaches();
     petpalette.CheckPetState();
     return true;
 end
@@ -498,9 +644,11 @@ end
 -- Handle pet sync packet (0x0068)
 -- Called from main XIUI.lua packet handler
 function M.HandlePetSyncPacket()
+    ClearSlotAvailabilityCaches();
     -- Use delayed check to ensure entity is available
     ashita.tasks.once(0.3, function()
         petpalette.CheckPetState();
+        ClearSlotAvailabilityCaches();
     end);
 end
 
@@ -540,14 +688,12 @@ end
 function M.HasPetPaletteOverride(barIndex)
     return petpalette.HasManualOverride(barIndex);
 end
-
 function M.HandleKey(event)
     if gConfig and gConfig.hotbarEnabled == false then
         return;
     end
     return actions.HandleKey(event);
 end
-
 function M.HandleXInputState(e)
     if not crossbarInitialized then return; end
     if gConfig and gConfig.hotbarEnabled == false then return; end
@@ -592,7 +738,6 @@ end
 function M.SetPreview(enabled)
     data.SetPreview(enabled);
 end
-
 function M.ClearPreview()
     data.ClearPreview();
 end
@@ -624,7 +769,6 @@ end
 function M.IsDebugEnabled()
     return actions.IsDebugEnabled() or controller.IsDebugEnabled();
 end
-
 function M.IsSubtargetDebugEnabled()
     return actions.IsSubtargetDebugEnabled();
 end
@@ -639,5 +783,4 @@ end
 function M.IsPaletteDebugEnabled()
     return actions.IsPaletteDebugEnabled();
 end
-
 return M;

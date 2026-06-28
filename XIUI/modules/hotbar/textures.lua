@@ -2,21 +2,30 @@
 * XIUI hotbar - Texture Loading Module
 * Loads and caches spell/ability icons and item icons
 ]]--
-
 require('handlers.helpers');
 local ffi = require('ffi');
 local d3d8 = require('d3d8');
 local pngencoder = require('libs.pngencoder');
+local actiondb = require('modules.hotbar.actiondb');
 
 -- Item icon cache directory (initialized lazily)
 local itemCacheDir = nil;
+
+-- Hotbar asset root (set during Initialize; used for on-demand icon loads)
+local hotbarAssetsDirectory = nil;
+
+-- cachePrefix -> assets/hotbar subfolder for list-icon PNGs
+local LIST_ICON_SUBDIRS = {
+    abilities = 'abilities\\',
+    weaponskills = 'weaponskills\\',
+    petcommands = 'petcommands\\',
+};
 
 -- Load texture from full file path with high quality (no filtering)
 -- Returns: { image = IDirect3DTexture8*, path = filePath, width, height }
 local function LoadTextureFromPath(filePath)
     local device = GetD3D8Device();
     if (device == nil) then return nil; end
-
     local textureData = T{};
     local texture_ptr = ffi.new('IDirect3DTexture8*[1]');
 
@@ -34,7 +43,6 @@ local function LoadTextureFromPath(filePath)
         nil, nil,
         texture_ptr
     );
-
     if (res ~= ffi.C.S_OK) then
         return nil;
     end
@@ -47,56 +55,53 @@ local function LoadTextureFromPath(filePath)
     -- Default size (spell icons are typically 40x40)
     textureData.width = 40;
     textureData.height = 40;
-
     return textureData;
 end
+local function EnsureCache(self)
+    if not self.Cache then
+        self:Initialize();
+    end
+end
 
+--- Load a bundled PNG on first use; cache hits and misses avoid repeat disk/GPU work.
+local function GetOrLoadCachedAsset(self, cacheKey, filePath)
+    EnsureCache(self);
+    local entry = self.Cache[cacheKey];
+    if entry == false then
+        return nil;
+    end
+    if entry then
+        return entry;
+    end
+    if not ashita.fs.exists(filePath) then
+        self.Cache[cacheKey] = false;
+        return nil;
+    end
+    local texture = LoadTextureFromPath(filePath);
+    if texture then
+        self.Cache[cacheKey] = texture;
+        return texture;
+    end
+    self.Cache[cacheKey] = false;
+    return nil;
+end
 local textures = {};
-
 textures.Initialize = function(self)
     if self.Cache then
         return;
     end
-
     self.Cache = {};
-    
-    -- Load slot background and frame images from assets
-    local assetsDirectory = string.format('%saddons\\XIUI\\assets\\hotbar\\', AshitaCore:GetInstallPath());
-    
-    -- Load slot background
+
+    -- Only preload small fixed UI assets. Spell/ability/WS/pet PNGs load on demand.
+    hotbarAssetsDirectory = string.format('%saddons\\XIUI\\assets\\hotbar\\', AshitaCore:GetInstallPath());
+    local assetsDirectory = hotbarAssetsDirectory;
     local slotBg = LoadTextureFromPath(assetsDirectory .. 'slot.png');
     if slotBg then
         self.Cache['slot'] = slotBg;
     end
-    
-    -- Load frame overlay
     local frame = LoadTextureFromPath(assetsDirectory .. 'frame.png');
     if frame then
         self.Cache['frame'] = frame;
-    end
-    
-    -- Load spell icons - use proper path separator for Windows
-    local spellDirectory = string.format(assetsDirectory .. '\\spells\\', AshitaCore:GetInstallPath());
-
-    local spellContents = ashita.fs.get_directory(spellDirectory, '.*\\.png$');
-    if spellContents then
-        for _, file in pairs(spellContents) do
-            local index = string.find(file, '%.');
-            if index then
-                local key = 'spells'.. string.sub(file, 1, index - 1);
-                local fullPath = spellDirectory .. file;
-                local texture = LoadTextureFromPath(fullPath);
-                if texture then
-                    self.Cache[file] = texture;  -- Store by full filename (e.g., "00086.png")
-                    self.Cache[key] = texture;   -- Also store by key (e.g., "00086")
-                    --print(string.format('[Hotbar] Loaded texture: %s (key: %s)', file, key));
-                else
-                    print(string.format('[Hotbar] Failed to load texture: %s', fullPath));
-                end
-            end
-        end
-    else
-        print('[Hotbar] No PNG files found or directory does not exist');
     end
 
     -- Load native FFXI ability icons, named by IAbility.Id (00528.png = Mighty
@@ -173,164 +178,6 @@ textures.Initialize = function(self)
         end
     end
 
-    -- Load SMN icons (summons, abilities, pet commands) from hotbar/SMN directory
-    local smnDirectory = string.format('%saddons\\XIUI\\assets\\hotbar\\SMN\\', AshitaCore:GetInstallPath());
-    local smnIcons = {
-        -- Summoning magic (avatars)
-        { file = 'Carbuncle', key = 'summon_Carbuncle' },
-        { file = 'Ifrit', key = 'summon_Ifrit' },
-        { file = 'Shiva', key = 'summon_Shiva' },
-        { file = 'Garuda', key = 'summon_Garuda' },
-        { file = 'Titan', key = 'summon_Titan' },
-        { file = 'Ramuh', key = 'summon_Ramuh' },
-        { file = 'Leviathan', key = 'summon_Leviathan' },
-        { file = 'Fenrir', key = 'summon_Fenrir' },
-        { file = 'Diabolos', key = 'summon_Diabolos' },
-        { file = 'CaitSith', key = 'summon_CaitSith' },
-        { file = 'Alexander', key = 'summon_Alexander' },
-        { file = 'Odin', key = 'summon_Odin' },
-        { file = 'Atomos', key = 'summon_Atomos' },
-        { file = 'Siren', key = 'summon_Siren' },
-        -- Summoning magic (spirits)
-        { file = 'FireSpirit', key = 'summon_FireSpirit' },
-        { file = 'IceSpirit', key = 'summon_IceSpirit' },
-        { file = 'AirSpirit', key = 'summon_AirSpirit' },
-        { file = 'EarthSpirit', key = 'summon_EarthSpirit' },
-        { file = 'ThunderSpirit', key = 'summon_ThunderSpirit' },
-        { file = 'WaterSpirit', key = 'summon_WaterSpirit' },
-        { file = 'LightSpirit', key = 'summon_LightSpirit' },
-        { file = 'DarkSpirit', key = 'summon_DarkSpirit' },
-        -- Pet commands
-        { file = 'Assault', key = 'ability_Assault' },
-        { file = 'Release', key = 'ability_Release' },
-        { file = 'Retreat', key = 'ability_Retreat' },
-        -- SMN job abilities
-        { file = 'Apogee', key = 'ability_Apogee' },
-        { file = 'AstralConduit1', key = 'ability_AstralConduit' },
-        { file = 'AstralFlow', key = 'ability_AstralFlow' },
-        { file = 'AvatarsFavor', key = 'ability_AvatarsFavor' },
-        { file = 'ElementalSiphon', key = 'ability_ElementalSiphon' },
-        { file = 'ManaCede', key = 'ability_ManaCede' },
-    };
-    for _, icon in ipairs(smnIcons) do
-        local fullPath = smnDirectory .. icon.file .. '.png';
-        local texture = LoadTextureFromPath(fullPath);
-        if texture then
-            self.Cache[icon.key] = texture;
-        end
-    end
-
-    -- Load custom icons from hotbar/custom directory
-    local customDirectory = string.format('%saddons\\XIUI\\assets\\hotbar\\custom\\', AshitaCore:GetInstallPath());
-
-    -- Trust icons
-    local trustIcons = {
-        'ajido-marujido', 'amchuchu', 'ayame', 'cid', 'curilla', 'darrcuiln',
-        'excenmille', 'halver', 'iron-eater', 'joachim', 'king-of-hearts',
-        'koru-moru', 'kupipi', 'kuyin-hathdenna', 'lion', 'makki-chebukki',
-        'mildaurion', 'mnejing', 'morimar', 'naja', 'naji', 'nanaa-mihgo',
-        'ovjang', 'prishe', 'qultada', 'rahal', 'rongelouts', 'rughadjeen',
-        'sakura', 'semih-lafihna', 'shantotto', 'shantotto-II', 'star-sibyl',
-        'tenzen', 'trion', 'valaineral', 'volker', 'yoran-oran', 'zazarg',
-        'zeid', 'zeid-II',
-    };
-    for _, name in ipairs(trustIcons) do
-        local fullPath = customDirectory .. 'trusts\\trust-' .. name .. '.png';
-        local texture = LoadTextureFromPath(fullPath);
-        if texture then
-            self.Cache['trust_' .. name] = texture;
-        end
-    end
-
-    -- Blue magic icons
-    local blueIcons = {
-        'battle-dance', 'blank-gaze', 'cocoon', 'foot-kick', 'grand-slam',
-        'headbutt', 'healing-breeze', 'jet-stream', 'light-of-penance',
-        'magic-fruit', 'metallic-body', 'power-attack', 'sheep-song',
-        'terror-touch', 'uppercut', 'wild-oats', 'zephyr-mantle',
-    };
-    for _, name in ipairs(blueIcons) do
-        local fullPath = customDirectory .. 'blue\\blue-' .. name .. '.png';
-        local texture = LoadTextureFromPath(fullPath);
-        if texture then
-            self.Cache['blue_' .. name:gsub('-', '_')] = texture;
-        end
-    end
-
-    -- Mount icons
-    local mountIcons = {
-        'beetle', 'bomb', 'chocobo', 'crab', 'crawler', 'fenrir',
-        'magic-pot', 'moogle', 'morbol', 'raptor', 'red-crab',
-        'sheep', 'tiger', 'tulfaire', 'warmachine',
-    };
-    for _, name in ipairs(mountIcons) do
-        local fullPath = customDirectory .. 'mounts\\mount-' .. name .. '.png';
-        local texture = LoadTextureFromPath(fullPath);
-        if texture then
-            self.Cache['mount_' .. name:gsub('-', '_')] = texture;
-        end
-    end
-
-    -- Rune Fencer rune icons (from custom root)
-    local runeIcons = {
-        { file = 'ignis-icon', key = 'rune_ignis' },
-        { file = 'gelus-icon', key = 'rune_gelus' },
-        { file = 'flabra-icon', key = 'rune_flabra' },
-        { file = 'tellus-icon', key = 'rune_tellus' },
-        { file = 'sulpor-icon', key = 'rune_sulpor' },
-        { file = 'unda-icon', key = 'rune_unda' },
-        { file = 'lux-icon', key = 'rune_lux' },
-        { file = 'tenebrae-icon', key = 'rune_tenebrae' },
-        -- RUN abilities
-        { file = 'battuta-icon', key = 'ability_battuta' },
-        { file = 'gambit-icon', key = 'ability_gambit' },
-        { file = 'liement-icon', key = 'ability_liement' },
-        { file = 'pflug-icon', key = 'ability_pflug' },
-        { file = 'pulse-icon', key = 'ability_pulse' },
-        { file = 'foil-icon', key = 'ability_foil' },
-    };
-    for _, icon in ipairs(runeIcons) do
-        local fullPath = customDirectory .. icon.file .. '.png';
-        local texture = LoadTextureFromPath(fullPath);
-        if texture then
-            self.Cache[icon.key] = texture;
-        end
-    end
-
-    -- Misc utility icons
-    local utilityIcons = {
-        { file = 'attack', key = 'cmd_attack' },
-        { file = 'disengage', key = 'cmd_disengage' },
-        { file = 'fish', key = 'cmd_fish' },
-        { file = 'fish2', key = 'cmd_fish2' },
-        { file = 'dig', key = 'cmd_dig' },
-        { file = 'mining', key = 'cmd_mining' },
-        { file = 'harvest', key = 'cmd_harvest' },
-        { file = 'mount', key = 'cmd_mount' },
-        { file = 'dismount', key = 'cmd_dismount' },
-        { file = 'check', key = 'cmd_check' },
-        { file = 'claim', key = 'cmd_claim' },
-        { file = 'heal', key = 'cmd_heal' },
-        { file = 'synth', key = 'cmd_synth' },
-        { file = 'return-trust', key = 'cmd_returntrust' },
-        { file = 'macro', key = 'cmd_macro' },
-        { file = 'gear', key = 'cmd_gear' },
-        { file = 'gear2', key = 'cmd_gear2' },
-        { file = 'gear3', key = 'cmd_gear3' },
-        { file = 'gobbie', key = 'cmd_gobbie' },
-        { file = 'jump', key = 'ability_jump' },
-        { file = 'chainspell', key = 'ability_chainspell' },
-        { file = 'stymie', key = 'ability_stymie' },
-        { file = '2hr', key = 'ability_2hr' },
-    };
-    for _, icon in ipairs(utilityIcons) do
-        local fullPath = customDirectory .. icon.file .. '.png';
-        local texture = LoadTextureFromPath(fullPath);
-        if texture then
-            self.Cache[icon.key] = texture;
-        end
-    end
-
     -- UI indicator icons from assets/icons
     local iconsDirectory = string.format('%saddons\\XIUI\\assets\\icons\\', AshitaCore:GetInstallPath());
     local uiIcons = {
@@ -359,9 +206,7 @@ textures.Initialize = function(self)
             self.Cache['skillchain_' .. name] = texture;
         end
     end
-
 end
-
 textures.Release = function(self)
     if self.Cache then
         self.Cache = nil;
@@ -373,14 +218,118 @@ textures.Get = function(self, key)
     if not self.Cache then
         return nil;
     end
-    return self.Cache[key];
+    local entry = self.Cache[key];
+    if entry == false then
+        return nil;
+    end
+    return entry;
+end
+
+--- Spell PNG from assets/hotbar/spells/{spellId}.png (duplicate ids redirect to canonical icon).
+--- SummonerPact spells use GetSummonerPactAsset instead.
+textures.GetSpellAsset = function(self, spellId)
+    if not spellId then
+        return nil;
+    end
+    EnsureCache(self);
+    if not hotbarAssetsDirectory then
+        return nil;
+    end
+    local iconSpellId = actiondb.ResolveSpellIconId(spellId);
+    if not iconSpellId then
+        return nil;
+    end
+    local cacheKey = 'spells' .. tostring(iconSpellId);
+    local filePath = hotbarAssetsDirectory .. 'spells\\' .. tostring(iconSpellId) .. '.png';
+    return GetOrLoadCachedAsset(self, cacheKey, filePath);
+end
+
+--- Bundled PNG by list icon id prefix (e.g. abilities404, weaponskills598).
+textures.GetListIconAsset = function(self, cachePrefix, listIconId)
+    if not listIconId or listIconId <= 0 then
+        return nil;
+    end
+    EnsureCache(self);
+    if not hotbarAssetsDirectory then
+        return nil;
+    end
+    local subdir = LIST_ICON_SUBDIRS[cachePrefix];
+    if not subdir then
+        return nil;
+    end
+    local cacheKey = cachePrefix .. tostring(listIconId);
+    local filePath = hotbarAssetsDirectory .. subdir .. tostring(listIconId) .. '.png';
+    return GetOrLoadCachedAsset(self, cacheKey, filePath);
+end
+
+--- Job ability icon from assets/hotbar/abilities (dat list icon id + remaps).
+textures.GetAbilityAsset = function(self, abilityId)
+    if not abilityId then
+        return nil;
+    end
+    local resourceMgr = AshitaCore:GetResourceManager();
+    local ability = resourceMgr and resourceMgr:GetAbilityById(abilityId);
+    local listIconId = actiondb.GetAbilityListIconId(abilityId, ability);
+    return self:GetListIconAsset('abilities', listIconId);
+end
+
+--- Weaponskill icon from assets/hotbar/weaponskills (dat list icon id + remaps).
+textures.GetWeaponskillAsset = function(self, abilityId)
+    if not abilityId then
+        return nil;
+    end
+    local resourceMgr = AshitaCore:GetResourceManager();
+    local ability = resourceMgr and resourceMgr:GetAbilityById(abilityId);
+    local listIconId = actiondb.GetWeaponskillListIconId(abilityId, ability);
+    return self:GetListIconAsset('weaponskills', listIconId);
+end
+
+--- Pet command icon from assets/hotbar/petcommands (dat list icon id + remaps).
+textures.GetPetCommandAsset = function(self, abilityId)
+    if not abilityId then
+        return nil;
+    end
+    local resourceMgr = AshitaCore:GetResourceManager();
+    local ability = resourceMgr and resourceMgr:GetAbilityById(abilityId);
+    local listIconId = actiondb.GetPetCommandListIconId(abilityId, ability);
+    return self:GetListIconAsset('petcommands', listIconId);
+end
+
+--- SummonerPact spell icon from assets/hotbar/petcommands (spell dat list icon id).
+textures.GetSummonerPactAsset = function(self, spellId, listIconId)
+    if (not listIconId or listIconId <= 0) and spellId then
+        local resourceMgr = AshitaCore:GetResourceManager();
+        local spell = resourceMgr and resourceMgr:GetSpellById(spellId);
+        listIconId = actiondb.GetSummonerPactListIconId(spell);
+    end
+    return self:GetListIconAsset('petcommands', listIconId);
+end
+
+--- Default bundled icon for an ability dat row (folder by ability type + database/icon_redirect).
+textures.GetDefaultAbilityIcon = function(self, abilityId, ability)
+    if not abilityId then
+        return nil;
+    end
+    local resourceMgr = AshitaCore:GetResourceManager();
+    ability = ability or (resourceMgr and resourceMgr:GetAbilityById(abilityId));
+    if not ability then
+        return nil;
+    end
+    local abilityType = ability.Type or 0;
+    if actiondb.IsWeaponskillAbilityType(abilityType) then
+        return self:GetWeaponskillAsset(abilityId);
+    end
+    if actiondb.IsPetAbilityType(abilityType) then
+        return self:GetPetCommandAsset(abilityId);
+    end
+    return self:GetAbilityAsset(abilityId);
 end
 
 -- Get texture path by key (for primitive rendering)
 textures.GetPath = function(self, key)
     if not self.Cache then return nil; end
     local entry = self.Cache[key];
-    if entry and entry.path then
+    if entry and entry ~= false and entry.path then
         return entry.path;
     end
     return nil;
@@ -435,7 +384,6 @@ textures.GetItemIconPath = function(self, itemId)
     if not itemId or itemId == 0 or itemId == 65535 then
         return nil;
     end
-
     local cacheDir = GetItemCacheDir();
     local fileName = string.format('%05d.png', itemId);
     local filePath = cacheDir .. fileName;
@@ -452,7 +400,6 @@ textures.GetItemIconPath = function(self, itemId)
     -- Get item bitmap from game resources
     local resMgr = AshitaCore:GetResourceManager();
     if not resMgr then return nil; end
-
     local item = resMgr:GetItemById(itemId);
     if not item then return nil; end
     if not item.Bitmap or not item.ImageSize or item.ImageSize <= 0 then
@@ -471,11 +418,9 @@ textures.GetItemIconPath = function(self, itemId)
         0xFF000000,  -- Color key: black = transparent
         nil, nil, dx_texture_ptr
     );
-
     if loadRes ~= ffi.C.S_OK or dx_texture_ptr[0] == nil then
         return nil;
     end
-
     local texture = dx_texture_ptr[0];
 
     -- Get texture dimensions
@@ -506,14 +451,11 @@ textures.GetItemIconPath = function(self, itemId)
         targetSize,
         targetSize
     );
-
     texture:UnlockRect(0);
     texture:Release();
-
     if success and ashita.fs.exists(filePath) then
         return filePath;
     end
-
     return nil;
 end
 
@@ -539,13 +481,10 @@ textures.LoadItemIconFromMemory = function(self, itemId)
     if not itemId or itemId == 0 or itemId == 65535 then
         return nil;
     end
-
     local device = GetD3D8Device();
     if not device then return nil; end
-
     local resMgr = AshitaCore:GetResourceManager();
     if not resMgr then return nil; end
-
     local item = resMgr:GetItemById(itemId);
     if not item or not item.Bitmap or not item.ImageSize or item.ImageSize <= 0 then
         return nil;
@@ -562,7 +501,6 @@ textures.LoadItemIconFromMemory = function(self, itemId)
         0xFF000000,  -- Color key: black = transparent
         nil, nil, dx_texture_ptr
     );
-
     if loadRes ~= ffi.C.S_OK or dx_texture_ptr[0] == nil then
         return nil;
     end
@@ -580,5 +518,4 @@ end
 textures.LoadTextureFromPath = function(self, filePath)
     return LoadTextureFromPath(filePath);
 end
-
 return textures;

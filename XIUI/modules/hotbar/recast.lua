@@ -3,12 +3,10 @@
 * Tracks spell, ability, and item cooldowns via Ashita memory
 * Provides shared cooldown info for hotbar and crossbar
 ]]--
-
 local abilityRecast = require('libs.abilityrecast');
 local itemRecast = require('libs.itemrecast');
 local actiondb = require('modules.hotbar.actiondb');
 local petregistry = require('modules.hotbar.petregistry');
-
 local M = {};
 
 -- Module-level setting for Hh:MM format (set once per frame, used by all functions)
@@ -23,14 +21,22 @@ end
 local BP_RAGE_TIMER_ID = 173;
 local BP_WARD_TIMER_ID = 174;
 
+-- Blood Pact timer ID memoization (O(1) after first lookup per command name).
+local bpTimerIdCache = {};
+
 -- Get Blood Pact timer ID by command name
 -- Returns timer ID (173 for Rage, 174 for Ward) or nil if not a blood pact
 local function GetBloodPactTimerId(commandName)
     if not commandName then return nil; end
+    local cached = bpTimerIdCache[commandName];
+    if cached ~= nil then
+        return cached or nil;  -- false means "not a blood pact"
+    end
 
     -- Check if it's a Rage pact
     for _, pact in ipairs(petregistry.bloodPactsRage or {}) do
         if pact.name == commandName then
+            bpTimerIdCache[commandName] = BP_RAGE_TIMER_ID;
             return BP_RAGE_TIMER_ID;
         end
     end
@@ -38,10 +44,11 @@ local function GetBloodPactTimerId(commandName)
     -- Check if it's a Ward pact
     for _, pact in ipairs(petregistry.bloodPactsWard or {}) do
         if pact.name == commandName then
+            bpTimerIdCache[commandName] = BP_WARD_TIMER_ID;
             return BP_WARD_TIMER_ID;
         end
     end
-
+    bpTimerIdCache[commandName] = false;
     return nil;
 end
 
@@ -60,14 +67,12 @@ end
 M.spellRecasts = {};
 local spellRecastExpiry = {};      -- spellId -> os.clock() at which entry is stale
 local SPELL_RECAST_TTL = 0.05;     -- 20 Hz refresh, matches old prescan cadence
-
--- Ability/item recasts are far more expensive than spells (slot scans / inventory
--- reads), so cache them at 20 Hz per id like spells, deduping slots that share one.
-local abilityRecastCache = {};     -- abilityId -> remaining seconds
-local abilityRecastExpiry = {};    -- abilityId -> os.clock() expiry
-local itemRecastCache = {};        -- itemId -> remaining seconds
-local itemRecastExpiry = {};       -- itemId -> os.clock() expiry
-local ACTION_RECAST_TTL = 0.05;
+local abilityRecasts = {};
+local abilityRecastExpiry = {};
+local ABILITY_RECAST_TTL = 0.05;     -- 20 Hz
+local itemRecasts = {};
+local itemRecastExpiry = {};
+local ITEM_RECAST_TTL = 0.2;         -- 5 Hz
 
 -- Reusable result table for GetCooldownInfo to avoid GC pressure
 -- (Creating ~7200 tables/sec with 120 slots @ 60fps causes periodic GC hitches)
@@ -77,6 +82,13 @@ local cooldownResult = {
     remaining = 0,
     spellId = nil,
     abilityId = nil,
+    itemId = nil,
+};
+
+-- Reused for macro recast-source override recursion (avoids per-call table alloc)
+local sharedRecastData = {
+    actionType = nil,
+    action = nil,
     itemId = nil,
 };
 
@@ -111,12 +123,12 @@ function M.GetAbilityRecast(abilityId)
     local now = os.clock();
     local exp = abilityRecastExpiry[abilityId];
     if exp and now < exp then
-        return abilityRecastCache[abilityId] or 0;
+        return abilityRecasts[abilityId] or 0;
     end
     local remaining = abilityRecast.GetAbilityRecastByAbilityId(abilityId);
-    abilityRecastCache[abilityId] = (remaining and remaining > 0) and remaining or nil;
-    abilityRecastExpiry[abilityId] = now + ACTION_RECAST_TTL;
-    return abilityRecastCache[abilityId] or 0;
+    abilityRecasts[abilityId] = remaining;
+    abilityRecastExpiry[abilityId] = now + ABILITY_RECAST_TTL;
+    return remaining;
 end
 
 -- Get item/equipment recast by item ID
@@ -127,12 +139,13 @@ function M.GetItemRecast(itemId)
     local now = os.clock();
     local exp = itemRecastExpiry[itemId];
     if exp and now < exp then
-        return itemRecastCache[itemId] or 0;
+        return itemRecasts[itemId] or 0;
     end
     local recast = itemRecast.GetRecast(itemId);
-    itemRecastCache[itemId] = (recast and recast > 0) and recast or nil;
-    itemRecastExpiry[itemId] = now + ACTION_RECAST_TTL;
-    return itemRecastCache[itemId] or 0;
+    local remaining = recast or 0;
+    itemRecasts[itemId] = remaining;
+    itemRecastExpiry[itemId] = now + ITEM_RECAST_TTL;
+    return remaining;
 end
 
 -- Format recast time for display
@@ -142,12 +155,10 @@ function M.FormatRecast(seconds)
     if not seconds or seconds <= 0 then
         return nil;
     end
-
     local days = math.floor(seconds / 86400);
     local hours = math.floor((seconds % 86400) / 3600);
     local mins = math.floor((seconds % 3600) / 60);
     local secs = math.floor(seconds % 60);
-
     if days >= 1 then
         -- Show as Xd Yh for times >= 24 hours (e.g. "7d 5h" or "1d")
         if hours > 0 then
@@ -179,7 +190,6 @@ end
 -- Returns: remainingSeconds, formattedText
 function M.GetActionRecast(actionType, spellId, abilityId, itemId)
     local remaining = 0;
-
     if actionType == 'ma' and spellId then
         remaining = M.GetSpellRecast(spellId);
     elseif actionType == 'ja' and abilityId then
@@ -213,13 +223,11 @@ function M.GetCooldownInfo(actionData)
     -- Check for macro recast source override
     -- Allows macros to display cooldown from a different action type
     if actionData.actionType == 'macro' and actionData.recastSourceType then
-        local recastData = {
-            actionType = actionData.recastSourceType,
-            action = actionData.recastSourceAction,
-            itemId = actionData.recastSourceItemId,
-        };
+        sharedRecastData.actionType = actionData.recastSourceType;
+        sharedRecastData.action = actionData.recastSourceAction;
+        sharedRecastData.itemId = actionData.recastSourceItemId;
         -- Safe: recastSourceType can't be 'macro', so no infinite recursion
-        return M.GetCooldownInfo(recastData);
+        return M.GetCooldownInfo(sharedRecastData);
     end
 
     -- Look up action IDs based on action type
@@ -228,9 +236,9 @@ function M.GetCooldownInfo(actionData)
     local itemId = nil;
     local remaining = 0;
     local recastText = nil;
-
     if actionData.actionType == 'ma' then
-        spellId = actiondb.GetSpellId(actionData.action);
+        local player = AshitaCore:GetMemoryManager():GetPlayer();
+        spellId = actiondb.GetPlayerSpellId(player, actionData.action);
         remaining, recastText = M.GetActionRecast(actionData.actionType, spellId, nil, nil);
     elseif actionData.actionType == 'pet' then
         -- Pet commands (Blood Pacts, Ready, etc.) - check for known timer IDs
@@ -240,12 +248,13 @@ function M.GetCooldownInfo(actionData)
             remaining = M.GetPetCommandRecast(bpTimerId);
             recastText = M.FormatRecast(remaining);
         else
-            -- Other pet commands - try ability lookup
-            abilityId = actiondb.GetAbilityId(actionData.action);
+            local player = AshitaCore:GetMemoryManager():GetPlayer();
+            abilityId = actiondb.GetPlayerPetCommandId(player, actionData.action);
             remaining, recastText = M.GetActionRecast(actionData.actionType, nil, abilityId, nil);
         end
     elseif actionData.actionType == 'ja' then
-        abilityId = actiondb.GetAbilityId(actionData.action);
+        local player = AshitaCore:GetMemoryManager():GetPlayer();
+        abilityId = actiondb.GetPlayerAbilityId(player, actionData.action);
         remaining, recastText = M.GetActionRecast(actionData.actionType, nil, abilityId, nil);
     elseif actionData.actionType == 'item' or actionData.actionType == 'equip' then
         -- itemId should already be stored in the action data
@@ -266,5 +275,4 @@ function M.GetCooldownInfo(actionData)
     cooldownResult.itemId = itemId;
     return cooldownResult;
 end
-
 return M;

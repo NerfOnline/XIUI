@@ -21,10 +21,9 @@
 * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 * SOFTWARE.
 ]]--
-
 addon.name      = 'XIUI';
 addon.author    = 'Team XIUI';
-addon.version   = '1.8.2';
+addon.version   = '1.8.3';
 addon.desc      = 'Multiple UI elements with manager';
 addon.link      = 'https://github.com/tirem/XIUI'
 
@@ -44,7 +43,6 @@ local _XIUI_DEV_HOT_RELOAD_FILES = {};
 -- Debug flag for raw controller input (enable with /xiui debug rawinput)
 -- This logs ALL xinput/dinput events from Ashita before any XIUI processing
 DEBUG_RAW_INPUT = false;
-
 require('common');
 local chat = require('chat');
 local settings = require('settings');
@@ -96,15 +94,13 @@ local imtext = require('libs.imtext');
 local components = require('config.components');
 
 -- Global switch to hard-disable functionality that is limited on HX servers
-HzLimitedMode = true;
+HzLimitedMode = false;
 
 -- Flag to skip settings_update callback during internal saves
 local bInternalSave = false;
 -- For Ashita 4.3+, callbacks are async so we need to defer clearing the flag
 local bIsAshita43 = (ImGuiChildFlags_Borders ~= nil);
 local bPendingInternalSaveClear = false;
-
-
 
 -- Local split function for hot reload (avoids monkeypatching string metatable)
 local function _split_string(str, sep)
@@ -114,12 +110,10 @@ local function _split_string(str, sep)
     str:gsub(pattern, function(c) fields[#fields + 1] = c end);
     return fields;
 end
-
 function _check_hot_reload()
     local path = string.gsub(addon.path, '\\\\', '\\');
     local result = io.popen("forfiles /P " .. path .. ' /M *.lua /C "cmd /c echo @file @fdate @ftime"');
     local needsReload = false;
-
     for line in result:lines() do
         if #line > 0 then
             local splitLine = _split_string(line, " ");
@@ -128,7 +122,6 @@ function _check_hot_reload()
             local timeModified = splitLine[3];
             filename = string.gsub(filename, '"', '');
             local fileTable = {dateModified, timeModified};
-
             if _XIUI_DEV_HOT_RELOAD_FILES[filename] ~= nil then
                 if table.concat(_XIUI_DEV_HOT_RELOAD_FILES[filename]) ~= table.concat(fileTable) then
                     needsReload = true;
@@ -139,7 +132,6 @@ function _check_hot_reload()
         end
     end
     result:close();
-
     if needsReload then
         AshitaCore:GetChatManager():QueueCommand(-1, '/addon reload xiui', channelCommand);
     end
@@ -348,7 +340,6 @@ end
 if (rawSettings.profiles ~= nil) then
     print(chat.header(addon.name):append(chat.message('Migrating internal profiles to file system...')));
     local globalProfiles = profileManager.GetGlobalProfiles();
-
     for name, data in pairs(rawSettings.profiles) do
         if not profileManager.ProfileExists(name) then
             profileManager.SaveProfileSettings(name, data);
@@ -372,7 +363,6 @@ local function MigrateAllLegacySettings()
     local xiuiPath = installPath .. 'config\\addons\\xiui\\';
     local imguiPath = installPath .. 'config\\imgui.ini';
     local legacyFound = false;
-
     local function GetCharacterFolders()
         local folders = {};
         local directories = ashita.fs.get_directory(xiuiPath);
@@ -386,17 +376,14 @@ local function MigrateAllLegacySettings()
         end
         return folders;
     end
-
     local charFolders = GetCharacterFolders();
 
     -- Iterate and check for legacy settings
     for _, char in ipairs(charFolders) do
         local settingsPath = xiuiPath .. char.dir .. '\\settings.lua';
-
         if (ashita.fs.exists(settingsPath)) then
             -- Safely load settings table
             local success, result = pcall(dofile, settingsPath);
-
             if (success and type(result) == 'table' and result.currentProfile == nil and next(result) ~= nil) then
                 -- FOUND LEGACY SETTINGS
 
@@ -406,7 +393,6 @@ local function MigrateAllLegacySettings()
                     if (ashita.fs.exists(imguiPath)) then
                         profileManager.EnsureBackupDirectory(profileManager.LegacyXiuiBackupPath);
                         local backupImguiPath = profileManager.LegacyXiuiBackupPath .. 'imgui.ini';
-
                         if profileManager.CopyFile(imguiPath, backupImguiPath) then
                             print(chat.header(addon.name):append(chat.message('Created legacy imgui.ini backup at: ')):append(chat.success(backupImguiPath)));
                         end
@@ -416,7 +402,6 @@ local function MigrateAllLegacySettings()
                 -- 2. Backup character settings to backups/legacy/xiui/CharName/settings.lua
                 local backupCharPath = profileManager.LegacyXiuiBackupPath .. char.name .. '\\';
                 profileManager.EnsureBackupDirectory(backupCharPath);
-
                 local backupSettingsPath = backupCharPath .. 'settings.lua';
                 if profileManager.CopyFile(settingsPath, backupSettingsPath) then
                      print(chat.header(addon.name):append(chat.message('Created legacy settings backup at: ')):append(chat.success(backupSettingsPath)));
@@ -467,13 +452,11 @@ local function MigrateAllLegacySettings()
                     f:write("return settings;\n");
                     f:close();
                 end
-
                 print(chat.header(addon.name):append(chat.message('Migrated ' .. char.name .. ' to profile: ')):append(chat.success(profileName)));
             end
         end
     end
 end
-
 MigrateAllLegacySettings();
 
 -- Check for addon update and backup profiles if needed
@@ -509,7 +492,6 @@ if (not profileManager.ProfileExists(currentProfileName)) then
     charSettings.currentProfile = 'Default';
     settings.save();
 end
-
 gConfig = profileManager.GetProfileSettings(currentProfileName);
 if (gConfig == nil) then
     gConfig = deep_copy_table(defaultUserSettings);
@@ -517,7 +499,6 @@ else
     -- Merge with defaults to fill in any missing keys (from older versions)
     DeepMergeWithDefaults(gConfig, defaultUserSettings);
 end
-
 gConfig.appliedPositions = {};
 
 -- Forward-declare GetDefaultWindowPositions so it can be used at load time
@@ -538,7 +519,6 @@ local function GetDefaultWindowPositions()
     local sx, sy = defPos.GetSatchelPosition();
     local elx, ely = defPos.GetEnemyListPosition();
     local ccx, ccy = defPos.GetCastCostPosition();
-
     local staggerY = 35;
     return {
         PlayerBar = { x = px, y = py },
@@ -569,12 +549,10 @@ end
 if (not gConfig.windowPositions or next(gConfig.windowPositions) == nil) then
     gConfig.windowPositions = GetDefaultWindowPositions();
 end
-
 gConfigVersion = 0;
 settingsMigration.RunStructureMigrations(gConfig, defaultUserSettings);
 
 -- Show migration message
-
 
 -- State variables
 showConfig = { false };
@@ -611,58 +589,44 @@ function GetLayoutTemplate(partyIndex)
     local party = GetPartySettings(partyIndex);
     return party.layout == 1 and gConfig.layoutCompact or gConfig.layoutHorizontal;
 end
-
 function CreateProfile(name)
     if (profileManager.ProfileExists(name)) then return false; end
-
     local newSettings = deep_copy_table(defaultUserSettings);
     newSettings.windowPositions = GetDefaultWindowPositions();
     profileManager.SaveProfileSettings(name, newSettings);
-
     local globalProfiles = profileManager.GetGlobalProfiles();
     table.insert(globalProfiles.names, name);
     table.insert(globalProfiles.order, name);
     profileManager.SaveGlobalProfiles(globalProfiles);
-
     RequestProfileChange(name);
     return true;
 end
-
 function DuplicateProfile(name)
     local baseName = name;
     -- If duplicating Default, we might want to name it "Profile (1)" or just "Default (1)"
 
     local counter = 1;
     local newName = baseName .. " (" .. counter .. ")";
-
     while (profileManager.ProfileExists(newName)) do
         counter = counter + 1;
         newName = baseName .. " (" .. counter .. ")";
     end
-
     local currentSettings = profileManager.GetProfileSettings(name);
     if (currentSettings == nil) then return false; end
-
     local newSettings = deep_copy_table(currentSettings);
     profileManager.SaveProfileSettings(newName, newSettings);
-
     local globalProfiles = profileManager.GetGlobalProfiles();
     table.insert(globalProfiles.names, newName);
     table.insert(globalProfiles.order, newName);
     profileManager.SaveGlobalProfiles(globalProfiles);
-
     RequestProfileChange(newName);
     return true;
 end
-
-
-
 function ChangeProfile(name)
     if (not profileManager.ProfileExists(name)) then return false; end
 
     -- Always save current profile before switching (positions, etc.)
     profileManager.SaveProfileSettings(config.currentProfile, gConfig);
-
     config.currentProfile = name;
     bInternalSave = true;
     settings.save(); -- Save character preference
@@ -670,9 +634,7 @@ function ChangeProfile(name)
 
     -- Clear textures to prevent ghosting
     TextureManager.clear();
-
     uiModules.HideAll();
-
     gConfig = profileManager.GetProfileSettings(name);
     DeepMergeWithDefaults(gConfig, defaultUserSettings);  -- Fill missing settings from defaults
     gConfig.appliedPositions = {}; -- Ensure we re-apply positions for the new profile
@@ -681,7 +643,6 @@ function ChangeProfile(name)
     if (not gConfig.windowPositions or next(gConfig.windowPositions) == nil) then
         gConfig.windowPositions = GetDefaultWindowPositions();
     end
-
     settingsMigration.RunStructureMigrations(gConfig, defaultUserSettings);
     UpdateSettings();
     return true;
@@ -692,7 +653,6 @@ function RequestProfileChange(name)
     pendingProfileChange = name;
     return true;
 end
-
 function GetProfileNames()
     local globalProfiles = profileManager.GetGlobalProfiles();
     local profiles = {};
@@ -702,11 +662,9 @@ function GetProfileNames()
     table.sort(profiles);
     return profiles;
 end
-
 function GetCurrentProfileName()
     return config.currentProfile;
 end
-
 function ResetSettings()
     gConfig = deep_copy_table(defaultUserSettings);
     gConfig.windowPositions = GetDefaultWindowPositions();
@@ -740,7 +698,6 @@ function ResetSettings()
     SaveSettingsOnly();
     DeferredUpdateVisuals();
 end
-
 function RecoverAllPositions()
     if not gConfig.windowPositions then gConfig.windowPositions = {}; end
 
@@ -761,21 +718,17 @@ function RecoverAllPositions()
     settings.save();
     if bIsAshita43 then bPendingInternalSaveClear = true; else bInternalSave = false; end
 end
-
 function SavePartyListLayoutSetting(key, value)
     local currentLayout = (gConfig.partyListLayout == 1) and gConfig.partyListLayout2 or gConfig.partyListLayout1;
     currentLayout[key] = value;
 end
-
 function CheckVisibility()
     uiModules.CheckVisibility(gConfig);
 end
-
 function UpdateUserSettings()
     gConfigVersion = gConfigVersion + 1; -- Notify caches of settings change (for real-time slider updates)
     settingsUpdater.UpdateUserSettings(gAdjustedSettings, settingsDefaults.default_settings, gConfig);
 end
-
 function SaveSettingsToDisk()
     if gConfig.colorCustomization == nil then
         gConfig.colorCustomization = deep_copy_table(defaultUserSettings.colorCustomization);
@@ -786,7 +739,6 @@ function SaveSettingsToDisk()
     settings.save();
     if bIsAshita43 then bPendingInternalSaveClear = true; else bInternalSave = false; end
 end
-
 function SaveSettingsOnly()
     if gConfig.colorCustomization == nil then
         gConfig.colorCustomization = deep_copy_table(defaultUserSettings.colorCustomization);
@@ -813,11 +765,9 @@ function RenameProfile(oldName, newName)
     if (oldName == 'Default') then return false; end
     if (profileManager.ProfileExists(newName)) then return false; end
     if (not profileManager.ProfileExists(oldName)) then return false; end
-
     local settingsData = profileManager.GetProfileSettings(oldName);
     profileManager.SaveProfileSettings(newName, settingsData);
     profileManager.DeleteProfile(oldName);
-
     local globalProfiles = profileManager.GetGlobalProfiles();
 
     -- Update names list
@@ -835,19 +785,15 @@ function RenameProfile(oldName, newName)
             break;
         end
     end
-
     profileManager.SaveGlobalProfiles(globalProfiles);
-
     if (config.currentProfile == oldName) then
         config.currentProfile = newName;
         bInternalSave = true;
         settings.save();
         if bIsAshita43 then bPendingInternalSaveClear = true; else bInternalSave = false; end
     end
-
     return true;
 end
-
 function DeleteProfile(name)
     if (name == 'Default') then return false; end
 
@@ -860,7 +806,6 @@ function DeleteProfile(name)
     else
         profileManager.DeleteProfile(name);
     end
-
     local globalProfiles = profileManager.GetGlobalProfiles();
 
     -- Remove from names
@@ -878,15 +823,12 @@ function DeleteProfile(name)
             break;
         end
     end
-
     profileManager.SaveGlobalProfiles(globalProfiles);
     return true;
 end
-
 function MoveProfileUp(name)
     local globalProfiles = profileManager.GetGlobalProfiles();
     local order = globalProfiles.order;
-
     for i, n in ipairs(order) do
         if n == name then
             if i > 1 then
@@ -899,11 +841,9 @@ function MoveProfileUp(name)
     end
     return false;
 end
-
 function MoveProfileDown(name)
     local globalProfiles = profileManager.GetGlobalProfiles();
     local order = globalProfiles.order;
-
     for i, n in ipairs(order) do
         if n == name then
             if i < #order then
@@ -926,12 +866,10 @@ UpdateExpBarVisuals = uiModules.CreateVisualUpdater('expBar', SaveSettingsOnly, 
 UpdateInventoryTrackerVisuals = uiModules.CreateVisualUpdater('inventoryTracker', SaveSettingsOnly, gAdjustedSettings);
 UpdateCastBarVisuals = uiModules.CreateVisualUpdater('castBar', SaveSettingsOnly, gAdjustedSettings);
 UpdateCastCostVisuals = uiModules.CreateVisualUpdater('castCost', SaveSettingsOnly, gAdjustedSettings);
-
 function UpdateGilTrackerVisuals()
     UpdateUserSettings();
     gilTracker.UpdateVisuals(gAdjustedSettings.gilTrackerSettings);
 end
-
 function UpdateSettings()
     SaveSettingsOnly();
     CheckVisibility();
@@ -940,11 +878,9 @@ function UpdateSettings()
     InvalidateColorCaches();
     uiModules.UpdateVisualsAll(gAdjustedSettings);
 end
-
 function DeferredUpdateVisuals()
     pendingVisualUpdate = true;
 end
-
 settings.register('settings', 'settings_update', function (s)
     -- Skip if this is an internal save (we already handle updates appropriately)
     -- This callback is for external changes only (e.g., manual config file edits)
@@ -979,7 +915,6 @@ settings.register('settings', 'settings_update', function (s)
 
         -- Update visuals
         UpdateSettings();
-
         print(chat.header(addon.name):append(chat.message('Loaded profile: ')):append(chat.success(currentProfileName)));
     end
 end);
@@ -991,10 +926,8 @@ end);
 -- Rate-limited error logging for render errors (avoids chat spam)
 local lastPresentErrorTime = 0;
 local PRESENT_ERROR_INTERVAL = 60; -- seconds between error messages
-
 ashita.events.register('d3d_present', 'present_cb', function ()
     if not bInitialized then return; end
-
     local ok, err = pcall(function()
         -- Drop references to textures evicted/cleared during the PREVIOUS
         -- frame so Lua GC is free to run d3d8.gc_safe_release on them.
@@ -1037,10 +970,8 @@ ashita.events.register('d3d_present', 'present_cb', function ()
             InvalidateColorCaches();
             uiModules.UpdateVisualsAll(gAdjustedSettings);
         end
-
         local eventSystemActive = gameState.GetEventSystemActive();
         local menuOpen = gameState.IsMenuOpen();
-
         if not gameState.ShouldHideUI(gConfig.hideDuringEvents, bLoggedIn) then
             -- Sync treasure pool from memory (authoritative source of truth)
             -- This ensures we never miss items, even if packets were dropped
@@ -1055,7 +986,6 @@ ashita.events.register('d3d_present', 'present_cb', function ()
             for name, _ in pairs(uiModules.GetAll()) do
                 uiModules.RenderModule(name, gConfig, gAdjustedSettings, eventSystemActive, menuOpen);
             end
-
             configMenu.DrawWindow();
             commandHelp.Draw();
 
@@ -1077,7 +1007,6 @@ ashita.events.register('d3d_present', 'present_cb', function ()
             end
         end
     end);
-
     if not ok then
         local now = os.time();
         if now - lastPresentErrorTime >= PRESENT_ERROR_INTERVAL then
@@ -1086,7 +1015,6 @@ ashita.events.register('d3d_present', 'present_cb', function ()
         end
     end
 end);
-
 ashita.events.register('load', 'load_cb', function ()
     profileManager.SyncProfilesWithDisk();
     gConfig.appliedPositions = {};
@@ -1096,7 +1024,6 @@ ashita.events.register('load', 'load_cb', function ()
     -- no font change in the config menu has to mutate the atlas mid-frame.
     -- See libs/imtext.lua PrewarmFonts comment for the underlying constraint.
     imtext.PrewarmFonts(components.available_fonts);
-
     uiModules.InitializeAll(gAdjustedSettings);
 
     -- Load mob data for current zone
@@ -1107,10 +1034,8 @@ ashita.events.register('load', 'load_cb', function ()
             mobInfo.data.LoadZone(currentZone);
         end
     end
-
     bInitialized = true;
 end);
-
 ashita.events.register('unload', 'unload_cb', function ()
     -- Always save profile on unload to persist window positions and all settings
     SaveSettingsToDisk();
@@ -1122,51 +1047,41 @@ ashita.events.register('unload', 'unload_cb', function ()
     if palette.IsPaletteStateDirty() then
         palette.ClearPaletteStateDirty();
     end
-
     statusHandler.clear_cache();
     progressbar.Cleanup();
     TextureManager.clear();
-
     uiModules.CleanupAll();
-
     if mobInfo.data and mobInfo.data.Cleanup then
         mobInfo.data.Cleanup();
     end
-
-
 end);
-
 ashita.events.register('command', 'command_cb', function (e)
     local command_args = e.command:lower():args()
     if table.contains({'/xiui', '/hui', '/hxui', '/horizonxiui'}, command_args[1]) then
         e.blocked = true;
-
-        --@cmd /xiui : Toggle the config menu
         if (#command_args == 1) then
             showConfig[1] = not showConfig[1];
             return;
         end
 
-        --@cmd /xiui help : List all XIUI commands (also: commands, cmds, ?)
         if (#command_args == 2 and command_args[2]:any('help', 'commands', 'cmds', '?')) then
             commandHelp.Toggle();
             return;
         end
 
-        --@cmd /xiui partylist : Toggle party list visibility
         if (#command_args == 2 and command_args[2]:any('partylist')) then
             gConfig.showPartyList = not gConfig.showPartyList;
             CheckVisibility();
             return;
         end
 
-        --@cmd /xiui macro : Toggle macro palette
+        -- Open macro palette: /xiui macro or /xiui macros
         if (#command_args == 2 and command_args[2]:any('macro', 'macros')) then
             macropalette.TogglePalette();
             return;
         end
 
-        --@cmd /xiui keybinds [bar] : Open keybind editor
+        -- Open keybind editor: /xiui keybinds or /xiui binds [bar]
         if (#command_args >= 2 and command_args[2]:any('keybinds', 'keybind', 'binds', 'bind')) then
             local hotbarConfig = require('config.hotbar');
             local barIndex = tonumber(command_args[3]) or 1;
@@ -1174,25 +1089,25 @@ ashita.events.register('command', 'command_cb', function (e)
             return;
         end
 
-        --@cmd /xiui lot : Lot all treasure pool items
+        -- Lot all unlotted items: /xiui lotall or /xiui lot
         if (#command_args == 2 and command_args[2]:any('lotall', 'lot')) then
             treasurePool.LotAll();
             return;
         end
 
-        --@cmd /xiui pass : Pass all treasure pool items
+        -- Pass all unlotted items: /xiui passall or /xiui pass
         if (#command_args == 2 and command_args[2]:any('passall', 'pass')) then
             treasurePool.PassAll();
             return;
         end
 
-        --@cmd /xiui tp : Toggle treasure pool window
+        -- Toggle treasure pool window: /xiui tp
         if (#command_args == 2 and command_args[2]:any('tp', 'treasurepool', 'pool')) then
             treasurePool.ToggleForceShow();
             return;
         end
 
-        --@cmd /xiui testnotif [type] : Send a test notification
+        -- Test notification command: /xiui testnotif [type]
         if (command_args[2] == 'testnotif') then
             local testType = tonumber(command_args[3]) or 5;  -- default to ITEM_OBTAINED
             notifications.TestNotification(testType, {
@@ -1205,31 +1120,31 @@ ashita.events.register('command', 'command_cb', function (e)
             return;
         end
 
-        --@cmd /xiui testpool10 : Test treasure pool with 10 items
+        -- Test treasure pool with 10 items: /xiui testpool10
         if (command_args[2] == 'testpool10') then
             notifications.TestTreasurePool10();
             return;
         end
 
-        --@cmd /xiui testpool25 : Test treasure pool with 25 items
+        -- Stress test treasure pool with 25 items: /xiui testpool25
         if (command_args[2] == 'testpool25') then
             notifications.TestTreasurePool25();
             return;
         end
 
-        --@cmd /xiui testpoolonly : Test pool-only notifications
+        -- Test pool only (no toasts) - for crash isolation: /xiui testpoolonly
         if (command_args[2] == 'testpoolonly') then
             notifications.TestPoolOnly();
             return;
         end
 
-        --@cmd /xiui testtoastsonly : Test toast-only notifications
+        -- Test toasts only (no pool) - for crash isolation: /xiui testtoastsonly
         if (command_args[2] == 'testtoastsonly') then
             notifications.TestToastsOnly();
             return;
         end
 
-        --@cmd /xiui hotbar <bar> <slot> : Execute hotbar slot (used by keybinds)
+        -- Hotbar keybind execution: /xiui hotbar <bar> <slot>
         -- Called by Ashita /bind system to execute hotbar actions
         if (command_args[2] == 'hotbar' and #command_args >= 4) then
             local barIndex = tonumber(command_args[3]);
@@ -1245,13 +1160,6 @@ ashita.events.register('command', 'command_cb', function (e)
         -- Switch between named palettes. Hotbar palettes (bars 1-6) and the crossbar
         -- have separate palette pools; "all" applies across both, "crossbar"/"cb"/"xb"
         -- targets the crossbar only, a bar number targets a single hotbar.
-        --@cmd /xiui palette : Open the palette manager
-        --@cmd /xiui palette help : Show palette command usage
-        --@cmd /xiui palette next : Cycle to next palette
-        --@cmd /xiui palette prev : Cycle to previous palette
-        --@cmd /xiui palette list : List available palettes
-        --@cmd /xiui palette first : Switch to first palette
-        --@cmd /xiui palette <name> [bar|all] : Switch to a named palette
         if (command_args[2] == 'palette' or command_args[2] == 'pal') then
             local paletteModule = require('modules.hotbar.palette');
             local hotbarData = require('modules.hotbar.data');
@@ -1283,21 +1191,17 @@ ashita.events.register('command', 'command_cb', function (e)
 
             local action = command_args[3];
             local barArg = command_args[4];
-
             local function isCrossbarTarget(arg)
                 if not arg then return false; end
                 local lower = arg:lower();
                 return lower == 'crossbar' or lower == 'cb' or lower == 'xb';
             end
-
             local affectAll = (barArg == 'all');
             local affectCrossbar = isCrossbarTarget(barArg);
             local barIndex = (affectAll or affectCrossbar) and 1 or (tonumber(barArg) or 1);
-
             if action == 'next' or action == 'prev' or action == 'previous' then
                 local direction = (action == 'next') and 1 or -1;
                 local results = {};
-
                 if not affectCrossbar then
                     -- Cycle hotbar palettes (global - bar 1 represents all hotbars)
                     local hotbarResult = paletteModule.CyclePalette(1, direction, jobId, subjobId);
@@ -1311,7 +1215,6 @@ ashita.events.register('command', 'command_cb', function (e)
                 if crossbarResult then
                     table.insert(results, 'Crossbar: ' .. crossbarResult);
                 end
-
                 if #results > 0 then
                     print('[XIUI] Palette -> ' .. table.concat(results, ', '));
                 else
@@ -1344,7 +1247,6 @@ ashita.events.register('command', 'command_cb', function (e)
                 end
             elseif action == 'base' or action == 'reset' or action == 'first' then
                 local firstNames = {};
-
                 if not affectCrossbar then
                     local palettes = paletteModule.GetAvailablePalettes(1, jobId, subjobId);
                     if #palettes > 0 then
@@ -1354,13 +1256,11 @@ ashita.events.register('command', 'command_cb', function (e)
                         table.insert(firstNames, 'Hotbar: ' .. palettes[1]);
                     end
                 end
-
                 local crossbarPalettes = paletteModule.GetCrossbarAvailablePalettes(jobId, subjobId);
                 if #crossbarPalettes > 0 then
                     paletteModule.SetActivePaletteForCombo(nil, crossbarPalettes[1]);
                     table.insert(firstNames, 'Crossbar: ' .. crossbarPalettes[1]);
                 end
-
                 if #firstNames > 0 then
                     print('[XIUI] Palette -> ' .. table.concat(firstNames, ', '));
                 else
@@ -1373,14 +1273,12 @@ ashita.events.register('command', 'command_cb', function (e)
                 local paletteName = originalArgs[3];  -- Use original case
                 local targetIsAll = false;
                 local targetIsCrossbar = false;
-
                 if #originalArgs >= 4 then
                     local lastArg = originalArgs[#originalArgs];
                     local lastLower = lastArg:lower();
                     local isAllSuffix = (lastLower == 'all');
                     local isCrossbarSuffix = isCrossbarTarget(lastArg);
                     local isBarSuffix = tonumber(lastArg) ~= nil;
-
                     if isAllSuffix then
                         targetIsAll = true;
                     elseif isCrossbarSuffix then
@@ -1388,7 +1286,6 @@ ashita.events.register('command', 'command_cb', function (e)
                     elseif isBarSuffix then
                         barIndex = tonumber(lastArg);
                     end
-
                     if isAllSuffix or isCrossbarSuffix or isBarSuffix then
                         -- Palette name is everything between arg 3 and the suffix
                         if #originalArgs > 4 then
@@ -1407,7 +1304,6 @@ ashita.events.register('command', 'command_cb', function (e)
                         paletteName = table.concat(nameParts, ' ');
                     end
                 end
-
                 if targetIsCrossbar then
                     if paletteModule.CrossbarPaletteExists(paletteName, jobId, subjobId) then
                         paletteModule.SetActivePaletteForCombo(nil, paletteName);
@@ -1501,13 +1397,12 @@ ashita.events.register('command', 'command_cb', function (e)
             return;
         end
 
-        --@cmd /xiui gil reset : Reset gil tracking session
+        -- Reset gil tracking: /xiui gil reset (or legacy: /xiui resetgil)
         if (command_args[2] == 'gil' and command_args[3] == 'reset') or (command_args[2] == 'resetgil') then
             gilTracker.ResetTracking();
             return;
         end
 
-        --@cmd /xiui satchel [config] : Toggle the satchel window (or open its config)
         if satchelModule.HandleXiuiCommand and satchelModule.HandleXiuiCommand(command_args) then
             return;
         end
@@ -1516,12 +1411,6 @@ ashita.events.register('command', 'command_cb', function (e)
         -- Profile Commands
         -- ============================================
 
-        --@cmd /xiui profile <name> : Switch to a profile
-        --@cmd /xiui profile next : Cycle to next profile
-        --@cmd /xiui profile previous : Cycle to previous profile
-        --@cmd /xiui profile reset : Open the reset settings popup
-        --@cmd /xiui profile reset positions : Reset all UI positions to center
-        --@cmd /xiui profile sync : Sync profiles with disk
         if (command_args[2] == 'profile') then
             -- /xiui profile reset positions
             if (command_args[3] == 'reset' and command_args[4] == 'positions') then
@@ -1643,11 +1532,9 @@ ashita.events.register('command', 'command_cb', function (e)
             for i = 0, count - 1 do
                 TextureManager.getStatusIcon(i, nil);
             end
-
             local statsAfter = TextureManager.getStats();
             local afterEvictions = statsAfter.categories.status_icons.evictions;
             local newEvictions = afterEvictions - beforeEvictions;
-
             print(chat.header(addon.name):append(chat.message(string.format('Created %d status icons, %d evictions triggered',
                 statsAfter.categories.status_icons.size, newEvictions))));
             TextureManager.printStats();
@@ -1664,7 +1551,7 @@ ashita.events.register('command', 'command_cb', function (e)
             return;
         end
 
-        --@cmd /xiui save : Manually save settings
+        -- Manual save: /xiui save
         if (command_args[2] == 'save') then
             SaveSettingsToDisk();
             macropalette.ClearHotbarDirty();
@@ -1673,23 +1560,21 @@ ashita.events.register('command', 'command_cb', function (e)
         end
     end
 
+    if satchelModule.HandleCommand and satchelModule.HandleCommand(e) then
+        return;
+    end
+
     -- Forward /readycheck commands to the ReadyCheck module
     if readyCheck.HandleCommand(e) then
         e.blocked = true;
         return;
     end
-
-    if satchelModule.HandleCommand and satchelModule.HandleCommand(e) then
-        return;
-    end
 end);
-
 ashita.events.register('text_in', 'readycheck_text_in_cb', function (e)
     if bInitialized then
         readyCheck.HandleTextIn(e);
     end
 end);
-
 ashita.events.register('packet_in', 'packet_in_cb', function (e)
     if satchelModule.HandlePacketIn then
         satchelModule.HandlePacketIn(e);
@@ -1707,6 +1592,14 @@ ashita.events.register('packet_in', 'packet_in_cb', function (e)
         hotbar.HandlePetSyncPacket();
     end
 
+    -- Hotbar spell/ability ownership sync (tHotBar model: 0x0AA / 0x0AC)
+    if gConfig.hotbarEnabled then
+        if e.id == 0x0AA then
+            hotbar.HandleSpellListPacket(e);
+        elseif e.id == 0x0AC then
+            hotbar.HandleAbilityListPacket(e);
+        end
+    end
     if (e.id == 0x0028) then
         local actionPacket = ParseActionPacket(e);
         if actionPacket then
@@ -1746,9 +1639,9 @@ ashita.events.register('packet_in', 'packet_in_cb', function (e)
         ClearEntityCache();
         ResetD3D8Device();
         bLoggedIn = true;
-        -- Initialize hotbar job on zone-in (handles initial login and job change during zone)
+        -- Zone-in: refresh hotbar job and clear stale icon dimming caches
         if gConfig.hotbarEnabled then
-            hotbar.HandleJobChangePacket(e);
+            hotbar.HandleZoneInPacket(e);
         end
     elseif (e.id == 0x0029) then
         local messagePacket = ParseMessagePacket(e.data);
@@ -1896,10 +1789,8 @@ end);
     e.wparam     - (ReadOnly) The wparam of the event.
     e.lparam     - (ReadOnly) The lparam of the event.
     e.blocked    - (Writable) Flag that states if the key has been, or should be, blocked.
-
     See the following article for how to process and use wparam/lparam values:
     https://docs.microsoft.com/en-us/previous-versions/windows/desktop/legacy/ms644984(v=vs.85)
-
     Note: Key codes used here are considered 'virtual key codes'.
 --]]
 
@@ -1907,7 +1798,6 @@ end);
 
         The game uses WNDPROC keyboard information to process keyboard input for chat and other
         user-inputted text prompts. (Bazaar comment, search comment, etc.)
-
         Blocking a press here will only block it during inputs of those types. It will not block
         in-game button handling for things such as movement, menu interactions, etc.
 --]]

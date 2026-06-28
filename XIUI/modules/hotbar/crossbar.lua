@@ -3,7 +3,6 @@
 * Renders crossbar UI with controller-friendly layout
 * Uses windowBg.Draw (ImGui draw list) for background, ImGui/imtext for text and icons
 ]]--
-
 require('common');
 require('handlers.helpers');
 local imgui = require('imgui');
@@ -13,7 +12,6 @@ local windowBg = require('libs.windowbackground');
 local drawing = require('libs.drawing');
 local imtext = require('libs.imtext');
 local dragdrop = require('libs.dragdrop');
-
 local data = require('modules.hotbar.data');
 local actions = require('modules.hotbar.actions');
 local textures = require('modules.hotbar.textures');
@@ -24,7 +22,6 @@ local animation = require('libs.animation');
 local skillchain = require('modules.hotbar.skillchain');
 local targetLib = require('libs.target');
 local palette = require('modules.hotbar.palette');
-
 local M = {};
 
 -- ============================================
@@ -94,7 +91,6 @@ local function CalculateGroupDimensions(slotSize, slotGapV, slotGapH, diamondSpa
     -- Group contains two diamonds side by side
     local groupWidth = diamondWidth + diamondSpacing + diamondWidth;
     local groupHeight = diamondHeight;
-
     return groupWidth, groupHeight, diamondWidth, diamondHeight;
 end
 
@@ -141,7 +137,6 @@ local function GetSlotOffset(slotIndex, slotSize, slotGapV, slotGapH, diamondSpa
     -- Final position: diamond origin + slot offset
     local x = diamondOriginX + offsetX;
     local y = diamondOriginY + offsetY;
-
     return x, y;
 end
 
@@ -156,7 +151,6 @@ local function GetDiamondCenter(diamondType, slotSize, slotGapV, slotGapH, diamo
     -- Center is in the middle of the diamond
     local centerX = diamondWidth / 2;
     local centerY = diamondHeight / 2;
-
     if diamondType == 'dpad' then
         return centerX, centerY;
     else -- 'face'
@@ -225,56 +219,10 @@ end
 -- Icon cache per slot: iconCache[comboMode][slotIndex] = { bindKey = key, icon = cachedIcon }
 local iconCache = {};
 
--- Build a cache key that includes all fields that affect the icon
-local function BuildCrossbarBindKey(slotData)
-    if not slotData then return 'nil'; end
-    -- Include customIconType, customIconId, and customIconPath so icon changes invalidate the cache
-    local iconPart = '';
-    if slotData.customIconType or slotData.customIconId or slotData.customIconPath then
-        iconPart = ':icon:' .. (slotData.customIconType or '') .. ':' .. tostring(slotData.customIconId or '') .. ':' .. (slotData.customIconPath or '');
-    end
-    return (slotData.actionType or '') .. ':' .. (slotData.action or '') .. ':' .. (slotData.target or '') .. iconPart;
-end
-
--- Get cached icon (and precomputed abbreviation, when no icon) for a crossbar slot.
--- Returns: icon, abbr, abbrW. Mirrors display.lua's GetCachedIcon shape so DrawSlot
--- can skip GetActionAbbreviation + imtext.Measure per frame.
+-- Get cached icon (and precomputed abbreviation) for a crossbar slot.
 local function GetCachedCrossbarIcon(comboMode, slotIndex, slotData)
-    -- Use effective combo mode for cache key (Shared when shared expanded bar is enabled)
     comboMode = data.GetEffectiveComboModeForStorage and data.GetEffectiveComboModeForStorage(comboMode) or comboMode;
-
-    if not iconCache[comboMode] then
-        iconCache[comboMode] = {};
-    end
-
-    local cached = iconCache[comboMode][slotIndex];
-
-    -- Check if we have a valid cache entry for this bind
-    local bindKey = BuildCrossbarBindKey(slotData);
-    if cached and cached.bindKey == bindKey then
-        return cached.icon, cached.abbr, cached.abbrW;
-    end
-
-    -- Cache miss - compute icon and (when no icon) the abbreviation
-    local icon = nil;
-    if slotData and slotData.actionType then
-        icon = actions.GetBindIcon(slotData);
-    end
-
-    local abbr, abbrW = nil, nil;
-    if not icon and slotData then
-        abbr, abbrW = slotrenderer.ComputeAbbreviation(slotData);
-    end
-
-    -- Store in cache
-    iconCache[comboMode][slotIndex] = {
-        bindKey = bindKey,
-        icon = icon,
-        abbr = abbr,
-        abbrW = abbrW,
-    };
-
-    return icon, abbr, abbrW;
+    return slotrenderer.GetCachedSlotIcon(iconCache, comboMode, slotIndex, slotData);
 end
 
 -- Clear crossbar icon cache
@@ -290,7 +238,6 @@ local function ClearCrossbarIconCacheForSlot(comboMode, slotIndex)
         iconCache[comboMode][slotIndex] = nil;
     end
 end
-
 local state = {
     initialized = false,
 
@@ -321,10 +268,10 @@ local state = {
     currentLeftMode = 'L2',
     currentRightMode = 'R2',
 
-    -- Combat-only reveal state, used to keep the bar visible briefly after L2/R2 release
+    -- Combat-only: keep crossbar visible until this time after L2/R2 release
     combatTriggerVisibleUntil = 0,
 
-    -- Visibility animation state for activeOnly display mode
+    -- Fade in/out when combat-only or active-only hides the crossbar
     visibilityAnimation = {
         active = false,
         startTime = 0,
@@ -358,7 +305,6 @@ local function GetCrossbarDimensions(settings)
     -- Total width: L2 group + spacing + R2 group
     local width = (groupWidth * 2) + groupSpacing;
     local height = groupHeight;
-
     return width, height, groupWidth, groupHeight;
 end
 
@@ -366,12 +312,9 @@ end
 local function GetDefaultPosition(settings)
     local screenWidth = imgui.GetIO().DisplaySize.x or 1920;
     local screenHeight = imgui.GetIO().DisplaySize.y or 1080;
-
     local width, height = GetCrossbarDimensions(settings);
-
     local x = (screenWidth - width) / 2;
     local y = screenHeight - height - 100;
-
     return x, y;
 end
 
@@ -403,11 +346,14 @@ local function GetDisplayModes(activeCombo)
     end
 end
 
+-- ============================================
+-- Crossbar visibility (combat-only / active-only)
+-- ============================================
+
 local function IsPlayerEngaged()
     if type(GetPlayerEntity) ~= 'function' then
         return false;
     end
-
     local playerEnt = GetPlayerEntity();
     return playerEnt ~= nil and playerEnt.Status == ENTITY_STATUS_ENGAGED;
 end
@@ -420,33 +366,31 @@ local function GetCombatTriggerReleaseDelay(settings)
     return math.max(delay, 0);
 end
 
--- Determine which sides are visible based on display mode
--- Returns: leftVisible, rightVisible, crossbarVisible
-local function GetVisibilityState(activeCombo, settings, isEditMode)
-    local displayMode = settings.displayMode or 'normal';
-
-    -- Always show full crossbar in edit mode or normal display mode
-    if isEditMode or displayMode == 'normal' then
-        return true, true, true;
+-- Upgrade saved profiles that still use the old displayMode dropdown.
+local function NormalizeDisplayModeSettings(settings)
+    if settings.combatOnlyEnabled == nil and settings.activeOnlyEnabled == nil then
+        local mode = settings.displayMode or 'normal';
+        settings.combatOnlyEnabled = mode == 'combatOnly';
+        settings.activeOnlyEnabled = mode == 'activeOnly';
     end
+end
 
-    -- combatOnly mode: show the full crossbar while the player is engaged
-    if displayMode == 'combatOnly' then
-        local triggerActive = activeCombo ~= nil and activeCombo ~= COMBO_MODES.NONE;
-        local now = os.clock();
-
-        if triggerActive then
-            state.combatTriggerVisibleUntil = now + GetCombatTriggerReleaseDelay(settings);
-        end
-
-        local triggerRecentlyActive = (state.combatTriggerVisibleUntil or 0) > now;
-        if IsPlayerEngaged() or triggerActive or triggerRecentlyActive then
-            return true, true, true;
-        end
-        return false, false, false;
+-- True when combat-only is off, or the player is engaged / holding a trigger / within release delay.
+local function IsCombatVisibilityMet(activeCombo, settings)
+    if settings.combatOnlyEnabled ~= true then
+        return true;
     end
+    local triggerActive = activeCombo ~= nil and activeCombo ~= COMBO_MODES.NONE;
+    local now = os.clock();
+    if triggerActive then
+        state.combatTriggerVisibleUntil = now + GetCombatTriggerReleaseDelay(settings);
+    end
+    local triggerRecentlyActive = (state.combatTriggerVisibleUntil or 0) > now;
+    return IsPlayerEngaged() or triggerActive or triggerRecentlyActive;
+end
 
-    -- activeOnly mode: hide when no trigger, show only active side
+-- Which sides to draw when active-only is enabled (leftVisible, rightVisible, crossbarVisible).
+local function GetActiveOnlySideVisibility(activeCombo)
     if activeCombo == COMBO_MODES.NONE then
         return false, false, false;
     elseif activeCombo == COMBO_MODES.L2 or activeCombo == COMBO_MODES.L2_DOUBLE then
@@ -454,14 +398,29 @@ local function GetVisibilityState(activeCombo, settings, isEditMode)
     elseif activeCombo == COMBO_MODES.R2 or activeCombo == COMBO_MODES.R2_DOUBLE then
         return false, true, true;
     elseif activeCombo == COMBO_MODES.L2_THEN_R2 then
-        -- L2+R2: show expanded L2R2 on left side only
         return true, false, true;
     elseif activeCombo == COMBO_MODES.R2_THEN_L2 then
-        -- R2+L2: show expanded R2L2 on right side only
         return false, true, true;
     end
+    return true, true, true;
+end
 
-    -- Fallback for unknown display modes: show both
+local function GetVisibilityState(activeCombo, settings, isEditMode)
+    NormalizeDisplayModeSettings(settings);
+    if isEditMode then
+        return true, true, true;
+    end
+    local combatOnly = settings.combatOnlyEnabled == true;
+    local activeOnly = settings.activeOnlyEnabled == true;
+    if not combatOnly and not activeOnly then
+        return true, true, true;
+    end
+    if not IsCombatVisibilityMet(activeCombo, settings) then
+        return false, false, false;
+    end
+    if activeOnly then
+        return GetActiveOnlySideVisibility(activeCombo);
+    end
     return true, true, true;
 end
 
@@ -493,7 +452,6 @@ end
 local function StartBarTransition(fromLeftMode, fromRightMode, toLeftMode, toRightMode)
     local fromExpanded = (fromLeftMode ~= 'L2' and fromLeftMode ~= 'R2');
     local toExpanded = (toLeftMode ~= 'L2' and toLeftMode ~= 'R2');
-
     state.animation.active = true;
     state.animation.startTime = GetTime();
     state.animation.progress = 0;
@@ -512,10 +470,8 @@ end
 -- Update animation progress
 local function UpdateAnimation()
     if not state.animation.active then return; end
-
     local elapsed = GetTime() - state.animation.startTime;
     local rawProgress = math.min(elapsed / state.animation.duration, 1.0);
-
     if rawProgress >= 1.0 then
         -- Animation complete
         state.animation.active = false;
@@ -536,14 +492,12 @@ local function GetOutgoingAnimationValues()
     if not state.animation.active then
         return 0, 0;
     end
-
     local progress = state.animation.progress;
     local slideDistance = state.animation.slideDistance;
 
     -- Outgoing: fade out quickly, slide up
     local opacity = 1.0 - EaseOutQuad(math.min(progress * 1.5, 1.0));  -- Fade out faster
     local yOffset = -slideDistance * EaseOutCubic(progress);  -- Slide up (negative Y)
-
     return opacity, yOffset;
 end
 
@@ -553,18 +507,16 @@ local function GetIncomingAnimationValues()
     if not state.animation.active then
         return 1.0, 0;
     end
-
     local progress = state.animation.progress;
     local slideDistance = state.animation.slideDistance;
 
     -- Incoming: start from below, slide up into place while fading in
     local opacity = EaseOutCubic(progress);
     local yOffset = slideDistance * (1.0 - EaseOutCubic(progress));  -- Start below, move to 0
-
     return opacity, yOffset;
 end
 
--- Start a visibility transition (fade in/out for activeOnly mode)
+-- Fade the crossbar in or out when visibility-managed modes hide it.
 local function StartVisibilityTransition(fadeIn)
     state.visibilityAnimation.active = true;
     state.visibilityAnimation.startTime = GetTime();
@@ -577,11 +529,9 @@ local function UpdateVisibilityAnimation(settings)
     if not state.visibilityAnimation.active then
         return state.visibilityAnimation.fadeIn and 1.0 or 0.0;
     end
-
     local duration = settings.fadeAnimationDuration or 0.15;
     local elapsed = GetTime() - state.visibilityAnimation.startTime;
     local rawProgress = math.min(elapsed / duration, 1.0);
-
     if rawProgress >= 1.0 then
         state.visibilityAnimation.active = false;
         state.visibilityAnimation.progress = state.visibilityAnimation.fadeIn and 1.0 or 0.0;
@@ -593,7 +543,6 @@ local function UpdateVisibilityAnimation(settings)
             state.visibilityAnimation.progress = 1.0 - EaseOutCubic(rawProgress);
         end
     end
-
     return state.visibilityAnimation.progress;
 end
 
@@ -619,7 +568,6 @@ local function GetSlotPositionInWindow(side, slotIndex, windowX, windowY, settin
 
     -- Get slot offset within the group
     local offsetX, offsetY = GetSlotOffset(slotIndex, slotSize, slotGapV, slotGapH, diamondSpacing);
-
     return groupX + offsetX, windowY + offsetY;
 end
 
@@ -632,13 +580,10 @@ function M.Initialize(settings, moduleSettings)
 
     -- Initial position - use saved position from profile or default
     local savedPos = gConfig and gConfig.windowPositions and gConfig.windowPositions['Crossbar'];
-
     local defaultX, defaultY = GetDefaultPosition(settings);
     state.windowX = savedPos and savedPos.x or defaultX;
     state.windowY = savedPos and savedPos.y or defaultY;
-
     local width, height, groupWidth, groupHeight = GetCrossbarDimensions(settings);
-
     state.initialized = true;
 end
 
@@ -652,7 +597,6 @@ local CB_DROP_ACCEPTS = {'macro', 'crossbar_slot', 'slot'};
 
 -- Pre-created closures and string IDs per combo/slot (avoids closure + string allocations per frame)
 local cbInteraction = {};
-
 local function GetCbInteraction(comboMode, slotIndex)
     if not cbInteraction[comboMode] then
         cbInteraction[comboMode] = {};
@@ -691,7 +635,7 @@ local function GetCbInteraction(comboMode, slotIndex)
                 return {
                     comboMode = comboMode,
                     slotIndex = slotIndex,
-                    data = sd,
+                    data = sd and data.SnapshotSlotBind(sd) or nil,
                     icon = ic,
                     label = sd and (sd.displayName or sd.action) or ('Slot ' .. slotIndex),
                 };
@@ -710,7 +654,8 @@ end
 -- animOpacity: 0-1 for animation fade (default 1.0)
 -- yOffset: Y offset in pixels for animation (default 0)
 -- skillchainName: (optional) Skillchain name for WS slots
-local function DrawSlot(comboMode, slotIndex, x, y, slotSize, settings, isActive, isPressed, animOpacity, yOffset, skillchainName)
+-- magicBurstName: (optional) Skillchain name for MB window on spell/pact slots
+local function DrawSlot(comboMode, slotIndex, x, y, slotSize, settings, isActive, isPressed, animOpacity, yOffset, skillchainName, magicBurstName, magicBurstElement)
     animOpacity = animOpacity or 1.0;
     yOffset = yOffset or 0;
 
@@ -769,6 +714,11 @@ local function DrawSlot(comboMode, slotIndex, x, y, slotSize, settings, isActive
     p.labelOffsetX = (settings.actionLabelOffsetX or 0) * gs;
     p.labelOffsetY = ((settings.actionLabelOffsetY or 0) + 2) * gs;
     p.labelFontSize = (settings.labelFontSize or 10) * gs;
+    p.labelWrap = settings.actionLabelWrap ~= false;
+    p.labelLineHeight = ((settings.labelFontSize or 10) + 1) * gs;
+    -- The top slot of each diamond (dpad = 1, face = 5) sits directly above the
+    -- centered trigger icon, so its label renders above the button to avoid it.
+    p.labelAbove = (slotIndex == 1 or slotIndex == 5);
     p.recastTimerFontSize = (settings.recastTimerFontSize or 11) * gs;
     p.recastTimerFontColor = settings.recastTimerFontColor or 0xFFFFFFFF;
     p.flashCooldownUnder5 = settings.flashCooldownUnder5 or false;
@@ -787,6 +737,8 @@ local function DrawSlot(comboMode, slotIndex, x, y, slotSize, settings, isActive
     -- Skillchain highlight
     p.skillchainName = skillchainName;
     p.skillchainColor = gConfig.hotbarGlobal.skillchainHighlightColor or 0xFFD4AA44;
+    -- Magic Burst highlight
+    p.magicBurstName = magicBurstName;
 
     -- Render slot using shared renderer (handles ALL rendering and interactions)
     slotrenderer.DrawSlot(p);
@@ -799,7 +751,6 @@ end
 local function DrawDiamondCenterIconsImGui(diamondType, groupX, groupY, settings, isActive, drawList, animOpacity)
     animOpacity = animOpacity or 1.0;
     if animOpacity <= 0.01 then return; end
-
     local gs = (gConfig and gConfig.globalScale) or 1.0;
     local slotSize = (settings.slotSize or 48) * gs;
     local slotGapV = (settings.slotGapV or 4) * gs;
@@ -952,7 +903,6 @@ local function DrawComboText(activeCombo, centerX, topY, settings)
     if settings.editMode then
         comboText = '(!) ' .. (comboText or 'EDIT');
     end
-
     if not comboText then return; end
 
     -- Get font size and offsets from settings (scaled by globalScale)
@@ -976,21 +926,17 @@ end
 -- Draw palette name below crossbar (e.g., "Stuns (2/5)")
 local function DrawPaletteName(centerX, bottomY, settings)
     if not settings.showPaletteName then return; end
-
     local paletteName = palette.GetActivePaletteForCombo('L2');
     if not paletteName then return; end
-
     local jobId = data.jobId or 1;
     local subjobId = data.subjobId or 0;
     local index = palette.GetCrossbarPaletteIndex(paletteName, jobId, subjobId) or 1;
     local total = palette.GetCrossbarPaletteCount(jobId, subjobId) or 1;
-
     local displayText = string.format('%s (%d/%d)', paletteName, index, total);
     local gs = (gConfig and gConfig.globalScale) or 1.0;
     local fontSize = (settings.paletteNameFontSize or 10) * gs;
     local offsetX = (settings.paletteNameOffsetX or 0) * gs;
     local offsetY = (settings.paletteNameOffsetY or 0) * gs;
-
     local drawList = GetUIDrawList();
     if drawList then
         local textW = imtext.Measure(displayText, fontSize);
@@ -1001,7 +947,7 @@ local function DrawPaletteName(centerX, bottomY, settings)
 end
 
 -- Helper to draw just the left side
-local function DrawLeftSide(mode, groupX, groupY, slotSize, settings, isActive, pressedSlot, showPressed, animOpacity, drawList, yOffset, targetServerId, skillchainEnabled)
+local function DrawLeftSide(mode, groupX, groupY, slotSize, settings, isActive, pressedSlot, showPressed, animOpacity, drawList, yOffset, targetServerId, skillchainEnabled, magicBurstEnabled)
     animOpacity = animOpacity or 1.0;
     yOffset = yOffset or 0;
 
@@ -1010,14 +956,20 @@ local function DrawLeftSide(mode, groupX, groupY, slotSize, settings, isActive, 
         local slotX, slotY = GetSlotPositionInWindow('L2', slotIndex, state.windowX, state.windowY, settings);
         local isPressed = showPressed and pressedSlot == slotIndex;
         -- Check for skillchain prediction on weapon skill slots
+        local slotData = data.GetCrossbarSlotData(mode, slotIndex);
         local slotSkillchainName = nil;
-        if skillchainEnabled then
-            local slotData = data.GetCrossbarSlotData(mode, slotIndex);
-            if slotData and slotData.actionType == 'ws' and slotData.action then
-                slotSkillchainName = skillchain.GetSkillchainForSlot(targetServerId, slotData.action);
+        if skillchainEnabled and slotData and slotData.actionType == 'ws' and slotData.action then
+            slotSkillchainName = skillchain.GetSkillchainForSlot(targetServerId, slotData.action);
+        end
+        local slotMagicBurstName = nil;
+        local slotMagicBurstElement = nil;
+        if magicBurstEnabled and slotData then
+            slotMagicBurstName = skillchain.GetMagicBurstForSlot(targetServerId, slotData);
+            if slotMagicBurstName then
+                slotMagicBurstElement = skillchain.GetBurstElementForSlot(slotData);
             end
         end
-        DrawSlot(mode, slotIndex, slotX, slotY, slotSize, settings, isActive, isPressed, animOpacity, yOffset, slotSkillchainName);
+        DrawSlot(mode, slotIndex, slotX, slotY, slotSize, settings, isActive, isPressed, animOpacity, yOffset, slotSkillchainName, slotMagicBurstName, slotMagicBurstElement);
     end
 
     -- Draw center button icons via ImGui (if visible enough)
@@ -1029,7 +981,7 @@ local function DrawLeftSide(mode, groupX, groupY, slotSize, settings, isActive, 
 end
 
 -- Helper to draw just the right side
-local function DrawRightSide(mode, groupX, groupY, slotSize, settings, isActive, pressedSlot, showPressed, animOpacity, drawList, yOffset, targetServerId, skillchainEnabled)
+local function DrawRightSide(mode, groupX, groupY, slotSize, settings, isActive, pressedSlot, showPressed, animOpacity, drawList, yOffset, targetServerId, skillchainEnabled, magicBurstEnabled)
     animOpacity = animOpacity or 1.0;
     yOffset = yOffset or 0;
 
@@ -1038,14 +990,20 @@ local function DrawRightSide(mode, groupX, groupY, slotSize, settings, isActive,
         local slotX, slotY = GetSlotPositionInWindow('R2', slotIndex, state.windowX, state.windowY, settings);
         local isPressed = showPressed and pressedSlot == slotIndex;
         -- Check for skillchain prediction on weapon skill slots
+        local slotData = data.GetCrossbarSlotData(mode, slotIndex);
         local slotSkillchainName = nil;
-        if skillchainEnabled then
-            local slotData = data.GetCrossbarSlotData(mode, slotIndex);
-            if slotData and slotData.actionType == 'ws' and slotData.action then
-                slotSkillchainName = skillchain.GetSkillchainForSlot(targetServerId, slotData.action);
+        if skillchainEnabled and slotData and slotData.actionType == 'ws' and slotData.action then
+            slotSkillchainName = skillchain.GetSkillchainForSlot(targetServerId, slotData.action);
+        end
+        local slotMagicBurstName = nil;
+        local slotMagicBurstElement = nil;
+        if magicBurstEnabled and slotData then
+            slotMagicBurstName = skillchain.GetMagicBurstForSlot(targetServerId, slotData);
+            if slotMagicBurstName then
+                slotMagicBurstElement = skillchain.GetBurstElementForSlot(slotData);
             end
         end
-        DrawSlot(mode, slotIndex, slotX, slotY, slotSize, settings, isActive, isPressed, animOpacity, yOffset, slotSkillchainName);
+        DrawSlot(mode, slotIndex, slotX, slotY, slotSize, settings, isActive, isPressed, animOpacity, yOffset, slotSkillchainName, slotMagicBurstName, slotMagicBurstElement);
     end
 
     -- Draw center button icons via ImGui (if visible enough)
@@ -1059,15 +1017,14 @@ end
 -- Helper to draw a complete bar set (both sides) - used for non-animated drawing
 local function DrawBarSet(leftMode, rightMode, leftGroupX, leftGroupY, rightGroupX, rightGroupY,
                           slotSize, settings, leftActive, rightActive, pressedSlot,
-                          leftShowPressed, rightShowPressed, animOpacity, drawList, yOffset, targetServerId, skillchainEnabled)
-    DrawLeftSide(leftMode, leftGroupX, leftGroupY, slotSize, settings, leftActive, pressedSlot, leftShowPressed, animOpacity, drawList, yOffset, targetServerId, skillchainEnabled);
-    DrawRightSide(rightMode, rightGroupX, rightGroupY, slotSize, settings, rightActive, pressedSlot, rightShowPressed, animOpacity, drawList, yOffset, targetServerId, skillchainEnabled);
+                          leftShowPressed, rightShowPressed, animOpacity, drawList, yOffset, targetServerId, skillchainEnabled, magicBurstEnabled)
+    DrawLeftSide(leftMode, leftGroupX, leftGroupY, slotSize, settings, leftActive, pressedSlot, leftShowPressed, animOpacity, drawList, yOffset, targetServerId, skillchainEnabled, magicBurstEnabled);
+    DrawRightSide(rightMode, rightGroupX, rightGroupY, slotSize, settings, rightActive, pressedSlot, rightShowPressed, animOpacity, drawList, yOffset, targetServerId, skillchainEnabled, magicBurstEnabled);
 end
 
 -- Main draw function
 function M.DrawWindow(settings, moduleSettings)
     if not state.initialized then return; end
-
     local gs = (gConfig and gConfig.globalScale) or 1.0;
     local slotSize = (settings.slotSize or 48) * gs;
     local slotGapV = (settings.slotGapV or 4) * gs;
@@ -1077,12 +1034,6 @@ function M.DrawWindow(settings, moduleSettings)
 
     -- Calculate dimensions using layout functions
     local width, height, groupWidth, groupHeight = GetCrossbarDimensions(settings);
-
-    -- Window flags (dummy window for positioning, like hotbar display.lua)
-    local windowFlags = GetBaseWindowFlags(gConfig.lockPositions);
-
-    local windowName = 'Crossbar';
-    local defaultX, defaultY = GetDefaultPosition(settings);
 
     -- Get current combo mode and pressed slot from controller
     local activeCombo = controller.GetActiveCombo();
@@ -1096,13 +1047,13 @@ function M.DrawWindow(settings, moduleSettings)
         pressedSlot = nil;  -- Don't show pressed state in edit mode
     end
 
-    -- Determine visibility for display modes that can hide the crossbar
+    NormalizeDisplayModeSettings(settings);
     local leftVisible, rightVisible, crossbarVisible = GetVisibilityState(activeCombo, settings, isEditMode);
 
-    -- Resolve activeOnly visibility BEFORE any SetNextWindow* calls: when hidden we
-    -- skip imgui.Begin, and a pending size/pos would leak onto the next window.
+    -- Resolve visibility before SetNextWindow* — skipped Begin would leak pos/size to the next window.
     local visibilityOpacity = 1.0;
-    local isVisibilityManagedMode = (settings.displayMode == 'activeOnly' or settings.displayMode == 'combatOnly') and not isEditMode;
+    local activeOnlyEnabled = settings.activeOnlyEnabled == true;
+    local isVisibilityManagedMode = (settings.combatOnlyEnabled == true or activeOnlyEnabled) and not isEditMode;
     if isVisibilityManagedMode then
         local wasHidden = state.visibilityAnimation.wasHidden;
         local isNowHidden = not crossbarVisible;
@@ -1112,7 +1063,6 @@ function M.DrawWindow(settings, moduleSettings)
             StartVisibilityTransition(not isNowHidden);  -- fadeIn = true when becoming visible
             state.visibilityAnimation.wasHidden = isNowHidden;
         end
-
         visibilityOpacity = UpdateVisibilityAnimation(settings);
 
         -- Early return if fully hidden and animation complete
@@ -1121,25 +1071,6 @@ function M.DrawWindow(settings, moduleSettings)
             return;
         end
     end
-
-    -- Check if anchor is currently being dragged - if so, force position
-    local anchorDragging = drawing.IsAnchorDragging(windowName);
-
-    if anchorDragging then
-        -- Use state position directly during drag for immediate response
-        imgui.SetNextWindowPos({state.windowX, state.windowY}, ImGuiCond_Always);
-    else
-        -- Apply saved position (once) or default
-        local hasSaved = gConfig.windowPositions and gConfig.windowPositions[windowName];
-
-        if hasSaved then
-            ApplyWindowPosition(windowName);
-        else
-            imgui.SetNextWindowPos({defaultX, defaultY}, ImGuiCond_FirstUseEver);
-        end
-    end
-
-    imgui.SetNextWindowSize({width, height}, ImGuiCond_Always);
 
     -- Determine which bar set to display based on active combo
     local targetLeftMode, targetRightMode, isExpanded, expandedSide = GetDisplayModes(activeCombo);
@@ -1215,7 +1146,8 @@ function M.DrawWindow(settings, moduleSettings)
     -- Get target server ID for skillchain prediction (cached for all slots)
     local targetServerId = nil;
     local skillchainEnabled = gConfig.hotbarGlobal.skillchainHighlightEnabled ~= false;
-    if skillchainEnabled then
+    local magicBurstEnabled = gConfig.hotbarGlobal.magicBurstHighlightEnabled ~= false;
+    if skillchainEnabled or magicBurstEnabled then
         local mainTargetIdx = targetLib.GetTargets();
         if mainTargetIdx and mainTargetIdx ~= 0 then
             local targetEntity = GetEntity(mainTargetIdx);
@@ -1224,6 +1156,26 @@ function M.DrawWindow(settings, moduleSettings)
             end
         end
     end
+
+    -- Window flags (dummy window for positioning, like hotbar display.lua)
+    local windowFlags = GetBaseWindowFlags(gConfig.lockPositions);
+    local windowName = 'Crossbar';
+    local defaultX, defaultY = GetDefaultPosition(settings);
+
+    -- Apply size/position only when the window will actually open.
+    local anchorDragging = drawing.IsAnchorDragging(windowName);
+    if anchorDragging then
+        -- Use state position directly during drag for immediate response
+        imgui.SetNextWindowPos({state.windowX, state.windowY}, ImGuiCond_Always);
+    else
+        local hasSaved = gConfig.windowPositions and gConfig.windowPositions[windowName];
+        if hasSaved then
+            ApplyWindowPosition(windowName);
+        else
+            imgui.SetNextWindowPos({defaultX, defaultY}, ImGuiCond_FirstUseEver);
+        end
+    end
+    imgui.SetNextWindowSize({width, height}, ImGuiCond_Always);
 
     -- Begin ImGui window - ALL slot rendering happens inside to enable interactions
     if imgui.Begin('Crossbar', true, windowFlags) then
@@ -1243,7 +1195,7 @@ function M.DrawWindow(settings, moduleSettings)
 
         -- Draw bar sets based on animation state and display mode
         -- NOTE: DrawSlot calls must be inside imgui.Begin/End for interactions to work
-        local isActiveOnlyMode = settings.displayMode == 'activeOnly' and not isEditMode;
+        local isActiveOnlyMode = activeOnlyEnabled and not isEditMode;
 
         -- Draw window background FIRST so it sits beneath all slot content on the draw list.
         -- In visibility-managed modes, apply visibility opacity to background.
@@ -1264,7 +1216,6 @@ function M.DrawWindow(settings, moduleSettings)
                 borderColor = settings.borderColor,
             });
         end
-
         if state.animation.active then
             -- Get animation values for outgoing and incoming elements
             local outOpacity, outYOffset = GetOutgoingAnimationValues();
@@ -1281,68 +1232,67 @@ function M.DrawWindow(settings, moduleSettings)
             local fromLeftActive = fromExpanded or state.animation.fromLeftMode == 'L2';
             local fromRightActive = fromExpanded or state.animation.fromRightMode == 'R2';
 
-            -- Draw LEFT side (skip in activeOnly mode if not visible)
+            -- Draw left side (active-only may hide this side)
             if not isActiveOnlyMode or leftVisible then
                 if state.animation.leftChanged then
                     -- Left side changed - animate it
                     if outOpacity > 0.01 then
                         DrawLeftSide(state.animation.fromLeftMode, leftGroupX, leftGroupY, slotSize, settings,
-                            fromLeftActive, pressedSlot, false, outOpacity, drawList, outYOffset, targetServerId, skillchainEnabled);
+                            fromLeftActive, pressedSlot, false, outOpacity, drawList, outYOffset, targetServerId, skillchainEnabled, magicBurstEnabled);
                     end
                     if inOpacity > 0.01 then
                         DrawLeftSide(state.animation.toLeftMode, leftGroupX, leftGroupY, slotSize, settings,
-                            leftActive, pressedSlot, leftShowPressed, inOpacity, drawList, inYOffset, targetServerId, skillchainEnabled);
+                            leftActive, pressedSlot, leftShowPressed, inOpacity, drawList, inYOffset, targetServerId, skillchainEnabled, magicBurstEnabled);
                     end
                 else
                     -- Left side didn't change - draw at full opacity (with visibility fade)
                     DrawLeftSide(state.animation.toLeftMode, leftGroupX, leftGroupY, slotSize, settings,
-                        leftActive, pressedSlot, leftShowPressed, visibilityOpacity, drawList, 0, targetServerId, skillchainEnabled);
+                        leftActive, pressedSlot, leftShowPressed, visibilityOpacity, drawList, 0, targetServerId, skillchainEnabled, magicBurstEnabled);
                 end
             end
 
-            -- Draw RIGHT side (skip in activeOnly mode if not visible)
+            -- Draw right side (active-only may hide this side)
             if not isActiveOnlyMode or rightVisible then
                 if state.animation.rightChanged then
                     -- Right side changed - animate it
                     if outOpacity > 0.01 then
                         DrawRightSide(state.animation.fromRightMode, rightGroupX, rightGroupY, slotSize, settings,
-                            fromRightActive, pressedSlot, false, outOpacity, drawList, outYOffset, targetServerId, skillchainEnabled);
+                            fromRightActive, pressedSlot, false, outOpacity, drawList, outYOffset, targetServerId, skillchainEnabled, magicBurstEnabled);
                     end
                     if inOpacity > 0.01 then
                         DrawRightSide(state.animation.toRightMode, rightGroupX, rightGroupY, slotSize, settings,
-                            rightActive, pressedSlot, rightShowPressed, inOpacity, drawList, inYOffset, targetServerId, skillchainEnabled);
+                            rightActive, pressedSlot, rightShowPressed, inOpacity, drawList, inYOffset, targetServerId, skillchainEnabled, magicBurstEnabled);
                     end
                 else
                     -- Right side didn't change - draw at full opacity (with visibility fade)
                     DrawRightSide(state.animation.toRightMode, rightGroupX, rightGroupY, slotSize, settings,
-                        rightActive, pressedSlot, rightShowPressed, visibilityOpacity, drawList, 0, targetServerId, skillchainEnabled);
+                        rightActive, pressedSlot, rightShowPressed, visibilityOpacity, drawList, 0, targetServerId, skillchainEnabled, magicBurstEnabled);
                 end
             end
         else
             -- No bar transition animation
             if isActiveOnlyMode then
-                -- ActiveOnly mode: draw only visible sides with visibility fade
+                -- Active-only: draw only the visible side(s)
                 if leftVisible then
                     DrawLeftSide(state.currentLeftMode, leftGroupX, leftGroupY, slotSize, settings,
-                        leftActive, pressedSlot, leftShowPressed, visibilityOpacity, drawList, 0, targetServerId, skillchainEnabled);
+                        leftActive, pressedSlot, leftShowPressed, visibilityOpacity, drawList, 0, targetServerId, skillchainEnabled, magicBurstEnabled);
                 end
                 if rightVisible then
                     DrawRightSide(state.currentRightMode, rightGroupX, rightGroupY, slotSize, settings,
-                        rightActive, pressedSlot, rightShowPressed, visibilityOpacity, drawList, 0, targetServerId, skillchainEnabled);
+                        rightActive, pressedSlot, rightShowPressed, visibilityOpacity, drawList, 0, targetServerId, skillchainEnabled, magicBurstEnabled);
                 end
             else
-                -- Normal/combatOnly mode: draw both sides
+                local drawOpacity = isVisibilityManagedMode and visibilityOpacity or 1.0;
                 DrawBarSet(
                     state.currentLeftMode, state.currentRightMode,
                     leftGroupX, leftGroupY, rightGroupX, rightGroupY,
                     slotSize, settings,
                     leftActive, rightActive,
                     pressedSlot, leftShowPressed, rightShowPressed,
-                    visibilityOpacity, drawList, 0, targetServerId, skillchainEnabled
+                    drawOpacity, drawList, 0, targetServerId, skillchainEnabled, magicBurstEnabled
                 );
             end
         end
-
         imgui.End();
     end
 
@@ -1355,23 +1305,22 @@ function M.DrawWindow(settings, moduleSettings)
         if anchorNewX ~= nil then
             state.windowX = anchorNewX;
             state.windowY = anchorNewY;
-            
+
             -- Update config immediately so next frame's positioning logic picks it up
             if not gConfig.windowPositions then gConfig.windowPositions = {}; end
             gConfig.windowPositions['Crossbar'] = { x = anchorNewX, y = anchorNewY };
         end
     end
 
-    -- Determine if we should show center elements (hidden in activeOnly mode)
-    local isActiveOnlyMode = settings.displayMode == 'activeOnly' and not isEditMode;
-    local showCenterElements = not isActiveOnlyMode and (not isVisibilityManagedMode or crossbarVisible);
+    -- Center divider, combo text, and trigger icons (hidden during active-only)
+    local showCenterElements = not (activeOnlyEnabled and not isEditMode)
+        and (not isVisibilityManagedMode or crossbarVisible);
 
-    -- Draw center divider (optional, hidden in activeOnly mode)
+    -- Center divider
     if settings.showDivider and drawList and showCenterElements then
         local dividerX = state.windowX + groupWidth + (groupSpacing / 2);
         local dividerY1 = state.windowY + 10;
         local dividerY2 = state.windowY + height - 10;
-
         drawList:AddLine(
             { dividerX, dividerY1 },
             { dividerX, dividerY2 },
@@ -1380,7 +1329,7 @@ function M.DrawWindow(settings, moduleSettings)
         );
     end
 
-    -- Draw combo text in center for complex combos (hidden in activeOnly mode)
+    -- Combo label above the crossbar
     local centerX = state.windowX + groupWidth + (groupSpacing / 2);
     local topY = state.windowY - 4;  -- Above the window
     if showCenterElements then
@@ -1393,7 +1342,7 @@ function M.DrawWindow(settings, moduleSettings)
         DrawPaletteName(centerX, bottomY, settings);
     end
 
-    -- Draw L2/R2 trigger icons above the groups (hidden in activeOnly mode)
+    -- L2/R2 trigger icons above each side
     if drawList and showCenterElements then
         DrawTriggerIcons(activeCombo, leftGroupX, rightGroupX, leftGroupY, groupWidth, settings, drawList);
     end
@@ -1412,7 +1361,6 @@ function M.DrawWindow(settings, moduleSettings)
             local pulseAlpha = 0.7 + 0.3 * math.sin(os.clock() * 6);
             local iconColor = imgui.GetColorU32({1.0, 1.0, 1.0, pulseAlpha});
             local iconPtr = tonumber(ffi.cast("uint32_t", refreshTexture.image));
-
             if iconPtr then
                 fgDrawList:AddImage(
                     iconPtr,
@@ -1465,7 +1413,6 @@ function M.Cleanup()
 
     -- Clear slotrenderer cache
     slotrenderer.ClearAllCache();
-
     state.initialized = false;
 end
 
@@ -1477,7 +1424,6 @@ function M.SetPosition(x, y)
     state.windowX = x;
     state.windowY = y;
 end
-
 function M.GetPosition()
     return state.windowX, state.windowY;
 end
@@ -1531,5 +1477,4 @@ function M.ResetPositions()
         gConfig.appliedPositions['Crossbar'] = nil;
     end
 end
-
 return M;

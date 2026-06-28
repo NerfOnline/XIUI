@@ -3,9 +3,9 @@
 * Based on tHotBar's skillchain implementation by Thorny
 * Tracks weapon skill usage and predicts resulting skillchains
 ]]--
-
 require('common');
-
+local actiondb = require('modules.hotbar.actiondb');
+local skillchaindata = require('modules.hotbar.database.skillchaindata');
 local M = {};
 
 -- Resonation type constants (matching tHotBar)
@@ -122,12 +122,22 @@ local skillchainMessageIds = {
     [770] = Resonation.Umbra
 };
 
--- Message IDs that indicate a weapon skill hit
-local weaponskillMessageIds = {
-    [103] = true, -- WS recovers HP
-    [185] = true, -- WS deals damage
-    [187] = true, -- WS drains HP
-    [238] = true, -- WS recovers HP (alt)
+-- Action messages that can open a skillchain window on the target (from Chains addon).
+local skillchainWindowOpenMessageIds = {
+    [2] = true,
+    [103] = true,
+    [110] = true,
+    [185] = true,
+    [187] = true,
+    [238] = true,
+    [317] = true,
+    [802] = true,
+};
+
+-- Pet-style action messages: packet param is a blood pact id, not a weaponskill id.
+local petSkillchainOpenMessageIds = {
+    [110] = true,
+    [317] = true,
 };
 
 -- Weapon skill resonation attributes (wsId -> table of resonation types)
@@ -332,6 +342,87 @@ local weaponskillResonationMap = {
 -- state = { Attributes = {}, Depth = number, WindowOpen = time, WindowClose = time }
 local resonationMap = {};
 
+-- ============================================
+-- Magic Burst (MB) state
+-- ============================================
+local MB_WINDOW_OPEN_DELAY = 0.0;
+local MB_WINDOW_DURATION = 10.0;
+
+-- Per-target Magic Burst state (entity index -> { Elements, ScName, WindowOpen, WindowClose })
+local magicBurstMap = {};
+
+-- Resonation result -> burstable element IDs (0=Fire .. 7=Dark, per Ashita spell.Element)
+local magicBurstElements = {
+    [Resonation.Liquefaction] = { 0 },
+    [Resonation.Induration] = { 1 },
+    [Resonation.Detonation] = { 2 },
+    [Resonation.Scission] = { 3 },
+    [Resonation.Impaction] = { 4 },
+    [Resonation.Reverberation] = { 5 },
+    [Resonation.Transfixion] = { 6 },
+    [Resonation.Compression] = { 7 },
+    [Resonation.Fusion] = { 0, 6 },
+    [Resonation.Fragmentation] = { 4, 2 },
+    [Resonation.Distortion] = { 5, 1 },
+    [Resonation.Gravitation] = { 3, 7 },
+    [Resonation.Light] = { 0, 6, 4, 2 },
+    [Resonation.Darkness] = { 5, 1, 3, 7 },
+    [Resonation.Light2] = { 0, 6, 4, 2 },
+    [Resonation.Darkness2] = { 5, 1, 3, 7 },
+    [Resonation.Radiance] = { 0, 6, 4, 2 },
+    [Resonation.Umbra] = { 5, 1, 3, 7 },
+};
+
+-- Magical Blood Pact: Rage names that mirror BLM nukes (for MB slot routing only)
+local bloodPactElementMap = {
+    ['Fire II'] = 0,
+    ['Fire IV'] = 0,
+    ['Blizzard II'] = 1,
+    ['Blizzard IV'] = 1,
+    ['Aero II'] = 2,
+    ['Aero IV'] = 2,
+    ['Stone II'] = 3,
+    ['Stone IV'] = 3,
+    ['Thunder II'] = 4,
+    ['Thunder IV'] = 4,
+    ['Water II'] = 5,
+    ['Water IV'] = 5,
+};
+local function spellTargetsEnemy(spell)
+    local tgts = spell.ValidTargets or 0;
+    if bit.band(tgts, 32) ~= 0 then
+        return true;
+    end
+    -- Some dat rows omit the enemy flag; treat player-target offensive magic as burstable.
+    return bit.band(tgts, 16) ~= 0;
+end
+local function spellNameToBurstElement(spellName)
+    if not spellName or spellName == '' then
+        return nil;
+    end
+    local resourceMgr = AshitaCore:GetResourceManager();
+    if not resourceMgr then
+        return nil;
+    end
+    local fallbackElement = nil;
+    for _, spellId in ipairs(actiondb.GetSpellIds(spellName)) do
+        local spell = resourceMgr:GetSpellById(spellId);
+        if spell and spell.Element ~= nil and spell.Element >= 0 and spell.Element <= 7 then
+            if spellTargetsEnemy(spell) then
+                return spell.Element;
+            end
+            if fallbackElement == nil then
+                fallbackElement = spell.Element;
+            end
+        end
+    end
+    return fallbackElement;
+end
+local function pactNameToBurstElement(pactName)
+    if not pactName or pactName == '' then return nil; end
+    return bloodPactElementMap[pactName];
+end
+
 -- Hardcoded WS name -> ID map (resource manager lookup is unreliable)
 local wsNameToIdMap = {
     -- Hand-to-Hand
@@ -403,6 +494,103 @@ local wsNameToIdMap = {
     ['Trueflight'] = 217, ['Leaden Salute'] = 218, ['Numbing Shot'] = 219, ['Wildfire'] = 220,
     ['Last Stand'] = 221, ['Exenterator'] = 224, ['Chant du Cygne'] = 225, ['Requiescat'] = 226,
 };
+local propertyToResonation = {
+    Liquefaction = Resonation.Liquefaction,
+    Induration = Resonation.Induration,
+    Detonation = Resonation.Detonation,
+    Scission = Resonation.Scission,
+    Impaction = Resonation.Impaction,
+    Reverberation = Resonation.Reverberation,
+    Transfixion = Resonation.Transfixion,
+    Compression = Resonation.Compression,
+    Fusion = Resonation.Fusion,
+    Gravitation = Resonation.Gravitation,
+    Distortion = Resonation.Distortion,
+    Fragmentation = Resonation.Fragmentation,
+    Light = Resonation.Light,
+    Darkness = Resonation.Darkness,
+};
+
+-- Horizon skillchain maps (retail weaponskill maps are defined above in weaponskillResonationMap).
+local horizonWeaponskillResonationById = {};
+local horizonWeaponskillNameToId = {};
+local horizonWeaponskillIdToName = {};
+local horizonBloodPactResonationById = {};
+local retailBloodPactResonationById = {};
+local retailWeaponskillIdToName = {};
+local function ConvertPropertyNamesToResonations(propertyNames)
+    local resonations = {};
+    for _, propertyName in ipairs(propertyNames or {}) do
+        local resonation = propertyToResonation[propertyName];
+        if resonation then
+            table.insert(resonations, resonation);
+        end
+    end
+    return resonations;
+end
+local function PopulateResonationMaps(skillchainEntries, resonationById, nameToIdMap, idToNameMap)
+    for abilityId, entry in pairs(skillchainEntries or {}) do
+        local resonations = ConvertPropertyNamesToResonations(entry.props);
+        if #resonations > 0 then
+            resonationById[abilityId] = resonations;
+            if entry.en then
+                if nameToIdMap then
+                    nameToIdMap[entry.en] = abilityId;
+                end
+                if idToNameMap then
+                    idToNameMap[abilityId] = entry.en;
+                end
+            end
+        end
+    end
+end
+PopulateResonationMaps(skillchaindata.horizon.weaponskills, horizonWeaponskillResonationById, horizonWeaponskillNameToId, horizonWeaponskillIdToName);
+PopulateResonationMaps(skillchaindata.horizon.bloodPacts, horizonBloodPactResonationById);
+PopulateResonationMaps(skillchaindata.retail.bloodPacts, retailBloodPactResonationById);
+for weaponskillName, weaponskillId in pairs(wsNameToIdMap) do
+    retailWeaponskillIdToName[weaponskillId] = weaponskillName;
+end
+local function GetActiveWeaponskillResonationById()
+    return actiondb.IsHorizonMode() and horizonWeaponskillResonationById or weaponskillResonationMap;
+end
+local function GetActiveWeaponskillNameToId()
+    return actiondb.IsHorizonMode() and horizonWeaponskillNameToId or wsNameToIdMap;
+end
+local function GetActiveWeaponskillIdToName()
+    return actiondb.IsHorizonMode() and horizonWeaponskillIdToName or retailWeaponskillIdToName;
+end
+local function GetActiveBloodPactResonationById()
+    return actiondb.IsHorizonMode() and horizonBloodPactResonationById or retailBloodPactResonationById;
+end
+local function IsKnownWeaponskillId(weaponskillId)
+    return GetActiveWeaponskillResonationById()[weaponskillId] ~= nil;
+end
+local function AbilityIdIsWeaponskill(abilityId)
+    local resourceMgr = AshitaCore:GetResourceManager();
+    if not resourceMgr then
+        return false;
+    end
+    local ability = resourceMgr:GetAbilityById(abilityId);
+    return ability ~= nil and actiondb.IsWeaponskillAbilityType(ability.Type);
+end
+local function ResolveOpeningResonationAttributes(actionType, messageId, abilityId)
+    if not abilityId or abilityId == 0 then
+        return nil;
+    end
+    if actionType == 3 then
+        if petSkillchainOpenMessageIds[messageId] then
+            return nil;
+        end
+        if not IsKnownWeaponskillId(abilityId) or not AbilityIdIsWeaponskill(abilityId) then
+            return nil;
+        end
+        return GetActiveWeaponskillResonationById()[abilityId];
+    end
+    if actionType == 13 then
+        return GetActiveBloodPactResonationById()[abilityId];
+    end
+    return nil;
+end
 
 -- Debug function to dump skillchain state (call with /xiui scdebug)
 function M.DebugDumpState()
@@ -423,10 +611,40 @@ function M.DebugDumpState()
     end
 end
 
--- Get WS ID from name (simple lookup in hardcoded table)
-local function GetWSIdFromName(wsName)
-    if not wsName then return nil; end
-    return wsNameToIdMap[wsName];
+-- Look up a weaponskill id by name (catalog-validated for the active server mode).
+local function GetWeaponskillIdFromName(weaponskillName)
+    if not weaponskillName or weaponskillName == '' then
+        return nil;
+    end
+    if not actiondb.GetEditorWeaponskillMeta(weaponskillName) then
+        return nil;
+    end
+    return GetActiveWeaponskillNameToId()[weaponskillName];
+end
+
+-- True when the player can use this weaponskill on their current weapon (TP cost ignored).
+local function IsWeaponskillAccessible(weaponskillId, weaponskillName)
+    local player = AshitaCore:GetMemoryManager():GetPlayer();
+    if not player then
+        return false;
+    end
+    if weaponskillName and (not weaponskillId or weaponskillId <= 0) then
+        weaponskillId = GetWeaponskillIdFromName(weaponskillName);
+    end
+    if not weaponskillId or weaponskillId <= 0 then
+        return false;
+    end
+    if not IsKnownWeaponskillId(weaponskillId) then
+        return false;
+    end
+    if not AbilityIdIsWeaponskill(weaponskillId) then
+        return false;
+    end
+    if player.HasWeaponSkill and player:HasWeaponSkill(weaponskillId) then
+        return true;
+    end
+    local lookupName = weaponskillName or GetActiveWeaponskillIdToName()[weaponskillId];
+    return lookupName ~= nil and actiondb.PlayerHasWeaponSkill(player, lookupName);
 end
 
 -- Check if a table contains a value
@@ -453,13 +671,11 @@ local function GetIndexFromId(id)
             return index;
         end
     end
-
     for i = 1, 0x8FF do
         if entMgr:GetServerId(i) == id then
             return i;
         end
     end
-
     return 0;
 end
 
@@ -471,14 +687,20 @@ function M.GetSkillchainForSlot(targetServerId, wsIdOrName)
     if not wsIdOrName then return nil; end
 
     -- Convert name to ID if needed
+    local wsName = type(wsIdOrName) == 'string' and wsIdOrName or nil;
     local wsId = wsIdOrName;
-    if type(wsIdOrName) == 'string' then
-        wsId = GetWSIdFromName(wsIdOrName);
+    if wsName then
+        wsId = GetWeaponskillIdFromName(wsName);
         if not wsId then return nil; end
     end
 
+    -- Only highlight WS the player can use with their current weapon (not other weapon types).
+    if not IsWeaponskillAccessible(wsId, wsName) then
+        return nil;
+    end
+
     -- Get WS attributes early (needed for all checks)
-    local wsAttributes = weaponskillResonationMap[wsId];
+    local wsAttributes = GetActiveWeaponskillResonationById()[wsId];
     if not wsAttributes then return nil; end
 
     -- Convert server ID to entity index if provided
@@ -493,12 +715,10 @@ function M.GetSkillchainForSlot(targetServerId, wsIdOrName)
     if not targetIndex or targetIndex == 0 then
         return nil;
     end
-
     local resonation = resonationMap[targetIndex];
     if not resonation then
         return nil;
     end
-
     local now = os.clock();
 
     -- Check if window expired
@@ -521,59 +741,46 @@ function M.GetSkillchainForSlot(targetServerId, wsIdOrName)
             end
         end
     end
-
     return nil;
 end
 
--- Handle action packet (0x0028)
--- XIUI's ParseActionPacket stores WS ID in .Param (not .Id like tHotBar)
+-- Handle action packet 0x0028: track skillchain windows and magic burst state.
 function M.HandleActionPacket(actionPacket)
     if not actionPacket then return; end
-
-    -- Only process weapon skill actions (Type 3)
-    if actionPacket.Type ~= 3 then return; end
-
-    -- WS ID is stored in Param field by XIUI's packet parser
-    local wsId = actionPacket.Param;
-    if not wsId or wsId == 0 then return; end
-
-    -- Process each target
+    local actionType = actionPacket.Type;
+    local param = actionPacket.Param;
     for _, target in ipairs(actionPacket.Targets or {}) do
         local targetIndex = GetIndexFromId(target.Id);
         if targetIndex ~= 0 then
             for _, action in ipairs(target.Actions or {}) do
-                -- Check for skillchain message
                 local skillchain = nil;
                 if action.AdditionalEffect then
                     skillchain = skillchainMessageIds[action.AdditionalEffect.Message];
                 end
-
+                if not skillchain then
+                    skillchain = skillchainMessageIds[action.Message];
+                end
                 if skillchain == Resonation.None then
-                    -- Skillchain interrupted
                     resonationMap[targetIndex] = nil;
-
+                    magicBurstMap[targetIndex] = nil;
                 elseif skillchain then
-                    -- Skillchain occurred - update state
                     local resonation = resonationMap[targetIndex];
                     local now = os.clock();
-
+                    local effectiveSkillchain = skillchain;
                     if resonation and (now + 1) > resonation.WindowOpen and (now - 1) < resonation.WindowClose then
-                        -- Continuing existing chain
                         resonation.Depth = resonation.Depth + 1;
-
-                        -- Handle Light/Darkness level escalation
                         if skillchain == Resonation.Light and tableContains(resonation.Attributes, Resonation.Light) then
                             resonation.Attributes = { Resonation.Light2 };
+                            effectiveSkillchain = Resonation.Light2;
                         elseif skillchain == Resonation.Darkness and tableContains(resonation.Attributes, Resonation.Darkness) then
                             resonation.Attributes = { Resonation.Darkness2 };
+                            effectiveSkillchain = Resonation.Darkness2;
                         else
                             resonation.Attributes = { skillchain };
                         end
-
                         resonation.WindowOpen = now + 3.5;
                         resonation.WindowClose = now + (9.8 - resonation.Depth);
                     else
-                        -- New chain from skillchain
                         resonation = {
                             Depth = 1,
                             Attributes = { skillchain },
@@ -582,17 +789,24 @@ function M.HandleActionPacket(actionPacket)
                         };
                         resonationMap[targetIndex] = resonation;
                     end
-
-                elseif weaponskillMessageIds[action.Message] then
-                    -- WS hit without skillchain - set up new resonation
-                    local attributes = weaponskillResonationMap[wsId];
+                    local burstElements = magicBurstElements[effectiveSkillchain];
+                    if burstElements then
+                        magicBurstMap[targetIndex] = {
+                            Elements = burstElements,
+                            ScName = resonationNames[effectiveSkillchain] or resonationNames[skillchain],
+                            WindowOpen = now + MB_WINDOW_OPEN_DELAY,
+                            WindowClose = now + MB_WINDOW_OPEN_DELAY + MB_WINDOW_DURATION,
+                        };
+                    end
+                elseif (actionType == 3 or actionType == 13)
+                    and skillchainWindowOpenMessageIds[action.Message]
+                    and param and param ~= 0 then
+                    local attributes = ResolveOpeningResonationAttributes(actionType, action.Message, param);
                     if attributes then
                         local now = os.clock();
                         resonationMap[targetIndex] = {
                             Depth = 0,
                             Attributes = attributes,
-                            -- For UI prediction, show immediately (window opens now)
-                            -- Actual skillchain can land ~3-10 seconds after opener
                             WindowOpen = now,
                             WindowClose = now + 10.0,
                         };
@@ -606,6 +820,7 @@ end
 -- Clear all state (call on zone change)
 function M.ClearState()
     resonationMap = {};
+    magicBurstMap = {};
 end
 
 -- Clear state for a specific target
@@ -614,8 +829,80 @@ function M.ClearTargetState(targetServerId)
         local targetIndex = GetIndexFromId(targetServerId);
         if targetIndex ~= 0 then
             resonationMap[targetIndex] = nil;
+            magicBurstMap[targetIndex] = nil;
         end
     end
+end
+
+-- Resolve a slot to its burst-eligible element (0-7) or nil.
+function M.GetBurstElementForSlot(slotData)
+    if not slotData or not slotData.actionType then return nil; end
+    local aType = slotData.actionType;
+    if aType == 'ma' then
+        return spellNameToBurstElement(slotData.action);
+    elseif aType == 'pet' then
+        return pactNameToBurstElement(slotData.action);
+    elseif aType == 'macro' and slotData.macroText then
+        local ok, macroparse = pcall(require, 'modules.hotbar.macroparse');
+        if not ok or not macroparse or not macroparse.GetMacroPrimaryAndJaBadge then
+            return nil;
+        end
+        local pType, pName = macroparse.GetMacroPrimaryAndJaBadge(slotData.macroText);
+        if pType == 'ma' and pName then
+            return spellNameToBurstElement(pName);
+        elseif pType == 'pet' and pName then
+            return pactNameToBurstElement(pName);
+        end
+    end
+    return nil;
+end
+
+-- Returns SC name when MB window is open and element matches, else nil.
+function M.GetMagicBurstForElement(targetServerId, element)
+    if element == nil then return nil; end
+    local targetIndex = nil;
+    if targetServerId and targetServerId > 0x8FF then
+        targetIndex = GetIndexFromId(targetServerId);
+    elseif targetServerId and targetServerId > 0 and targetServerId <= 0x8FF then
+        targetIndex = targetServerId;
+    end
+    if not targetIndex or targetIndex == 0 then return nil; end
+    local mb = magicBurstMap[targetIndex];
+    if not mb then return nil; end
+    local now = os.clock();
+    if now > mb.WindowClose then
+        magicBurstMap[targetIndex] = nil;
+        return nil;
+    end
+    if now < mb.WindowOpen then return nil; end
+    for i = 1, #mb.Elements do
+        if mb.Elements[i] == element then
+            return mb.ScName;
+        end
+    end
+    return nil;
+end
+function M.GetMagicBurstForSlot(targetServerId, slotData)
+    local element = M.GetBurstElementForSlot(slotData);
+    if element == nil then return nil; end
+    return M.GetMagicBurstForElement(targetServerId, element);
+end
+function M.GetMagicBurstWindow(targetServerId)
+    local targetIndex = nil;
+    if targetServerId and targetServerId > 0x8FF then
+        targetIndex = GetIndexFromId(targetServerId);
+    elseif targetServerId and targetServerId > 0 and targetServerId <= 0x8FF then
+        targetIndex = targetServerId;
+    end
+    if not targetIndex or targetIndex == 0 then return nil; end
+    local mb = magicBurstMap[targetIndex];
+    if not mb then return nil; end
+    local now = os.clock();
+    if now > mb.WindowClose then
+        magicBurstMap[targetIndex] = nil;
+        return nil;
+    end
+    return mb;
 end
 
 -- Check if skillchain window is open for any target
@@ -632,7 +919,6 @@ end
 -- Animation helper for marching ants effect
 local lastClockRead = 0;
 local cachedAnimOffset = 0;
-
 function M.GetAnimationOffset()
     local now = os.clock();
     if now ~= lastClockRead then
@@ -654,11 +940,10 @@ end
 
 -- Legacy compatibility
 function M.GetWSAttributesByName(wsName)
-    local wsId = GetWSIdFromName(wsName);
+    local wsId = GetWeaponskillIdFromName(wsName);
     if wsId then
         return weaponskillResonationMap[wsId], wsId;
     end
     return nil, nil;
 end
-
 return M;

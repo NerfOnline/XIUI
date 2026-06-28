@@ -5,16 +5,18 @@
 *
 * MUST be called inside an ImGui window context for interactions to work
 ]]--
-
 require('common');
 local ffi = require('ffi');
 local imgui = require('imgui');
 local recast = require('modules.hotbar.recast');
 local actions = require('modules.hotbar.actions');
+local data = require('modules.hotbar.data');
 local playerdata = require('modules.hotbar.playerdata');
 local dragdrop = require('libs.dragdrop');
 local textures = require('modules.hotbar.textures');
 local skillchain = require('modules.hotbar.skillchain');
+local actiondb = require('modules.hotbar.actiondb');
+local petregistry = require('modules.hotbar.petregistry');
 local statusHandler = require('handlers.statushandler');
 local imtext = require('libs.imtext');
 
@@ -37,19 +39,16 @@ local TOOLTIP_WRAP_INDENT = 14;
 local DIM_UNAVAILABLE = 0.3;
 local DIM_RESTRICTED = 0.5;  -- cooldown, insufficient MP/TP
 local DIM_UNAVAILABLE_ALPHA = 0.7;
-
----@return number colorMult
----@return boolean applyGreyTint
-local function GetSlotColorMult(isUnavailable, isOnCooldown, notEnoughMp, notEnoughTp)
+local SKILLCHAIN_HIGHLIGHT_INSUFFICIENT_TP_COLOR = 0xFF888888;
+local function GetSlotColorMult(isUnavailable, isOnCooldown, notEnoughResource)
     if isUnavailable then
         return DIM_UNAVAILABLE, true;
     end
-    if isOnCooldown or notEnoughMp or notEnoughTp then
+    if isOnCooldown or notEnoughResource then
         return DIM_RESTRICTED, false;
     end
     return 1.0, false;
 end
-
 local ACTION_TYPE_LABELS = {
     ma = 'Spell (ma)', ja = 'Ability (ja)', ws = 'Weaponskill (ws)',
     item = 'Item', equip = 'Equip', macro = 'Macro', pet = 'Pet Command',
@@ -62,17 +61,9 @@ local mpCostCache = {};
 -- Structure: { isAvailable = bool, reason = string|nil }
 local availabilityCache = {};
 
--- Throttle (keyed by bindKey) so the expensive availability key build doesn't run
--- every slot every frame. Refreshed ~1 Hz; job/gear/zone changes clear it.
-local availabilityStateMemo = {};
-local AVAIL_MEMO_TTL = 1.0;
-
--- Cache for item quantity lookups (keyed by itemId or itemName)
--- Structure: { quantity = number, timestamp = number }
--- CRITICAL: Without this cache, item quantity lookups scan ALL inventory slots EVERY FRAME
--- which causes massive performance issues (especially for items without itemId that require name matching)
+-- Item quantities use playerdata.CountAccessibleItem (500ms batched inventory scan).
+-- No per-slot timestamp cache here — a long TTL made quantity/cost colors look stale.
 local itemQuantityCache = {};
-local ITEM_QUANTITY_CACHE_TTL = 2.0;  -- Cache for 2 seconds (inventory doesn't change that often)
 
 -- Cache for item stack size lookups (keyed by itemId).
 -- Stack size is static resource data, so cache forever for the session.
@@ -110,8 +101,81 @@ local NINJA_TOOL_MAPPING = {
 
 -- Cache for ninjutsu spell type lookups
 local ninjutsuCache = {};
-
 local M = {};
+
+-- Text measurement cache for stable slot labels (tooltip wrapping uses imtext.Measure directly).
+local measureCache = {};
+local function CachedMeasure(text, fontSize)
+    if not text or text == '' then return 0; end
+    local sizeCache = measureCache[fontSize];
+    if not sizeCache then
+        sizeCache = {};
+        measureCache[fontSize] = sizeCache;
+    end
+    local w = sizeCache[text];
+    if w then return w; end
+    w = imtext.Measure(text, fontSize);
+    sizeCache[text] = w;
+    return w;
+end
+
+-- Clip text to the longest leading run of characters that fits within maxWidth.
+-- No ellipsis is added: the word is simply cut off (e.g. "Nightmare" -> "Nightm").
+local function ClipToWidth(text, fontSize, maxWidth)
+    if not text or text == '' or maxWidth <= 0 then return text or ''; end
+    if CachedMeasure(text, fontSize) <= maxWidth then
+        return text;
+    end
+    for n = #text - 1, 1, -1 do
+        local candidate = text:sub(1, n);
+        if CachedMeasure(candidate, fontSize) <= maxWidth then
+            return candidate;
+        end
+    end
+    return '';
+end
+
+-- Wrap text into whole-word lines that each fit maxWidth. A single word wider than
+-- maxWidth is cut off (no ellipsis) onto its own line. Words past maxLines are
+-- dropped. Returns an array of line strings.
+local function WrapToWidth(text, fontSize, maxWidth, maxLines)
+    local lines = {};
+    if not text or text == '' or maxWidth <= 0 then return lines; end
+    maxLines = maxLines or 2;
+    local current = '';
+    for word in text:gmatch('%S+') do
+        if #lines >= maxLines then break; end
+        local candidate = (current == '') and word or (current .. ' ' .. word);
+        if CachedMeasure(candidate, fontSize) <= maxWidth then
+            current = candidate;
+        else
+            if current ~= '' then
+                lines[#lines + 1] = current;
+                current = '';
+                if #lines >= maxLines then break; end
+            end
+            if CachedMeasure(word, fontSize) <= maxWidth then
+                current = word;
+            else
+                lines[#lines + 1] = ClipToWidth(word, fontSize, maxWidth);
+            end
+        end
+    end
+    if current ~= '' and #lines < maxLines then
+        lines[#lines + 1] = current;
+    end
+    return lines;
+end
+
+-- Reusable RGBA table for imgui.GetColorU32 (avoids per-frame color table allocations)
+local tmpColor = {0, 0, 0, 0};
+local function ColorU32(r, g, b, a)
+    tmpColor[1] = r;
+    tmpColor[2] = g;
+    tmpColor[3] = b;
+    tmpColor[4] = a;
+    return imgui.GetColorU32(tmpColor);
+end
 
 -- Get abbreviated text for an action (used when no icon available)
 -- @param bind: Action bind data with displayName or action field
@@ -147,7 +211,6 @@ local function GetActionAbbreviation(bind)
             end
         end
     end
-
     if wordCount > 1 then
         return letters;
     end
@@ -161,8 +224,36 @@ end
 -- Caller must have already configured imtext (font_settings) for this frame.
 function M.ComputeAbbreviation(bind)
     local abbr = GetActionAbbreviation(bind);
-    local w = imtext.Measure(abbr, 12);
+    local w = CachedMeasure(abbr, 12);
     return abbr, w;
+end
+
+-- Shared icon + abbreviation cache for hotbar (display) and crossbar slots.
+-- cache[groupKey][slotKey] = { bindKey, icon, abbr, abbrW }
+function M.GetCachedSlotIcon(cache, groupKey, slotKey, bind)
+    if not cache[groupKey] then
+        cache[groupKey] = {};
+    end
+    local cached = cache[groupKey][slotKey];
+    local bindKey = data.BuildSlotIconCacheKey(bind);
+    if cached and cached.bindKey == bindKey then
+        return cached.icon, cached.abbr, cached.abbrW;
+    end
+    local icon = nil;
+    if bind and bind.actionType then
+        icon = actions.GetBindIcon(bind);
+    end
+    local abbr, abbrW = nil, nil;
+    if not icon and bind then
+        abbr, abbrW = M.ComputeAbbreviation(bind);
+    end
+    cache[groupKey][slotKey] = {
+        bindKey = bindKey,
+        icon = icon,
+        abbr = abbr,
+        abbrW = abbrW,
+    };
+    return icon, abbr, abbrW;
 end
 
 -- Cache for equipment checks (keyed by itemId)
@@ -210,16 +301,97 @@ local function GetAmmoStatusEffect(itemId)
     -- Look up item name
     local resMgr = AshitaCore:GetResourceManager();
     if not resMgr then return nil; end
-
     local item = resMgr:GetItemById(itemId);
     if item and item.Name and item.Name[1] then
         local statusId = AMMO_STATUS_EFFECTS_BY_NAME[item.Name[1]];
         ammoStatusCache[itemId] = statusId or false;  -- Cache misses too
         return statusId;
     end
-
     ammoStatusCache[itemId] = false;
     return nil;
+end
+
+--- Status effect ID for ammo/status items (e.g. Acid Bolt -> Defense Down), or nil.
+function M.GetItemStatusEffectId(itemId)
+    return GetAmmoStatusEffect(itemId);
+end
+
+--- Draw a themed status icon in the top-right corner of a slot icon.
+local function DrawCornerStatusIcon(drawList, x, y, size, statusIconPtr, opacity, dimState)
+    if not drawList or not statusIconPtr then
+        return;
+    end
+    opacity = opacity or 1.0;
+    if opacity <= 0.5 then
+        return;
+    end
+    local iconSize = size * 0.35;
+    local padding = 2;
+    local iconX = x + size - iconSize - padding;
+    local iconY = y + padding;
+    local r, g, b = 255, 255, 255;
+    if dimState then
+        local colorMult, applyGreyTint = GetSlotColorMult(
+            dimState.isUnavailable, dimState.isOnCooldown, dimState.notEnoughResource
+        );
+        if applyGreyTint then
+            local grey = math.floor(180 * colorMult);
+            r, g, b = grey, grey, grey;
+        else
+            local rgb = math.floor(255 * colorMult);
+            r, g, b = rgb, rgb, rgb;
+        end
+    end
+    local dimAlpha = 1.0;
+    if dimState and dimState.isUnavailable then
+        dimAlpha = DIM_UNAVAILABLE_ALPHA;
+    end
+    local iconAlpha = math.floor(255 * opacity * dimAlpha);
+    local iconTint = bit.bor(
+        bit.lshift(iconAlpha, 24),
+        bit.lshift(r, 16),
+        bit.lshift(g, 8),
+        b
+    );
+    drawList:AddImage(
+        statusIconPtr,
+        { iconX, iconY },
+        { iconX + iconSize, iconY + iconSize },
+        { 0, 0 },
+        { 1, 1 },
+        iconTint
+    );
+end
+
+--- Draw status effect icon overlay for status ammo items (top-right of icon area).
+function M.DrawItemStatusEffectOverlay(drawList, x, y, size, itemId, opacity, dimState)
+    if not drawList or not itemId then return; end
+    local statusId = GetAmmoStatusEffect(itemId);
+    if not statusId then return; end
+    local statusIconPtr = statusHandler.get_icon_from_theme(gConfig.statusIconTheme, statusId);
+    DrawCornerStatusIcon(drawList, x, y, size, statusIconPtr, opacity, dimState);
+end
+local function ResolveBloodPactName(bind)
+    if not bind then return nil; end
+    if bind.actionType == 'pet' and bind.action and bind.action ~= '' then
+        return bind.action;
+    end
+    if bind.action and bind.action ~= '' and petregistry.IsBloodPactName(bind.action) then
+        return bind.action;
+    end
+    return nil;
+end
+function M.GetBloodPactNameFromBind(bind)
+    return ResolveBloodPactName(bind);
+end
+
+--- Draw status effect icon overlay for blood pact ward/buff (top-right of icon area).
+function M.DrawBloodPactStatusEffectOverlay(drawList, x, y, size, pactName, opacity, dimState)
+    if not drawList or not pactName then return; end
+    local statusId = actiondb.GetBloodPactStatusEffectId(pactName);
+    if not statusId then return; end
+    local statusIconPtr = statusHandler.get_icon_from_theme(gConfig.statusIconTheme, statusId);
+    DrawCornerStatusIcon(drawList, x, y, size, statusIconPtr, opacity, dimState);
 end
 
 -- Check if an item is equipment (armor, weapons, accessories) by its item data
@@ -236,10 +408,8 @@ local function IsEquipmentItem(itemId)
     if equipmentCheckCache[itemId] ~= nil then
         return equipmentCheckCache[itemId];
     end
-
     local resMgr = AshitaCore:GetResourceManager();
     if not resMgr then return nil; end
-
     local isEquip = false;
     local item = resMgr:GetItemById(itemId);
     if item then
@@ -267,7 +437,6 @@ local function IsEquipmentItem(itemId)
             isEquip = true;
         end
     end
-
     equipmentCheckCache[itemId] = isEquip;
     return isEquip;
 end
@@ -277,24 +446,11 @@ end
 -- @param itemName: Item name (fallback for lookup)
 -- @return: Total quantity or nil
 function M.GetItemQuantity(itemId, itemName)
-    -- Build cache key (prefer itemId, fall back to name)
-    local cacheKey = itemId and ('id:' .. itemId) or (itemName and ('name:' .. itemName) or nil);
-    if not cacheKey then return nil; end
-
-    -- Check cache first (CRITICAL for performance - avoids full inventory scan every frame)
-    local now = os.clock();
-    local cached = itemQuantityCache[cacheKey];
-    if cached and (now - cached.timestamp) < ITEM_QUANTITY_CACHE_TTL then
-        return cached.quantity;
+    if not itemId and (not itemName or itemName == '') then
+        return nil;
     end
-
     local totalCount = playerdata.CountAccessibleItem(itemId, itemName);
-
-    -- Cache the result
-    local result = totalCount > 0 and totalCount or nil;
-    itemQuantityCache[cacheKey] = { quantity = result, timestamp = now };
-
-    return result;
+    return totalCount > 0 and totalCount or nil;
 end
 
 -- Get the stack size of an item (max items per stack).
@@ -305,7 +461,6 @@ function M.GetItemStackSize(itemId)
     if cached ~= nil then
         return cached or nil;  -- false sentinel -> nil
     end
-
     local resMgr = AshitaCore:GetResourceManager();
     if not resMgr then return nil; end
     local itemRes = resMgr:GetItemById(itemId);
@@ -334,7 +489,6 @@ local function GetNinjutsuToolIds(spellName)
     if baseName then
         baseName = baseName:gsub('%s+$', ''); -- Trim trailing whitespace
     end
-
     local toolIds = NINJA_TOOL_MAPPING[baseName];
     ninjutsuCache[spellName] = toolIds or false; -- Cache nil as false to distinguish from uncached
     return toolIds;
@@ -354,6 +508,23 @@ function M.GetNinjutsuToolQuantity(spellName)
     return total;
 end
 
+--- Hide spell tool / macro item-recast quantity when heavily dimmed; items keep x0 visible.
+local function ShouldHideQuantityWhenUnavailable(bind, isUnavailable)
+    if not isUnavailable or not bind then
+        return false;
+    end
+    if bind.actionType == 'item' then
+        return false;
+    end
+    if bind.actionType == 'macro' and bind.recastSourceType == 'item' then
+        return true;
+    end
+    if bind.actionType == 'ma' and M.GetNinjutsuToolQuantity(bind.action) ~= nil then
+        return true;
+    end
+    return false;
+end
+
 -- Cached asset path
 local assetsPath = nil;
 
@@ -371,7 +542,6 @@ local UV1 = {1, 1};
 -- and stores the derived uint32 pointer for fast AddImage calls.
 -- Entry: { tex = textureTable, ptr = uint32Number } or false (load failed)
 local texturePtrCache = {};
-
 local function GetCachedTexturePtr(filePath)
     if not filePath then return nil; end
     local cached = texturePtrCache[filePath];
@@ -392,7 +562,6 @@ end
 -- Clear all cached state
 function M.ClearAllCache()
     availabilityCache = {};
-    availabilityStateMemo = {};
     mpCostCache = {};
     equipmentCheckCache = {};
     ninjutsuCache = {};
@@ -412,7 +581,7 @@ end
 -- Clear availability cache (call on job change, level sync, etc.)
 function M.ClearAvailabilityCache()
     availabilityCache = {};
-    availabilityStateMemo = {};
+    playerdata.ClearSpellProfileCache();
 end
 
 -- Clear MP cost cache (call when a slot's action/spell may have changed, e.g. macro edits).
@@ -432,22 +601,25 @@ local function AppendOwnedFlag(key, itemId, itemName)
     local owned = playerdata.IsItemOwned(itemId, itemName);
     return key .. ':' .. (owned and '1' or '0');
 end
-
 local function AppendAccessibleFlag(key, itemId, itemName)
     local accessible = playerdata.IsItemInAccessibleInventory(itemId, itemName);
     return key .. ':' .. (accessible and '1' or '0');
 end
-
 local function BuildAvailabilityCacheKey(bind, bindKey)
     local key = bindKey or '';
     if not bind then
         return key;
     end
-
-    if bind.actionType == 'macro' and bind.recastSourceType and bind.recastSourceType ~= 'none' then
-        key = key .. ':rs:' .. bind.recastSourceType .. ':' .. (bind.recastSourceAction or '');
-        if bind.recastSourceType == 'item' then
-            key = AppendAccessibleFlag(key, bind.recastSourceItemId, bind.recastSourceAction);
+    if bind.actionType == 'macro' then
+        if bind.recastSourceType and bind.recastSourceType ~= 'none' then
+            key = key .. ':rs:' .. bind.recastSourceType .. ':' .. (bind.recastSourceAction or '');
+            if bind.recastSourceType == 'item' then
+                key = AppendAccessibleFlag(key, bind.recastSourceItemId, bind.recastSourceAction);
+            end
+        end
+        local macroText = bind.macroText or bind.action or '';
+        if macroText ~= '' then
+            key = key .. ':mt:' .. macroText;
         end
     elseif bind.actionType == 'equip' then
         key = key .. ':' .. (bind.equipSlot or '');
@@ -455,54 +627,57 @@ local function BuildAvailabilityCacheKey(bind, bindKey)
     elseif bind.actionType == 'item' then
         key = AppendAccessibleFlag(key, bind.itemId, bind.action);
     end
-
+    if bind.actionType == 'ma'
+        or bind.actionType == 'ja'
+        or (bind.actionType == 'macro' and (bind.recastSourceType == 'ma' or bind.recastSourceType == 'ja')) then
+        key = key .. ':sb:' .. playerdata.GetSpellAvailBuffSignature();
+    end
     local player = AshitaCore:GetMemoryManager():GetPlayer();
     local jobId = player and player:GetMainJob() or 0;
     local subjobId = player and player:GetSubJob() or 0;
-    return key .. ':' .. jobId .. ':' .. subjobId .. ':' .. playerdata.GetEquipmentSignature();
+    local mainLevel = player and player:GetMainJobLevel() or 0;
+    local subLevel = player and player:GetSubJobLevel() or 0;
+    key = key .. ':' .. jobId .. ':' .. subjobId .. ':' .. mainLevel .. ':' .. subLevel
+        .. ':' .. playerdata.GetEquipmentSignature()
+        .. ':' .. playerdata.GetPetAvailabilitySignature(jobId)
+        .. ':slv:' .. playerdata.GetSpellListVersion()
+        .. ':alv:' .. playerdata.GetAbilityListVersion();
+    if bind.actionType == 'macro' and bind.recastSourceType == 'pet' then
+        key = key .. ':petctx';
+    elseif bind.actionType == 'pet' then
+        key = key .. ':petctx';
+    elseif bind.actionType == 'macro' and bind.recastSourceType == 'ja' then
+        key = key .. ':petja:' .. (bind.recastSourceAction or '');
+    elseif bind.actionType == 'ja' then
+        key = key .. ':petja:' .. (bind.action or '');
+    end
+    return key;
 end
 
+-- Heavy dim when unavailable. Results are memoized per bind context (job, buffs,
+-- equipment, inventory flags, list-packet versions) and flushed on those signals.
 local function GetAvailabilityState(bind, bindKey)
     if not bind or not actions.NeedsAvailabilityCheck(bind) then
         return false, nil;
     end
-
-    local now = os.clock();
-    local memo = availabilityStateMemo[bindKey];
-    if memo and (now - memo.ts) < AVAIL_MEMO_TTL then
-        return memo.isUnavailable, memo.reason;
+    local cacheKey = BuildAvailabilityCacheKey(bind, bindKey);
+    local cached = availabilityCache[cacheKey];
+    if cached ~= nil then
+        return not cached.available, cached.reason;
     end
-
-    local availKey = BuildAvailabilityCacheKey(bind, bindKey);
-    local cached = availabilityCache[availKey];
-    if cached == nil then
-        local available, reason, cacheable = actions.IsActionAvailable(bind);
-        if reason == 'pending' then
-            -- Transient (e.g. job data invalid while zoning): use this frame's
-            -- value, drop the reason, and don't cache.
-            cached = { isAvailable = available, reason = nil };
-        elseif cacheable == false then
-            -- Volatile negative (list not loaded yet post-zone): use it this frame
-            -- but don't cache, so it self-heals once the list loads.
-            cached = { isAvailable = available, reason = reason };
-        else
-            availabilityCache[availKey] = { isAvailable = available, reason = reason };
-            cached = availabilityCache[availKey];
-        end
+    local available, reason = actions.IsActionAvailable(bind);
+    if reason == 'pending' then
+        return false, nil;
     end
-
-    local isUnavailable = not cached.isAvailable;
-    availabilityStateMemo[bindKey] = { ts = now, isUnavailable = isUnavailable, reason = cached.reason };
-    return isUnavailable, cached.reason;
+    availabilityCache[cacheKey] = { available = available, reason = reason };
+    return not available, reason;
 end
-
 local function GetAssetsPath()
     if not assetsPath then
         assetsPath = string.format('%saddons\\XIUI\\assets\\hotbar\\', AshitaCore:GetInstallPath());
     end
     return assetsPath;
 end
-
 local cachedSlotTexPath = nil;
 local function GetSlotTexPath()
     if not cachedSlotTexPath then
@@ -522,9 +697,7 @@ local function GetAnchoredPosition(x, y, size, anchor, offsetX, offsetY, padding
     padding = padding or 2;
     offsetX = offsetX or 0;
     offsetY = offsetY or 0;
-    
     local posX, posY;
-    
     if anchor == 'topRight' then
         posX = x + size - padding;
         posY = y + padding;
@@ -538,7 +711,6 @@ local function GetAnchoredPosition(x, y, size, anchor, offsetX, offsetY, padding
         posX = x + padding;
         posY = y + padding;
     end
-    
     return posX + offsetX, posY + offsetY;
 end
 
@@ -549,7 +721,6 @@ end
 -- Skillchain icon cache (loaded on first use)
 local skillchainIconCache = {};
 local skillchainIconsPath = nil;
-
 local function GetSkillchainIconsPath()
     if not skillchainIconsPath then
         skillchainIconsPath = string.format('%saddons\\XIUI\\assets\\hotbar\\skillchain\\', AshitaCore:GetInstallPath());
@@ -579,12 +750,10 @@ local function DrawDashedLine(drawList, x1, y1, x2, y2, color, thickness, dashLe
     -- Start position with offset for animation
     local totalLen = dashLen + gapLen;
     local startOffset = offset % totalLen;
-
     local pos = -startOffset;  -- Start slightly before to handle offset
     while pos < len do
         local dashStart = math.max(0, pos);
         local dashEnd = math.min(len, pos + dashLen);
-
         if dashEnd > dashStart then
             local sx = x1 + nx * dashStart;
             local sy = y1 + ny * dashStart;
@@ -592,7 +761,6 @@ local function DrawDashedLine(drawList, x1, y1, x2, y2, color, thickness, dashLe
             local ey = y1 + ny * dashEnd;
             drawList:AddLine({sx, sy}, {ex, ey}, color, thickness);
         end
-
         pos = pos + totalLen;
     end
 end
@@ -615,7 +783,7 @@ local function DrawSkillchainHighlight(drawList, x, y, size, scName, color, opac
     local r = bit.rshift(bit.band(color, 0x00FF0000), 16) / 255;
     local g = bit.rshift(bit.band(color, 0x0000FF00), 8) / 255;
     local b = bit.band(color, 0x000000FF) / 255;
-    local lineColor = imgui.GetColorU32({r, g, b, a / 255});
+    local lineColor = ColorU32(r, g, b, a / 255);
 
     -- Dashed line parameters
     local dashLen = 4;
@@ -646,7 +814,6 @@ local function DrawSkillchainHighlight(drawList, x, y, size, scName, color, opac
         local tex = textures:LoadTextureFromPath(iconPath);
         skillchainIconCache[scName] = tex;
     end
-
     local iconTex = skillchainIconCache[scName];
     if iconTex and iconTex.image then
         local iconPtr = tonumber(ffi.cast("uint32_t", iconTex.image));
@@ -658,6 +825,51 @@ local function DrawSkillchainHighlight(drawList, x, y, size, scName, color, opac
                 {iconX, iconY},
                 {iconX + iconSize, iconY + iconSize},
                 {0, 0}, {1, 1},
+                iconTint
+            );
+        end
+    end
+end
+
+-- Draw Magic Burst highlight (dashed border + SC icon in bottom-left corner).
+local function DrawMagicBurstHighlight(drawList, x, y, size, scName, color, opacity)
+    if not drawList or not scName or opacity <= 0.01 then return; end
+    local animOffset = skillchain.GetAnimationOffset();
+    local a = math.floor(bit.rshift(bit.band(color, 0xFF000000), 24) * opacity);
+    local r = bit.rshift(bit.band(color, 0x00FF0000), 16) / 255;
+    local g = bit.rshift(bit.band(color, 0x0000FF00), 8) / 255;
+    local b = bit.band(color, 0x000000FF) / 255;
+    local lineColor = ColorU32(r, g, b, a / 255);
+    local dashLen = 4;
+    local gapLen = 4;
+    local thickness = 2;
+    local mbAnimOffset = (animOffset + (dashLen + gapLen) * 0.5) % (dashLen + gapLen);
+    DrawDashedLine(drawList, x, y, x + size, y, lineColor, thickness, dashLen, gapLen, mbAnimOffset);
+    DrawDashedLine(drawList, x + size, y, x + size, y + size, lineColor, thickness, dashLen, gapLen, mbAnimOffset);
+    DrawDashedLine(drawList, x + size, y + size, x, y + size, lineColor, thickness, dashLen, gapLen, mbAnimOffset);
+    DrawDashedLine(drawList, x, y + size, x, y, lineColor, thickness, dashLen, gapLen, mbAnimOffset);
+    local scale = gConfig.hotbarGlobal.skillchainIconScale or 1.0;
+    local iconSize = math.floor(size * 0.35 * scale);
+    local offsetX = gConfig.hotbarGlobal.skillchainIconOffsetX or 0;
+    local offsetY = gConfig.hotbarGlobal.skillchainIconOffsetY or 0;
+    local iconX = x + 2 + offsetX;
+    local iconY = y + size - iconSize - 2 + offsetY;
+    local iconPath = GetSkillchainIconsPath() .. scName .. '.png';
+    if not skillchainIconCache[scName] then
+        local tex = textures:LoadTextureFromPath(iconPath);
+        skillchainIconCache[scName] = tex;
+    end
+    local iconTex = skillchainIconCache[scName];
+    if iconTex and iconTex.image then
+        local iconPtr = tonumber(ffi.cast("uint32_t", iconTex.image));
+        if iconPtr then
+            local iconAlpha = math.floor(255 * opacity);
+            local iconTint = bit.bor(bit.lshift(iconAlpha, 24), 0x00FFFFFF);
+            drawList:AddImage(
+                iconPtr,
+                { iconX, iconY },
+                { iconX + iconSize, iconY + iconSize },
+                { 0, 0 }, { 1, 1 },
                 iconTint
             );
         end
@@ -681,7 +893,6 @@ end
     Render a slot with all components and handle all interactions.
     All rendering uses ImGui draw lists (AddImage for textures, imtext for text).
     MUST be called inside an ImGui window context for interactions to work.
-
     @param params: Rendering and interaction parameters (position, bind, icon, visual settings, callbacks)
     @return table: { isHovered } (reused - read values immediately, do NOT cache)
 ]]--
@@ -723,7 +934,6 @@ function M.DrawSlot(params)
             local finalColor = slotBgColor;
             local hoverDim = (isHovered and not dragdrop.IsDragging()) and 0.8 or 1.0;
             local totalDim = dimFactor * hoverDim;
-
             if totalDim < 1.0 then
                 local a = bit.rshift(bit.band(slotBgColor, 0xFF000000), 24);
                 local r = math.floor(bit.rshift(bit.band(slotBgColor, 0x00FF0000), 16) * totalDim);
@@ -744,7 +954,6 @@ function M.DrawSlot(params)
                 local a = math.floor(bit.rshift(bit.band(finalColor, 0xFF000000), 24) * animOpacity);
                 finalColor = bit.bor(bit.lshift(a, 24), bit.band(finalColor, 0x00FFFFFF));
             end
-
             imgP1[1] = x; imgP1[2] = y;
             imgP2[1] = x + size; imgP2[2] = y + size;
             drawList:AddImage(slotTexPtr, imgP1, imgP2, UV0, UV1, finalColor);
@@ -767,29 +976,38 @@ function M.DrawSlot(params)
     local isOnCooldown = cooldown.isOnCooldown;
     local recastText = cooldown.recastText;
 
-    -- Check if player has enough MP for spells (also includes macros whose
-    -- recast source is a spell — they show the source spell's MP cost).
-    local notEnoughMp = false;
+    -- Resource cost (MP/TP/flourish/runes) and availability
+    local resourceCost = nil;
+    local resourceCostMet = true;
+    local resourceCostKind = nil;
     local bindKey = bind and ((bind.actionType or '') .. ':' .. (bind.action or '')) or '';
-    local hasMpCost = bind and (
-        bind.actionType == 'ma'
-        or bind.actionType == 'ja'
-        or (bind.actionType == 'macro'
-            and (bind.recastSourceType == 'ma' or bind.recastSourceType == 'ja')
-            and bind.recastSourceAction)
-    );
-    if hasMpCost then
-        local mpCost = mpCostCache[bindKey];
-        if mpCost == nil then
-            mpCost = actions.GetMPCost(bind) or false;
-            mpCostCache[bindKey] = mpCost;
-        end
-        if mpCost and mpCost ~= false then
-            local party = AshitaCore:GetMemoryManager():GetParty();
-            local playerMp = party and party:GetMemberMP(0) or 0;
-            notEnoughMp = playerMp < mpCost;
+    if bind and bind.actionType == 'macro' and bind.recastSourceType and bind.recastSourceType ~= 'none' then
+        bindKey = bindKey .. ':rs:' .. bind.recastSourceType .. ':' .. (bind.recastSourceAction or '');
+    end
+    if bind and actions.NeedsActionCostDisplay(bind) then
+        local costKey = bindKey .. ':c:' .. playerdata.GetCostBuffSignature();
+        local cachedCost = mpCostCache[costKey];
+        -- Charge pools (SCH stratagems) regenerate over time — recompute every frame.
+        -- MP/TP pools also change constantly; cache the display cost only, not met.
+        if cachedCost == nil or cachedCost.kind == 'charge' then
+            resourceCost, resourceCostMet, resourceCostKind = actions.GetActionCost(bind);
+            mpCostCache[costKey] = {
+                cost = resourceCost,
+                met = resourceCostMet,
+                kind = resourceCostKind,
+            };
+        else
+            resourceCost = cachedCost.cost;
+            resourceCostKind = cachedCost.kind;
+            local liveMet = actions.IsResourceCostMet(resourceCostKind, resourceCost);
+            if liveMet ~= nil then
+                resourceCostMet = liveMet;
+            else
+                resourceCostMet = cachedCost.met;
+            end
         end
     end
+    local notEnoughResource = resourceCostKind and resourceCostMet == false;
 
     -- Check if action is available (job/level/gear/pet/inventory requirements)
     local isUnavailable = false;
@@ -797,17 +1015,27 @@ function M.DrawSlot(params)
         isUnavailable = select(1, GetAvailabilityState(bind, bindKey));
     end
 
-    -- Weaponskills (and WS recast-source macros) dim when TP is below the WS cost
-    local notEnoughTp = false;
+    -- Weaponskills dim when TP is below the WS cost
+    local notEnoughTp = resourceCostKind == 'tp' and notEnoughResource;
     if bind and actions.NeedsTpCheck(bind) and not isUnavailable then
-        notEnoughTp = not actions.HasEnoughTpForBind(bind);
+        notEnoughTp = notEnoughTp or (not actions.HasEnoughTpForBind(bind));
+    end
+    if notEnoughTp then
+        notEnoughResource = true;
+    end
+
+    -- Charge-based abilities (e.g. SCH stratagems) stay usable while charges remain.
+    -- Their shared recharge timer should not dim the slot or draw as a cooldown;
+    -- the charge count (red at 0) communicates readiness instead.
+    if resourceCostKind == 'charge' then
+        isOnCooldown = false;
+        recastText = nil;
     end
 
     -- ========================================
     -- 4. Icon Rendering (unified ImGui AddImage path)
     -- ========================================
     local iconRendered = false;
-
     if icon and icon.image and drawList then
         local iconPtr = tonumber(ffi.cast("uint32_t", icon.image));
         if iconPtr then
@@ -825,7 +1053,7 @@ function M.DrawSlot(params)
 
             -- Calculate color: unavailable/cooldown/noMP darkening + dim factor + animation opacity
             local colorMult, applyGreyTint = GetSlotColorMult(
-                isUnavailable, isOnCooldown, notEnoughMp, notEnoughTp
+                isUnavailable, isOnCooldown, notEnoughResource
             );
             colorMult = colorMult * dimFactor;
 
@@ -839,7 +1067,6 @@ function M.DrawSlot(params)
                 local rgb = math.floor(255 * colorMult);
                 r, g, b = rgb, rgb, rgb;
             end
-
             local alpha = math.floor(255 * animOpacity * (isUnavailable and DIM_UNAVAILABLE_ALPHA or 1.0));
             local tintColor = bit.bor(
                 bit.lshift(alpha, 24),
@@ -847,7 +1074,6 @@ function M.DrawSlot(params)
                 bit.lshift(g, 8),
                 b
             );
-
             imgP1[1] = iconX; imgP1[2] = iconY;
             imgP2[1] = iconX + renderedWidth; imgP2[2] = iconY + renderedHeight;
             drawList:AddImage(iconPtr, imgP1, imgP2, UV0, UV1, tintColor);
@@ -865,13 +1091,11 @@ function M.DrawSlot(params)
         else
             framePath = textures:GetPath('frame');
         end
-
         if framePath then
             local frameTexPtr = GetCachedTexturePtr(framePath);
             if frameTexPtr then
                 local frameAlpha = math.floor(255 * animOpacity);
                 local frameColor = bit.bor(bit.lshift(frameAlpha, 24), 0x00FFFFFF);
-
                 imgP1[1] = x; imgP1[2] = y;
                 imgP2[1] = x + size; imgP2[2] = y + size;
                 drawList:AddImage(frameTexPtr, imgP1, imgP2, UV0, UV1, frameColor);
@@ -890,10 +1114,9 @@ function M.DrawSlot(params)
         local abbrW = params.cachedAbbrW;
         if not abbr then
             abbr = GetActionAbbreviation(bind);
-            abbrW = imtext.Measure(abbr, 12);
+            abbrW = CachedMeasure(abbr, 12);
         end
-
-        local colorMult = select(1, GetSlotColorMult(isUnavailable, isOnCooldown, notEnoughMp, notEnoughTp));
+        local colorMult = select(1, GetSlotColorMult(isUnavailable, isOnCooldown, notEnoughResource));
         colorMult = colorMult * dimFactor;
         -- Gold base: R=244, G=218, B=151 (0xF4DA97)
         local r = math.floor(244 * colorMult);
@@ -922,7 +1145,7 @@ function M.DrawSlot(params)
             local cb = bit.band(timerColor, 0x000000FF);
             timerColor = bit.bor(bit.lshift(alpha, 24), bit.lshift(cr, 16), bit.lshift(cg, 8), cb);
         end
-        local timerW = imtext.Measure(recastText, timerFontSize);
+        local timerW = CachedMeasure(recastText, timerFontSize);
         local timerX = x + (size - timerW) / 2;
         local timerY = y + size / 2 - 6;
         imtext.DrawShadow(drawList, recastText, timerX, timerY, timerColor, timerFontSize);
@@ -937,14 +1160,14 @@ function M.DrawSlot(params)
         local kbAnchor = params.keybindAnchor or 'topLeft';
         local kbX, kbY = GetAnchoredPosition(x, y, size, kbAnchor, params.keybindOffsetX, params.keybindOffsetY);
         if kbAnchor == 'topRight' or kbAnchor == 'bottomRight' then
-            local kbW = imtext.Measure(params.keybindText, kbFontSize);
+            local kbW = CachedMeasure(params.keybindText, kbFontSize);
             kbX = kbX - kbW;
         end
         imtext.Draw(drawList, params.keybindText, kbX, kbY, kbColor, kbFontSize);
     end
 
     -- ========================================
-    -- 9. Label Text (action name below slot)
+    -- 9. Label Text (action name below/above slot)
     -- ========================================
     if params.showLabel and params.labelText and params.labelText ~= '' and animOpacity > 0.5 and drawList then
         local lblFontSize = params.labelFontSize or 10;
@@ -954,13 +1177,39 @@ function M.DrawSlot(params)
             labelColor = 0xFF888888;
         elseif isOnCooldown then
             labelColor = params.labelCooldownColor or 0xFF888888;
-        elseif notEnoughMp or notEnoughTp then
+        elseif notEnoughResource then
             labelColor = params.labelNoMpColor or 0xFFFF4444;
         end
-        local lblW = imtext.Measure(params.labelText, lblFontSize);
-        local labelX = x + (size - lblW) / 2 + (params.labelOffsetX or 0);
-        local labelY = y + size + 2 + (params.labelOffsetY or 0);
-        imtext.Draw(drawList, params.labelText, labelX, labelY, labelColor, lblFontSize);
+        -- Labels are clamped to the slot width so they never overlap neighbours.
+        -- Default: cut a single line off at the slot width (no ellipsis).
+        -- Optional: wrap on whole words across up to 2 lines.
+        local maxWidth = size;
+        local offsetX = params.labelOffsetX or 0;
+        local offsetY = params.labelOffsetY or 0;
+        local lineH = (params.labelLineHeight and params.labelLineHeight > 0)
+            and params.labelLineHeight or (lblFontSize + 1);
+        local lines;
+        if params.labelWrap then
+            lines = WrapToWidth(params.labelText, lblFontSize, maxWidth, params.labelMaxLines or 2);
+        else
+            lines = { ClipToWidth(params.labelText, lblFontSize, maxWidth) };
+        end
+
+        -- Anchor below the slot by default. labelAbove stacks the block above the
+        -- slot instead (crossbar top buttons). Y offset moves text away from the
+        -- button when positive (+Y down below, -Y up above).
+        local firstLineY;
+        if params.labelAbove then
+            firstLineY = y - 1 - (#lines * lineH) - offsetY;
+        else
+            firstLineY = y + size + offsetY;
+        end
+        for i = 1, #lines do
+            local line = lines[i];
+            local lblW = CachedMeasure(line, lblFontSize);
+            local labelX = x + (size - lblW) / 2 + offsetX;
+            imtext.Draw(drawList, line, labelX, firstLineY + (i - 1) * lineH, labelColor, lblFontSize);
+        end
     end
 
     -- ========================================
@@ -974,32 +1223,27 @@ function M.DrawSlot(params)
             local mpFontSize = params.mpCostFontSize or 10;
             local mpX, mpY = GetAnchoredPosition(x, y, size, mpAnchor, params.mpCostOffsetX, params.mpCostOffsetY);
 
-            -- Unavailable "X" overlay (items use x-count instead)
+            -- Unavailable "X" overlay (pure item slots use x-count instead)
             if isUnavailable and not actions.UsesItemQuantityOverlay(bind) then
                 local xText = "X";
                 local xColor = 0xFFFF4444;
                 if mpAnchor == 'topRight' or mpAnchor == 'bottomRight' then
-                    local w = imtext.Measure(xText, mpFontSize);
+                    local w = CachedMeasure(xText, mpFontSize);
                     mpX = mpX - w;
                 end
                 imtext.Draw(drawList, xText, mpX, mpY, xColor, mpFontSize);
             else
-                local mpCost = mpCostCache[bindKey];
-                if mpCost == nil then
-                    mpCost = actions.GetMPCost(bind) or false;
-                    mpCostCache[bindKey] = mpCost;
-                end
-                if mpCost and mpCost ~= false then
-                    local mpText = tostring(mpCost);
-                    local mpCostColor = params.mpCostFontColor or 0xFFD4FF97;
-                    if notEnoughMp then
-                        mpCostColor = params.mpCostNoMpColor or 0xFFFF4444;
+                if resourceCostKind and resourceCost ~= nil then
+                    local costText = resourceCostKind == 'mp_all' and 'All' or tostring(resourceCost);
+                    local costColor = params.mpCostFontColor or 0xFFD4FF97;
+                    if notEnoughResource then
+                        costColor = params.mpCostNoMpColor or 0xFFFF4444;
                     end
                     if mpAnchor == 'topRight' or mpAnchor == 'bottomRight' then
-                        local w = imtext.Measure(mpText, mpFontSize);
+                        local w = CachedMeasure(costText, mpFontSize);
                         mpX = mpX - w;
                     end
-                    imtext.Draw(drawList, mpText, mpX, mpY, mpCostColor, mpFontSize);
+                    imtext.Draw(drawList, costText, mpX, mpY, costColor, mpFontSize);
                 end
             end
         end
@@ -1013,7 +1257,6 @@ function M.DrawSlot(params)
         local showQuantity = params.showQuantity ~= false;
         local quantity = nil;
         local shouldShowQty = false;
-
         if showQuantity and bind and animOpacity > 0.5 then
             if bind.actionType == 'item' then
                 -- Skip quantity display for equipment items (armor, weapons, accessories)
@@ -1038,8 +1281,8 @@ function M.DrawSlot(params)
                 end
             end
         end
-
-        if shouldShowQty and quantity ~= nil and drawList then
+        if shouldShowQty and quantity ~= nil and drawList
+            and not ShouldHideQuantityWhenUnavailable(bind, isUnavailable) then
             local qtyText = 'x' .. tostring(quantity);
             local qtyFontSize = params.quantityFontSize or 10;
             local qtyColor = quantity == 0 and 0xFFFF4444 or (params.quantityFontColor or 0xFFFFFFFF);
@@ -1047,7 +1290,7 @@ function M.DrawSlot(params)
             local isRight = (qtyAnchor == 'topRight' or qtyAnchor == 'bottomRight');
             local isTop = (qtyAnchor == 'topLeft' or qtyAnchor == 'topRight');
             local qtyX, qtyY = GetAnchoredPosition(x, y, size, qtyAnchor, params.quantityOffsetX, params.quantityOffsetY);
-            local qtyW = imtext.Measure(qtyText, qtyFontSize);
+            local qtyW = CachedMeasure(qtyText, qtyFontSize);
             if isRight then qtyX = qtyX - qtyW; end
             imtext.Draw(drawList, qtyText, qtyX, qtyY, qtyColor, qtyFontSize);
 
@@ -1068,7 +1311,7 @@ function M.DrawSlot(params)
                         local stackText = '(' .. stacks .. ')';
                         local stackY = isTop and (qtyY + qtyFontSize + 1) or (qtyY - qtyFontSize - 1);
                         local stackX = isRight
-                            and (qtyX + qtyW - imtext.Measure(stackText, qtyFontSize))
+                            and (qtyX + qtyW - CachedMeasure(stackText, qtyFontSize))
                             or qtyX;
                         imtext.Draw(drawList, stackText, stackX, stackY, qtyColor, qtyFontSize);
                     end
@@ -1087,25 +1330,24 @@ function M.DrawSlot(params)
     elseif bind and bind.actionType == 'macro' and bind.recastSourceType == 'item' and bind.recastSourceItemId then
         statusItemId = bind.recastSourceItemId;
     end
+    if statusItemId then
+        M.DrawItemStatusEffectOverlay(drawList, x, y, size, statusItemId, animOpacity, {
+            isUnavailable = isUnavailable,
+            isOnCooldown = isOnCooldown,
+            notEnoughResource = notEnoughResource,
+        });
+    end
 
-    if statusItemId and animOpacity > 0.5 then
-        local statusId = GetAmmoStatusEffect(statusItemId);
-        if statusId then
-            local statusIconPtr = statusHandler.get_icon_from_theme(gConfig.statusIconTheme, statusId);
-            if statusIconPtr and drawList then
-                local iconSize = size * 0.35;
-                local padding = 2;
-                local iconX = x + size - iconSize - padding;
-                local iconY = y + padding;
-
-                local iconAlpha = math.floor(255 * animOpacity);
-                local iconTint = bit.bor(bit.lshift(iconAlpha, 24), 0x00FFFFFF);
-
-                imgP1[1] = iconX; imgP1[2] = iconY;
-                imgP2[1] = iconX + iconSize; imgP2[2] = iconY + iconSize;
-                drawList:AddImage(statusIconPtr, imgP1, imgP2, UV0, UV1, iconTint);
-            end
-        end
+    -- ========================================
+    -- 12b. Blood Pact status icon (bottom-left corner)
+    -- ========================================
+    local pactName = ResolveBloodPactName(bind);
+    if pactName then
+        M.DrawBloodPactStatusEffectOverlay(drawList, x, y, size, pactName, animOpacity, {
+            isUnavailable = isUnavailable,
+            isOnCooldown = isOnCooldown,
+            notEnoughResource = notEnoughResource,
+        });
     end
 
     -- ========================================
@@ -1116,18 +1358,18 @@ function M.DrawSlot(params)
         if isPressed then
             local pressedTintColor, pressedBorderColor;
             if isOnCooldown then
-                pressedTintColor = imgui.GetColorU32({1.0, 0.2, 0.2, 0.35 * animOpacity});
-                pressedBorderColor = imgui.GetColorU32({1.0, 0.3, 0.3, 0.6 * animOpacity});
+                pressedTintColor = ColorU32(1.0, 0.2, 0.2, 0.35 * animOpacity);
+                pressedBorderColor = ColorU32(1.0, 0.3, 0.3, 0.6 * animOpacity);
             else
-                pressedTintColor = imgui.GetColorU32({1.0, 1.0, 1.0, 0.25 * animOpacity});
-                pressedBorderColor = imgui.GetColorU32({1.0, 1.0, 1.0, 0.5 * animOpacity});
+                pressedTintColor = ColorU32(1.0, 1.0, 1.0, 0.25 * animOpacity);
+                pressedBorderColor = ColorU32(1.0, 1.0, 1.0, 0.5 * animOpacity);
             end
             drawList:AddRectFilled({x, y}, {x + size, y + size}, pressedTintColor, 4);
             drawList:AddRect({x, y}, {x + size, y + size}, pressedBorderColor, 4, 0, 2);
         -- Hover effect (mouse)
         elseif isHovered and not dragdrop.IsDragging() then
-            local hoverTintColor = imgui.GetColorU32({1.0, 1.0, 1.0, 0.15 * animOpacity});
-            local hoverBorderColor = imgui.GetColorU32({1.0, 1.0, 1.0, 0.10 * animOpacity});
+            local hoverTintColor = ColorU32(1.0, 1.0, 1.0, 0.15 * animOpacity);
+            local hoverBorderColor = ColorU32(1.0, 1.0, 1.0, 0.10 * animOpacity);
             drawList:AddRectFilled({x, y}, {x + size, y + size}, hoverTintColor, 2);
             drawList:AddRect({x, y}, {x + size, y + size}, hoverBorderColor, 2, 0, 1);
         end
@@ -1135,7 +1377,19 @@ function M.DrawSlot(params)
         -- Skillchain highlight (animated dotted border + icon)
         if params.skillchainName then
             local scColor = params.skillchainColor or 0xFFD4AA44;
+            if params.bind and actions.NeedsTpCheck(params.bind) and not actions.HasEnoughTpForBind(params.bind) then
+                scColor = SKILLCHAIN_HIGHLIGHT_INSUFFICIENT_TP_COLOR;
+            end
             DrawSkillchainHighlight(drawList, x, y, size, params.skillchainName, scColor, animOpacity);
+        end
+
+        -- Magic Burst highlight (dashed border + SC icon in bottom-left)
+        if params.magicBurstName then
+            local mbColor = params.skillchainColor or 0xFFD4AA44;
+            if params.bind and actions.NeedsMpCheck(params.bind) and not actions.HasEnoughMpForBind(params.bind) then
+                mbColor = SKILLCHAIN_HIGHLIGHT_INSUFFICIENT_TP_COLOR;
+            end
+            DrawMagicBurstHighlight(drawList, x, y, size, params.magicBurstName, mbColor, animOpacity);
         end
     end
 
@@ -1156,7 +1410,6 @@ function M.DrawSlot(params)
     if params.buttonId then
         imgui.SetCursorScreenPos({x, y});
         imgui.InvisibleButton(params.buttonId, {size, size});
-
         local isItemHovered = imgui.IsItemHovered();
         local isItemActive = imgui.IsItemActive();
 
@@ -1165,7 +1418,6 @@ function M.DrawSlot(params)
             if isItemActive and imgui.IsMouseDragging(0, 3) then
                 -- Prevent starting drags when movement is locked for this slot
                 local movementLocked = params.dropZoneId and IsMovementLockedForDropZone(params.dropZoneId) or false;
-
                 if not movementLocked then
                     if not dragdrop.IsDragging() and not dragdrop.IsDragPending() then
                         local dragData = params.getDragData();
@@ -1177,10 +1429,14 @@ function M.DrawSlot(params)
             end
         end
 
-        -- Left click to execute (BuildCommand deferred to click time to avoid per-frame cost)
+        -- Left click to execute (BuildCommand deferred to click time to avoid per-frame cost).
+        -- Ctrl+click instead opens the Macro Manager (works on any slot, even empty ones).
         if isItemHovered and imgui.IsMouseReleased(0) then
             if not dragdrop.IsDragging() and not dragdrop.WasDragAttempted() then
-                if params.onClick then
+                if imgui.GetIO().KeyCtrl then
+                    -- Lazy require avoids a module load-order cycle (macropalette <-> slotrenderer)
+                    require('modules.hotbar.macropalette').OpenPalette();
+                elseif params.onClick then
                     params.onClick();
                 elseif bind then
                     local cmd = actions.BuildCommand(bind);
@@ -1206,7 +1462,6 @@ function M.DrawSlot(params)
     if showTooltip and isHovered and bind and not dragdrop.IsDragging() and animOpacity > 0.5 then
         pendingTooltipBind = bind;
     end
-
     return result;
 end
 
@@ -1216,11 +1471,9 @@ local function SplitMacroTextLines(macroText)
     if not macroText or macroText == '' then
         return result;
     end
-
     for line in macroText:gmatch('[^\r\n]+') do
         result[#result + 1] = line;
     end
-
     return result;
 end
 
@@ -1230,19 +1483,15 @@ local function WrapTooltipLine(text, maxWidth)
     if not text or text == '' then
         return { { '', 0 } };
     end
-
     if imtext.Measure(text, TOOLTIP_FONT_SIZE) <= maxWidth then
         return { { text, 0 } };
     end
-
     local wrapped = {};
     local line = '';
     local contMaxWidth = maxWidth - TOOLTIP_WRAP_INDENT;
-
     local function currentMaxWidth()
         return #wrapped == 0 and maxWidth or contMaxWidth;
     end
-
     for word in text:gmatch('%S+') do
         local candidate = line == '' and word or (line .. ' ' .. word);
         if imtext.Measure(candidate, TOOLTIP_FONT_SIZE) <= currentMaxWidth() then
@@ -1252,7 +1501,6 @@ local function WrapTooltipLine(text, maxWidth)
                 wrapped[#wrapped + 1] = { line, #wrapped == 0 and 0 or TOOLTIP_WRAP_INDENT };
             end
             line = word;
-
             while imtext.Measure(line, TOOLTIP_FONT_SIZE) > currentMaxWidth() and #line > 1 do
                 local cut = #line;
                 while cut > 1 and imtext.Measure(line:sub(1, cut), TOOLTIP_FONT_SIZE) > currentMaxWidth() do
@@ -1263,11 +1511,9 @@ local function WrapTooltipLine(text, maxWidth)
             end
         end
     end
-
     if line ~= '' then
         wrapped[#wrapped + 1] = { line, #wrapped == 0 and 0 or TOOLTIP_WRAP_INDENT };
     end
-
     return #wrapped > 0 and wrapped or { { text, 0 } };
 end
 
@@ -1277,21 +1523,18 @@ local function ClampTooltipPosition(tx, ty, tooltipW, tooltipH, mx, my)
     local screenW = io.DisplaySize.x or 1920;
     local screenH = io.DisplaySize.y or 1080;
     local margin = TOOLTIP_SCREEN_MARGIN;
-
     if tx + tooltipW > screenW - margin then
         tx = mx - tooltipW - 16;
     end
     if tx < margin then
         tx = margin;
     end
-
     if ty + tooltipH > screenH - margin then
         ty = my - tooltipH - 8;
     end
     if ty < margin then
         ty = margin;
     end
-
     return tx, ty;
 end
 
@@ -1321,38 +1564,30 @@ function M.DrawTooltip(bind)
     if tooltipFontSettings then
         imtext.SetConfigFromSettings(tooltipFontSettings);
     end
-
     local lines = {};
     local displayName = bind.displayName or bind.action or 'Unknown';
     lines[#lines+1] = { displayName, TOOLTIP_COL_GOLD, 0 };
-
     local typeLabel = ACTION_TYPE_LABELS[bind.actionType] or bind.actionType or '?';
     lines[#lines+1] = { 'Type: ' .. typeLabel, TOOLTIP_COL_DIM, 0 };
-
     if bind.actionType ~= 'macro' and bind.target and bind.target ~= '' then
         local ft = formatTarget(bind.target);
         if ft then lines[#lines+1] = { 'Target: ' .. ft, TOOLTIP_COL_DIM, 0 }; end
     end
-
     local maxTextWidth = math.min(
         TOOLTIP_MAX_WIDTH,
         (imgui.GetIO().DisplaySize.x or 1920) * 0.45
     );
-
     if bind.actionType == 'macro' and bind.macroText then
         local macroLines = SplitMacroTextLines(bind.macroText);
-
         for _, macroLine in ipairs(macroLines) do
             for _, wrappedLine in ipairs(WrapTooltipLine(macroLine, maxTextWidth)) do
                 lines[#lines + 1] = { wrappedLine[1], TOOLTIP_COL_DIM, wrappedLine[2] or 0 };
             end
         end
     end
-
     if isUnavailable then
         lines[#lines+1] = { 'Action not available', TOOLTIP_COL_RED, 0 };
     end
-
     local padX, padY = 8, 6;
     local _, sampleH = imtext.Measure("Ag", TOOLTIP_FONT_SIZE);
     local lineH = sampleH + 2;
@@ -1362,26 +1597,21 @@ function M.DrawTooltip(bind)
         if w > maxW then maxW = w; end
     end
     maxW = math.min(maxW, maxTextWidth);
-
     local tooltipW = maxW + padX * 2;
     local tooltipH = #lines * lineH + padY * 2;
-
     local mx, my = imgui.GetMousePos();
     local tx = mx + 16;
     local ty = my + 8;
     tx, ty = ClampTooltipPosition(tx, ty, tooltipW, tooltipH, mx, my);
-
     local fgList = imgui.GetForegroundDrawList();
     fgList:AddRectFilled({tx, ty}, {tx + tooltipW, ty + tooltipH}, TOOLTIP_COL_BG, 4);
     fgList:AddRect({tx, ty}, {tx + tooltipW, ty + tooltipH}, TOOLTIP_COL_BORDER, 4, 0, 1);
-
     local textY = ty + padY;
     for _, line in ipairs(lines) do
         imtext.DrawSimple(fgList, line[1], tx + padX + (line[3] or 0), textY, line[2], TOOLTIP_FONT_SIZE);
         textY = textY + lineH;
     end
 end
-
 
 -- Call at the start of each frame to reset deferred tooltip state
 function M.BeginFrame(fontSettings)
@@ -1407,7 +1637,6 @@ function M.FlushTooltip()
     -- Hover tooltip is suppressed during drag (see DrawSlot's showTooltip gate),
     -- so we never render both in the same frame.
     if not dragdrop.IsDragging() then return; end
-
     local payload = dragdrop.GetPayload();
     if not (payload and payload.data and payload.data.actionType) then return; end
 
@@ -1420,14 +1649,12 @@ function M.FlushTooltip()
             local mx, my = imgui.GetMousePos();
             local tileX = mx - 4;
             local tileY = my - 4;
-
             local slotPtr = GetCachedTexturePtr(GetSlotTexPath());
             if slotPtr then
                 imgP1[1] = tileX;                       imgP1[2] = tileY;
                 imgP2[1] = tileX + DRAG_ABBR_TILE_SIZE; imgP2[2] = tileY + DRAG_ABBR_TILE_SIZE;
                 fgList:AddImage(slotPtr, imgP1, imgP2, UV0, UV1, 0xFFFFFFFF);
             end
-
             local abbr = GetActionAbbreviation(payload.data);
             local abbrW = imtext.Measure(abbr, 12);
             local abbrX = tileX + (DRAG_ABBR_TILE_SIZE - abbrW) / 2;
@@ -1436,9 +1663,6 @@ function M.FlushTooltip()
             imtext.Draw(fgList, abbr, abbrX, abbrY, 0xFFF4DA97, 12);
         end
     end
-
     M.DrawTooltip(payload.data);
 end
-
 return M;
-

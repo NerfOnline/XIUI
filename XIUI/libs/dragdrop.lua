@@ -47,8 +47,6 @@ local state = {
     dropHandledThisFrame = false,
     lastPayload = nil,  -- Preserved after drag ends for outside drop handling
 
-    -- Drop zone registry
-    zones = {},
     activeZoneId = nil,
     previousZoneId = nil,
 
@@ -197,15 +195,6 @@ end
 ---@return boolean True if currently hovered and valid
 function dragdrop.DropZone(id, x, y, width, height, options)
     options = options or {};
-
-    -- Store zone info
-    state.zones[id] = {
-        x = x,
-        y = y,
-        width = width,
-        height = height,
-        options = options,
-    };
 
     -- Not dragging or not activated yet
     if not state.isDragging or not state.dragActivated then
@@ -370,9 +359,6 @@ function dragdrop.Update()
     state.dropHandledThisFrame = false;
     state.lastPayload = nil;
 
-    -- Clear zones from previous frame
-    state.zones = {};
-
     if not state.isDragging then
         return;
     end
@@ -408,7 +394,6 @@ function dragdrop.Reset()
     state.isDragging = false;
     state.payload = nil;
     state.dragActivated = false;
-    state.zones = {};
     state.activeZoneId = nil;
     state.previousZoneId = nil;
 end

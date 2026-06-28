@@ -2,7 +2,6 @@
 * XIUI Hotbar - Pet Registry Module
 * Centralized pet name-to-key mapping for pet-aware hotbar palettes
 ]]--
-
 local M = {};
 
 -- ============================================
@@ -187,7 +186,6 @@ function M.GetPetType(petName, jobId)
         -- Unknown BST pet = charmed
         return M.PET_TYPE_CHARM;
     end
-
     return nil;
 end
 
@@ -197,7 +195,6 @@ end
 -- For other jobs, returns per-type keys
 function M.GetPetKey(petName, jobId)
     if petName == nil then return nil; end
-
     local petType = M.GetPetType(petName, jobId);
     if not petType then return nil; end
 
@@ -243,7 +240,6 @@ function M.GetDisplayNameForKey(petKey)
     -- Check for simple type keys
     local displayName = M.petTypeDisplayNames[petKey];
     if displayName then return displayName; end
-
     return petKey;
 end
 
@@ -251,7 +247,6 @@ end
 -- Returns a table of pet keys that can be used for that job
 function M.GetAvailablePetKeys(jobId)
     local keys = {};
-
     if jobId == M.JOB_SMN then
         -- All avatars
         for _, key in pairs(M.avatars) do
@@ -269,8 +264,34 @@ function M.GetAvailablePetKeys(jobId)
         table.insert(keys, M.PET_TYPE_JUG);
         table.insert(keys, M.PET_TYPE_CHARM);
     end
-
     return keys;
+end
+
+--- Get ordered avatar names for macro editor filters (excludes avatars with no blood pacts).
+function M.GetMacroEditorAvatarList()
+    local excluded = {
+        ['Alexander'] = true,
+        ['Odin'] = true,
+        ['Atomos'] = true,
+    };
+    local list = {};
+    for _, avatarName in ipairs(M.GetAvatarList()) do
+        if not excluded[avatarName] then
+            list[#list + 1] = avatarName;
+        end
+    end
+    return list;
+end
+
+--- Whether avatar appears in SMN macro editor avatar filter (has blood pacts).
+function M.IsMacroEditorAvatar(avatarName)
+    if not avatarName or avatarName == '' then
+        return false;
+    end
+    if avatarName == 'Alexander' or avatarName == 'Odin' or avatarName == 'Atomos' then
+        return false;
+    end
+    return M.avatars[avatarName] ~= nil;
 end
 
 -- Get ordered list of avatar names (for dropdowns, etc.)
@@ -321,7 +342,7 @@ end
 -- Pet Commands Data
 -- ============================================
 
--- Generic pet commands (all pet jobs)
+-- Generic pet commands (legacy; prefer job-specific lists below for editor/runtime)
 M.genericPetCommands = {
     { name = 'Assault', category = 'Command' },
     { name = 'Retreat', category = 'Command' },
@@ -329,6 +350,47 @@ M.genericPetCommands = {
     { name = 'Heel', category = 'Command' },
     { name = 'Release', category = 'Command' },
 };
+
+-- SMN /pet orders (not BST Heel/Stay)
+M.smnPetCommands = {
+    { name = 'Assault', category = 'Command' },
+    { name = 'Retreat', category = 'Command' },
+    { name = 'Release', category = 'Command' },
+    { name = 'Avatar\'s Favor', category = 'Command' },
+};
+
+-- BST /pet orders
+M.bstPetCommands = {
+    { name = 'Heel', category = 'Command' },
+    { name = 'Stay', category = 'Command' },
+    { name = 'Fight', category = 'Command' },
+    { name = 'Leave', category = 'Command' },
+};
+
+--- Base /pet menu commands for macro editor / hotbar by pet job (no blood pacts/ready moves).
+function M.GetMacroEditorBasePetCommands(jobId)
+    jobId = tonumber(jobId) or 0;
+    if jobId == M.JOB_SMN then
+        return M.smnPetCommands;
+    end
+    if jobId == M.JOB_BST then
+        return M.bstPetCommands;
+    end
+    if jobId == M.JOB_DRG then
+        return M.wyvernCommands;
+    end
+    if jobId == M.JOB_PUP then
+        local commands = {};
+        for _, cmd in ipairs(M.pupBasePetCommands) do
+            commands[#commands + 1] = cmd;
+        end
+        for _, cmd in ipairs(M.maneuverCommands) do
+            commands[#commands + 1] = cmd;
+        end
+        return commands;
+    end
+    return M.genericPetCommands;
+end
 
 -- SMN Blood Pacts - Rage (offensive)
 M.bloodPactsRage = {
@@ -492,6 +554,23 @@ M.automatonCommands = {
     { name = 'Overdrive', category = 'Ability' },
     { name = 'Tactical Switch', category = 'Ability' },
     { name = 'Heady Artifice', category = 'Ability' },
+};
+M.maneuverCommands = {
+    { name = 'Fire Maneuver', category = 'Command' },
+    { name = 'Ice Maneuver', category = 'Command' },
+    { name = 'Wind Maneuver', category = 'Command' },
+    { name = 'Earth Maneuver', category = 'Command' },
+    { name = 'Thunder Maneuver', category = 'Command' },
+    { name = 'Water Maneuver', category = 'Command' },
+    { name = 'Light Maneuver', category = 'Command' },
+    { name = 'Dark Maneuver', category = 'Command' },
+};
+
+-- PUP macro editor: always-available automaton orders (no live automaton required).
+M.pupBasePetCommands = {
+    { name = 'Deploy', category = 'Command' },
+    { name = 'Retrieve', category = 'Command' },
+    { name = 'Deactivate', category = 'Ability' },
 };
 
 -- BST pet commands (not job abilities - those go in Ability section)
@@ -763,6 +842,396 @@ function M.GetAllReadyMoves()
 end
 
 -- ============================================
+-- Jug broth -> jug pet (BST macro editor filters)
+-- ============================================
+-- Item IDs from client item dat (Ashita resource manager). Canonical jug names from
+-- petregistry + modules/petbar/data.lua; map built once per session.
+
+local JUG_BROTH_AMMO_SLOT_MASK = 0x0008;
+local JUG_BROTH_BUILD_ITEMS_PER_FRAME = 32;
+local JUG_BROTH_INVENTORY_RESYNC_SECONDS = 2.0;
+local jugBrothItemToPet = nil;
+local jugBrothBuild = {
+    phase = 'idle',       -- idle | priority | background | complete
+    priorityQueue = {},
+    priorityHead = 1,
+    fullScanIndex = 1,
+    lastInventoryResync = 0,
+};
+local function NormalizeJugItemName(name)
+    if not name or name == '' then
+        return '';
+    end
+    return name:lower():gsub('[^%w%s]', ' '):gsub('%s+', ' '):match('^%s*(.-)%s*$') or '';
+end
+local function GetKnownJugPetInternalNames()
+    local known = {};
+    for _, internalName in ipairs(M.jugPets) do
+        known[internalName] = true;
+    end
+    local ok, petbarData = pcall(require, 'modules.petbar.data');
+    if ok and petbarData and petbarData.jugPets then
+        for _, entry in ipairs(petbarData.jugPets) do
+            if entry.name then
+                known[entry.name] = true;
+            end
+        end
+    end
+    return known;
+end
+local function ResolveCallsNameToInternal(callsName, knownInternal)
+    if not callsName or callsName == '' then
+        return nil;
+    end
+    callsName = callsName:gsub('%.', ''):gsub('%s+$', '');
+    local compact = callsName:gsub('%s+', '');
+    for internalName in pairs(knownInternal) do
+        local display = M.FormatJugPetDisplayName(internalName);
+        if display and display:lower() == callsName:lower() then
+            return internalName;
+        end
+        if internalName:lower() == compact:lower() then
+            return internalName;
+        end
+    end
+    return nil;
+end
+local function CollectItemTextLines(item)
+    local lines = {};
+    if not item then
+        return lines;
+    end
+    if item.Name and item.Name[1] and item.Name[1] ~= '' then
+        lines[#lines + 1] = item.Name[1];
+    end
+    if item.LogName and item.LogName[1] and item.LogName[1] ~= '' then
+        lines[#lines + 1] = item.LogName[1];
+    end
+    if item.Description then
+        for _, line in ipairs(item.Description) do
+            if type(line) == 'string' and line ~= '' then
+                lines[#lines + 1] = line;
+            end
+        end
+    end
+    return lines;
+end
+local function ParseCallsPetFromText(text, knownInternal)
+    if type(text) ~= 'string' or text == '' then
+        return nil;
+    end
+    local calls = text:match("[Cc]alls%s+([%w %-'.]+%.?)");
+    if not calls then
+        return nil;
+    end
+    return ResolveCallsNameToInternal(calls, knownInternal);
+end
+local function ItemLooksLikeJugBroth(item)
+    if not item then
+        return false;
+    end
+    if item.Slots and item.Slots == JUG_BROTH_AMMO_SLOT_MASK then
+        return true;
+    end
+    for _, line in ipairs(CollectItemTextLines(item)) do
+        if line:lower():find('calls%s+', 1, true) then
+            return true;
+        end
+    end
+    for _, line in ipairs(CollectItemTextLines(item)) do
+        local normalized = NormalizeJugItemName(line);
+        if normalized:find('broth', 1, true)
+            or normalized:find('humus', 1, true)
+            or normalized:find('soil', 1, true)
+            or normalized:find('sap', 1, true)
+            or normalized:find('water', 1, true)
+            or normalized:find('grease', 1, true)
+            or normalized:find('plasma', 1, true) then
+            return true;
+        end
+    end
+    return false;
+end
+local function TryRegisterJugBrothItem(itemId, item, knownInternal)
+    if not itemId or itemId <= 0 or itemId == 65535 then
+        return;
+    end
+    if not item then
+        return;
+    end
+    if jugBrothItemToPet[itemId] then
+        return;
+    end
+    if not ItemLooksLikeJugBroth(item) then
+        return;
+    end
+    knownInternal = knownInternal or GetKnownJugPetInternalNames();
+    local internal = nil;
+    for _, line in ipairs(CollectItemTextLines(item)) do
+        internal = ParseCallsPetFromText(line, knownInternal);
+        if internal then
+            break;
+        end
+    end
+    if internal and knownInternal[internal] then
+        jugBrothItemToPet[itemId] = internal;
+    end
+end
+local function CollectInventoryJugItemIds()
+    local playerdata = require('modules.hotbar.playerdata');
+    local ids = {};
+    local seen = {};
+    local memMgr = AshitaCore:GetMemoryManager();
+    if not memMgr then
+        return ids;
+    end
+    local inventory = memMgr:GetInventory();
+    local resMgr = AshitaCore:GetResourceManager();
+    if not inventory or not resMgr then
+        return ids;
+    end
+    for _, container in ipairs(playerdata.CONTAINERS) do
+        local maxSlots = inventory:GetContainerCountMax(container.id);
+        if maxSlots and maxSlots > 0 then
+            for slotIndex = 1, maxSlots do
+                local slot = inventory:GetContainerItem(container.id, slotIndex);
+                if slot and slot.Id and slot.Id > 0 and slot.Id ~= 65535 and not seen[slot.Id] then
+                    seen[slot.Id] = true;
+                    ids[#ids + 1] = slot.Id;
+                end
+            end
+        end
+    end
+    return ids;
+end
+local function QueueInventoryJugItemIdsFront(queue, seen)
+    seen = seen or {};
+    for _, itemId in ipairs(CollectInventoryJugItemIds()) do
+        if not seen[itemId] then
+            seen[itemId] = true;
+            table.insert(queue, 1, itemId);
+        end
+    end
+end
+local function ProcessJugBrothItemId(itemId, knownInternal)
+    if not itemId or jugBrothItemToPet[itemId] then
+        return;
+    end
+    local resMgr = AshitaCore:GetResourceManager();
+    if not resMgr then
+        return;
+    end
+    local item = resMgr:GetItemById(itemId);
+    if not item then
+        return;
+    end
+    TryRegisterJugBrothItem(itemId, item, knownInternal);
+end
+function M.InvalidateJugBrothItemMap()
+    jugBrothItemToPet = nil;
+    jugBrothBuild.phase = 'idle';
+    jugBrothBuild.priorityQueue = {};
+    jugBrothBuild.priorityHead = 1;
+    jugBrothBuild.fullScanIndex = 1;
+    jugBrothBuild.lastInventoryResync = 0;
+end
+
+--- True when the full dat scan has finished (inventory-only results still work without this).
+function M.IsJugBrothItemMapBuildComplete()
+    return jugBrothBuild.phase == 'complete';
+end
+
+--- True after a background build has been started this session.
+function M.IsJugBrothCacheBuildActive()
+    return jugBrothBuild.phase ~= 'idle';
+end
+
+--- Begin incremental jug broth cache build (non-blocking; call after addon load).
+function M.StartJugBrothCacheBuild()
+    if jugBrothBuild.phase ~= 'idle' then
+        return;
+    end
+    jugBrothItemToPet = jugBrothItemToPet or {};
+    jugBrothBuild.priorityQueue = {};
+    jugBrothBuild.priorityHead = 1;
+    jugBrothBuild.fullScanIndex = 1;
+    jugBrothBuild.lastInventoryResync = 0;
+    local seen = {};
+    QueueInventoryJugItemIdsFront(jugBrothBuild.priorityQueue, seen);
+    if #jugBrothBuild.priorityQueue > 0 then
+        jugBrothBuild.phase = 'priority';
+    else
+        jugBrothBuild.phase = 'background';
+    end
+end
+
+--- Advance the background cache by a small batch (call once per frame from hotbar).
+function M.TickJugBrothCacheBuild(batchSize)
+    batchSize = batchSize or JUG_BROTH_BUILD_ITEMS_PER_FRAME;
+    if jugBrothBuild.phase == 'idle' or jugBrothBuild.phase == 'complete' then
+        return jugBrothBuild.phase == 'complete';
+    end
+    jugBrothItemToPet = jugBrothItemToPet or {};
+    local knownInternal = GetKnownJugPetInternalNames();
+    local now = os.clock();
+    if now - jugBrothBuild.lastInventoryResync >= JUG_BROTH_INVENTORY_RESYNC_SECONDS then
+        jugBrothBuild.lastInventoryResync = now;
+        if jugBrothBuild.phase == 'background' then
+            QueueInventoryJugItemIdsFront(jugBrothBuild.priorityQueue, {});
+        else
+            QueueInventoryJugItemIdsFront(jugBrothBuild.priorityQueue, {});
+        end
+        if #jugBrothBuild.priorityQueue > 0 then
+            jugBrothBuild.phase = 'priority';
+        end
+    end
+    local budget = batchSize;
+    while budget > 0 do
+        if jugBrothBuild.phase == 'priority' then
+            while jugBrothBuild.priorityHead <= #jugBrothBuild.priorityQueue and budget > 0 do
+                local itemId = jugBrothBuild.priorityQueue[jugBrothBuild.priorityHead];
+                jugBrothBuild.priorityHead = jugBrothBuild.priorityHead + 1;
+                ProcessJugBrothItemId(itemId, knownInternal);
+                budget = budget - 1;
+            end
+            if jugBrothBuild.priorityHead > #jugBrothBuild.priorityQueue then
+                jugBrothBuild.priorityQueue = {};
+                jugBrothBuild.priorityHead = 1;
+                jugBrothBuild.phase = 'background';
+            end
+        elseif jugBrothBuild.phase == 'background' then
+            local itemId = jugBrothBuild.fullScanIndex;
+            ProcessJugBrothItemId(itemId, knownInternal);
+            jugBrothBuild.fullScanIndex = itemId + 1;
+            budget = budget - 1;
+            if jugBrothBuild.fullScanIndex > 65535 then
+                jugBrothBuild.phase = 'complete';
+                return true;
+            end
+        else
+            break;
+        end
+    end
+    return jugBrothBuild.phase == 'complete';
+end
+function M.EnsureJugBrothItemMap()
+    jugBrothItemToPet = jugBrothItemToPet or {};
+end
+local function ResolveJugPetFromBrothItem(itemName, itemId)
+    M.EnsureJugBrothItemMap();
+    if itemId and jugBrothItemToPet[itemId] then
+        return jugBrothItemToPet[itemId];
+    end
+    return nil;
+end
+local function ParseJugPetFromItemResource(item)
+    if not item then
+        return nil;
+    end
+    local function MatchCallsText(text)
+        if type(text) ~= 'string' or text == '' then
+            return nil;
+        end
+        local calls = text:match("[Cc]alls%s+([%w %-'.]+%.?)");
+        if not calls then
+            return nil;
+        end
+        calls = calls:gsub('%.', ''):gsub('%s+$', '');
+        for internalName in pairs(GetKnownJugPetInternalNames()) do
+            local display = M.FormatJugPetDisplayName(internalName);
+            if display and display:lower() == calls:lower() then
+                return internalName;
+            end
+            if internalName:lower() == calls:gsub('%s+', ''):lower() then
+                return internalName;
+            end
+        end
+        return nil;
+    end
+    if item.LogName and item.LogName[1] then
+        local fromLog = MatchCallsText(item.LogName[1]);
+        if fromLog then
+            return fromLog;
+        end
+    end
+    if item.Description then
+        for _, line in ipairs(item.Description) do
+            local fromDesc = MatchCallsText(line);
+            if fromDesc then
+                return fromDesc;
+            end
+        end
+    end
+    return nil;
+end
+
+--- CamelCase jug entity name -> display label (ChopsueyChucky -> Chopsuey Chucky).
+function M.FormatJugPetDisplayName(internalName)
+    if not internalName or internalName == '' then
+        return nil;
+    end
+    local spaced = internalName:gsub('(%l)(%u)', '%1 %2');
+    if spaced == internalName then
+        return internalName;
+    end
+    return spaced;
+end
+
+--- Jug pets the player owns (broth in all storage containers), internal entity names.
+function M.GetOwnedJugPetInternalNames()
+    local playerdata = require('modules.hotbar.playerdata');
+    local owned = {};
+    local seen = {};
+    local memMgr = AshitaCore:GetMemoryManager();
+    if not memMgr then
+        return {};
+    end
+    local inventory = memMgr:GetInventory();
+    local resMgr = AshitaCore:GetResourceManager();
+    if not inventory or not resMgr then
+        return {};
+    end
+    for _, container in ipairs(playerdata.CONTAINERS) do
+        local maxSlots = inventory:GetContainerCountMax(container.id);
+        if maxSlots and maxSlots > 0 then
+            for slotIndex = 1, maxSlots do
+                local slot = inventory:GetContainerItem(container.id, slotIndex);
+                if slot and slot.Id and slot.Id > 0 and slot.Id ~= 65535 then
+                    local itemId = slot.Id;
+                    local item = resMgr:GetItemById(itemId);
+                    local itemName = item and item.Name and item.Name[1] or nil;
+                    if item and ItemLooksLikeJugBroth(item) then
+                        local internal = ResolveJugPetFromBrothItem(nil, itemId);
+                        if not internal then
+                            internal = ParseJugPetFromItemResource(item);
+                        end
+                        if internal and M.IsJugPet(internal) and not seen[internal] then
+                            seen[internal] = true;
+                            owned[#owned + 1] = internal;
+                        end
+                    end
+                end
+            end
+        end
+    end
+    table.sort(owned, function(a, b)
+        local da = M.FormatJugPetDisplayName(a) or a;
+        local db = M.FormatJugPetDisplayName(b) or b;
+        return da < db;
+    end);
+    return owned;
+end
+
+--- Display names for owned jug pets (sorted).
+function M.GetOwnedJugPetDisplayNames()
+    local names = {};
+    for _, internal in ipairs(M.GetOwnedJugPetInternalNames()) do
+        names[#names + 1] = M.FormatJugPetDisplayName(internal) or internal;
+    end
+    return names;
+end
+
+-- ============================================
 -- Pet Command Functions
 -- ============================================
 
@@ -789,7 +1258,6 @@ function M.GetBloodPactsForAvatar(avatarName)
             end
         end
     end
-
     return pacts;
 end
 
@@ -813,7 +1281,6 @@ function M.GetAllBloodPacts()
             seen[pact.name] = true;
         end
     end
-
     return pacts;
 end
 
@@ -823,11 +1290,10 @@ end
 function M.GetPetCommandsForJob(jobId, avatarName, activePetName)
     local commands = {};
 
-    -- Add generic commands first
-    for _, cmd in ipairs(M.genericPetCommands) do
+    -- Job-specific /pet orders
+    for _, cmd in ipairs(M.GetMacroEditorBasePetCommands(jobId)) do
         table.insert(commands, { name = cmd.name, category = cmd.category });
     end
-
     if jobId == M.JOB_SMN then
         -- SMN: Blood Pacts
         if avatarName and M.avatars[avatarName] then
@@ -874,8 +1340,249 @@ function M.GetPetCommandsForJob(jobId, avatarName, activePetName)
             end
         end
     end
-
     return commands;
 end
 
+-- ============================================
+-- Pet runtime availability (hotbar dimming)
+-- ============================================
+
+-- Fire Maneuver: only true from HasPetCommand when automaton is active (not merely summoned/deactivated).
+local PUP_AUTOMATON_ACTIVE_PROBE_ID = 653;
+local SUMMON_EXEMPT = {
+    ['Call Wyvern'] = true,
+    ['Call Beast'] = true,
+    ['Bestial Loyalty'] = true,
+};
+local PUP_ACTIVE_AUTOMATON = {
+    ['Deploy'] = true,
+    ['Deactivate'] = true,
+    ['Retrieve'] = true,
+    ['Overdrive'] = true,
+    ['Repair'] = true,
+    ['Cooldown'] = true,
+    ['Maintenance'] = true,
+};
+local SMN_PET_ACTIVE = {
+    ['Mana Cede'] = true,
+    ['Elemental Siphon'] = true,
+    ['Assault'] = true,
+    ['Retreat'] = true,
+    ['Release'] = true,
+    ['Avatar\'s Favor'] = true,
+};
+local DRG_PET_ACTIVE = {
+    ['Spirit Bond'] = true,
+    ['Spirit Link'] = true,
+    ['Spirit Surge'] = true,
+    ['Steady Wing'] = true,
+    ['Smiting Breath'] = true,
+    ['Restoring Breath'] = true,
+    ['Dismiss'] = true,
+};
+local BST_PET_ACTIVE = {
+    ['Familiar'] = true,
+    ['Reward'] = true,
+    ['Spur'] = true,
+    ['Run Wild'] = true,
+    ['Fight'] = true,
+    ['Heel'] = true,
+    ['Leave'] = true,
+    ['Stay'] = true,
+    ['Snarl'] = true,
+};
+local bloodPactAvatarLookup = {};
+local bstReadyMoveNames = {};
+local function RegisterBloodPactAvatars(pact)
+    if not pact.name or not pact.avatars then
+        return;
+    end
+    if not bloodPactAvatarLookup[pact.name] then
+        bloodPactAvatarLookup[pact.name] = {};
+    end
+    for _, avatarName in ipairs(pact.avatars) do
+        bloodPactAvatarLookup[pact.name][avatarName] = true;
+    end
+end
+for _, pact in ipairs(M.bloodPactsRage) do
+    RegisterBloodPactAvatars(pact);
+end
+for _, pact in ipairs(M.bloodPactsWard) do
+    RegisterBloodPactAvatars(pact);
+end
+for _, familyMoves in pairs(M.petFamilyReadyMoves) do
+    for _, move in ipairs(familyMoves) do
+        if move.name then
+            bstReadyMoveNames[move.name] = true;
+        end
+    end
+end
+local function GetActivePetEntityName()
+    local playerEntity = GetPlayerEntity();
+    if not playerEntity or playerEntity.PetTargetIndex == 0 then
+        return nil;
+    end
+    local pet = GetEntity(playerEntity.PetTargetIndex);
+    if not pet or not pet.Name or pet.Name == '' then
+        return nil;
+    end
+    return pet.Name;
+end
+
+--- Active pet entity name, or nil when no pet is out.
+function M.GetActivePetName()
+    return GetActivePetEntityName();
+end
+
+--- Live pet context for availability dimming.
+function M.GetActivePetContext(mainJobId)
+    local petName = GetActivePetEntityName();
+    if not petName then
+        return { active = false };
+    end
+    return {
+        active = true,
+        petName = petName,
+        petType = mainJobId and M.GetPetType(petName, mainJobId) or nil,
+    };
+end
+
+--- Whether the automaton is active (not deactivated). Pet entity alone is insufficient.
+function M.IsPupAutomatonActive(player)
+    if not player or not player.HasPetCommand then
+        return false;
+    end
+    return player:HasPetCommand(PUP_AUTOMATON_ACTIVE_PROBE_ID);
+end
+
+--- Whether a maneuver can be used now (per-ability HasPetCommand, falls back to active automaton).
+function M.IsPupManeuverAvailable(player, actionName)
+    if not player or not player.HasPetCommand or not actionName then
+        return false;
+    end
+    local actiondb = require('modules.hotbar.actiondb');
+    local ids = actiondb.GetAbilityIds(actionName);
+    if ids then
+        for _, abilityId in ipairs(ids) do
+            if player:HasPetCommand(abilityId) then
+                return true;
+            end
+        end
+    end
+
+    -- Maneuvers share automaton context; if Fire probe is live, all maneuvers are usable.
+    return M.IsPupAutomatonActive(player);
+end
+
+--- Whether the automaton is deployed/active for PUP runtime checks.
+function M.IsPupAutomatonOut(player, context)
+    return M.IsPupAutomatonActive(player);
+end
+
+--- Whether actionName is a BST jug-pet Ready move (BeastmasterSic type).
+function M.IsBstReadyMoveName(actionName)
+    return actionName ~= nil and bstReadyMoveNames[actionName] == true;
+end
+
+--- Whether actionName is a SMN blood pact (Rage or Ward).
+function M.IsBloodPactName(actionName)
+    return actionName ~= nil and bloodPactAvatarLookup[actionName] ~= nil;
+end
+
+--- Whether a blood pact can be used with the given avatar name out.
+function M.IsBloodPactForAvatar(pactName, avatarName)
+    if not pactName or not avatarName then
+        return false;
+    end
+    local avatars = bloodPactAvatarLookup[pactName];
+    return avatars ~= nil and avatars[avatarName] == true;
+end
+
+--- Whether this action has pet-context runtime dimming rules.
+function M.HasPetRuntimeRequirement(actionName, mainJobId)
+    if not actionName or actionName == '' or not mainJobId then
+        return false;
+    end
+    if SUMMON_EXEMPT[actionName] then
+        return false;
+    end
+    if actionName:match(' Maneuver$') then
+        return mainJobId == M.JOB_PUP;
+    end
+    if mainJobId == M.JOB_PUP then
+        return PUP_ACTIVE_AUTOMATON[actionName] == true;
+    end
+    if mainJobId == M.JOB_SMN then
+        return SMN_PET_ACTIVE[actionName] == true or M.IsBloodPactName(actionName);
+    end
+    if mainJobId == M.JOB_DRG then
+        return DRG_PET_ACTIVE[actionName] == true;
+    end
+    if mainJobId == M.JOB_BST then
+        if actionName == 'Sic' or actionName == 'Ready' or M.IsBstReadyMoveName(actionName) then
+            return true;
+        end
+        return BST_PET_ACTIVE[actionName] == true;
+    end
+    return false;
+end
+
+--- Whether this action needs an active automaton/pet for runtime dimming.
+function M.NeedsActivePetRuntime(actionName, mainJobId)
+    if not M.HasPetRuntimeRequirement(actionName, mainJobId) then
+        return false;
+    end
+    return true;
+end
+
+--- Evaluate pet-context runtime rules for hotbar dimming.
+function M.MeetsPetRuntimeRequirement(actionName, mainJobId, player)
+    if not actionName or actionName == '' or not mainJobId then
+        return true;
+    end
+    if SUMMON_EXEMPT[actionName] then
+        return true;
+    end
+    local context = M.GetActivePetContext(mainJobId);
+    if mainJobId == M.JOB_PUP then
+        if actionName:match(' Maneuver$') then
+            return M.IsPupManeuverAvailable(player, actionName);
+        end
+        if PUP_ACTIVE_AUTOMATON[actionName] then
+            return M.IsPupAutomatonActive(player);
+        end
+        return true;
+    end
+    if mainJobId == M.JOB_SMN then
+        if M.IsBloodPactName(actionName) then
+            if not context.active or context.petType ~= M.PET_TYPE_AVATAR then
+                return false;
+            end
+            return M.IsBloodPactForAvatar(actionName, context.petName);
+        end
+        if SMN_PET_ACTIVE[actionName] then
+            return context.active == true;
+        end
+        return true;
+    end
+    if mainJobId == M.JOB_DRG then
+        if DRG_PET_ACTIVE[actionName] then
+            return context.active == true;
+        end
+        return true;
+    end
+    if mainJobId == M.JOB_BST then
+        if actionName == 'Sic' then
+            return context.active == true and context.petType == M.PET_TYPE_CHARM;
+        end
+        if actionName == 'Ready' or M.IsBstReadyMoveName(actionName) then
+            return context.active == true and context.petType == M.PET_TYPE_JUG;
+        end
+        if BST_PET_ACTIVE[actionName] then
+            return context.active == true;
+        end
+        return true;
+    end
+    return true;
+end
 return M;

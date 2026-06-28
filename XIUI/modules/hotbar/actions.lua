@@ -1,16 +1,15 @@
 --[[
 * XIUI Hotbar - Actions Module
 ]]--
-
 require('common');
 local ffi = require('ffi');
 local d3d8 = require('d3d8');
 local data = require('modules.hotbar.data');
-local horizonSpells = require('modules.hotbar.database.horizonspells');
 local textures = require('modules.hotbar.textures');
 local actiondb = require('modules.hotbar.actiondb');
 local playerdata = require('modules.hotbar.playerdata');
 local TextureManager = require('libs.texturemanager');
+local abilityRecast = require('libs.abilityrecast');
 local macrosLib = require('libs.ffxi.macros');
 package.loaded['libs.target'] = nil;
 local targetLib = require('libs.target');
@@ -22,13 +21,11 @@ local palette = require('modules.hotbar.palette');
 -- Debug logging (controlled via /xiui debug hotbar and /xiui debug subtarget)
 local DEBUG_ENABLED = false;
 local DEBUG_SUBTARGET = false;
-
 local function DebugLog(msg)
     if DEBUG_ENABLED then
         print('[XIUI Hotbar] ' .. msg);
     end
 end
-
 local function SubtargetDebugLog(msg)
     if DEBUG_SUBTARGET then
         print('[XIUI Hotbar ST] ' .. msg);
@@ -40,7 +37,6 @@ end
 local function SetDebugEnabled(enabled)
     DEBUG_ENABLED = enabled;
 end
-
 local function SetSubtargetDebugEnabled(enabled)
     DEBUG_SUBTARGET = enabled;
 end
@@ -58,8 +54,6 @@ local NATIVE_MACRO_NUMBER_KEYS = {
     [48] = true, [49] = true, [50] = true, [51] = true, [52] = true,  -- 0-4
     [53] = true, [54] = true, [55] = true, [56] = true, [57] = true,  -- 5-9
 };
-
-local MAX_JOB_LEVEL = 99;
 
 -- Arrow keys for macro set switching
 local VK_UP = 0x26;
@@ -87,7 +81,6 @@ local function IsNativeMacroKey(keyCode, ctrl, alt)
     if keyCode == VK_UP or keyCode == VK_DOWN then
         return true;
     end
-
     return false;
 end
 
@@ -97,7 +90,6 @@ local function MacroBlockLog(msg)
         print('[Macro Block] ' .. msg);
     end
 end
-
 local M = {};
 
 -- ============================================
@@ -129,7 +121,6 @@ if not ffiInitOk then
     end);
     getAsyncKeyStateAvailable = testOk;
 end
-
 if getAsyncKeyStateAvailable then
     DebugLog('GetAsyncKeyState available for modifier detection');
 else
@@ -144,11 +135,9 @@ local function IsKeyDown(vk)
     if not getAsyncKeyStateAvailable then
         return false;
     end
-
     local ok, state = pcall(function()
         return ffi.C.GetAsyncKeyState(vk);
     end);
-
     if ok and state then
         -- High bit (0x8000) indicates key is currently down
         return bit.band(state, 0x8000) ~= 0;
@@ -168,7 +157,6 @@ local function GetModifierStates()
         DebugLog(string.format('Modifiers: Ctrl=%s Alt=%s Shift=%s',
             tostring(ctrl), tostring(alt), tostring(shift)));
     end
-
     return ctrl, alt, shift;
 end
 
@@ -184,18 +172,18 @@ function M.IsPaletteModifierHeld()
     if not globalSettings or not globalSettings.paletteCycleEnabled then
         return false;
     end
-
     local modifier = globalSettings.paletteCycleModifier or 'ctrl';
     local ctrl, alt, shift = GetModifierStates();
-
     if modifier == 'ctrl' and ctrl and not alt and not shift then
         return true;
     elseif modifier == 'alt' and alt and not ctrl and not shift then
         return true;
     elseif modifier == 'shift' and shift and not ctrl and not alt then
         return true;
+    elseif modifier == 'ctrlalt' and not shift
+        and ((ctrl and not alt) or (alt and not ctrl)) then
+        return true;
     end
-
     return false;
 end
 
@@ -203,7 +191,7 @@ end
 local customIconCache = {};
 
 -- Negative-result cache: keyed strings for which GetBindIcon already returned nil.
--- Skips the lookup work (hashmap probes, GetSpellByName, name->id scans) on subsequent
+-- Skips the lookup work (name->id resolution, dat icon lookup) on subsequent
 -- cache misses in display.iconCache. Invalidated whenever an upstream cache that affects
 -- icon resolution is wiped (job/pet/palette change, macroDB edit).
 local noIconCache = {};
@@ -225,171 +213,6 @@ local function buildNoIconKey(bind)
     return key;
 end
 
--- Mapping from summoning spell names to texture cache keys
--- Spell names (as they appear in-game) -> texture key (as loaded in textures.lua)
-local summonSpellToIconKey = {
-    -- Avatars
-    ['Carbuncle'] = 'summon_Carbuncle',
-    ['Ifrit'] = 'summon_Ifrit',
-    ['Shiva'] = 'summon_Shiva',
-    ['Garuda'] = 'summon_Garuda',
-    ['Titan'] = 'summon_Titan',
-    ['Ramuh'] = 'summon_Ramuh',
-    ['Leviathan'] = 'summon_Leviathan',
-    ['Fenrir'] = 'summon_Fenrir',
-    ['Diabolos'] = 'summon_Diabolos',
-    ['Cait Sith'] = 'summon_CaitSith',
-    ['Alexander'] = 'summon_Alexander',
-    ['Odin'] = 'summon_Odin',
-    ['Atomos'] = 'summon_Atomos',
-    ['Siren'] = 'summon_Siren',
-    -- Spirits
-    ['Fire Spirit'] = 'summon_FireSpirit',
-    ['Ice Spirit'] = 'summon_IceSpirit',
-    ['Air Spirit'] = 'summon_AirSpirit',
-    ['Earth Spirit'] = 'summon_EarthSpirit',
-    ['Thunder Spirit'] = 'summon_ThunderSpirit',
-    ['Water Spirit'] = 'summon_WaterSpirit',
-    ['Light Spirit'] = 'summon_LightSpirit',
-    ['Dark Spirit'] = 'summon_DarkSpirit',
-};
-
--- Mapping from pet command names to texture cache keys
-local petCommandToIconKey = {
-    ['Assault'] = 'ability_Assault',
-    ['Release'] = 'ability_Release',
-    ['Retreat'] = 'ability_Retreat',
-};
-
--- Mapping from SMN job ability names to texture cache keys
-local smnAbilityToIconKey = {
-    ['Apogee'] = 'ability_Apogee',
-    ['Astral Conduit'] = 'ability_AstralConduit',
-    ['Astral Flow'] = 'ability_AstralFlow',
-    ["Avatar's Favor"] = 'ability_AvatarsFavor',
-    ['Elemental Siphon'] = 'ability_ElementalSiphon',
-    ['Mana Cede'] = 'ability_ManaCede',
-};
-
--- Mapping from Trust names to texture cache keys
-local trustToIconKey = {
-    ['Ajido-Marujido'] = 'trust_ajido-marujido',
-    ['Amchuchu'] = 'trust_amchuchu',
-    ['Ayame'] = 'trust_ayame',
-    ['Cid'] = 'trust_cid',
-    ['Curilla'] = 'trust_curilla',
-    ['Darrcuiln'] = 'trust_darrcuiln',
-    ['Excenmille'] = 'trust_excenmille',
-    ['Halver'] = 'trust_halver',
-    ['Iron Eater'] = 'trust_iron-eater',
-    ['Joachim'] = 'trust_joachim',
-    ['King of Hearts'] = 'trust_king-of-hearts',
-    ['Koru-Moru'] = 'trust_koru-moru',
-    ['Kupipi'] = 'trust_kupipi',
-    ['Kuyin Hathdenna'] = 'trust_kuyin-hathdenna',
-    ['Lion'] = 'trust_lion',
-    ['Makki-Chebukki'] = 'trust_makki-chebukki',
-    ['Mildaurion'] = 'trust_mildaurion',
-    ['Mnejing'] = 'trust_mnejing',
-    ['Morimar'] = 'trust_morimar',
-    ['Naja Salaheem'] = 'trust_naja',
-    ['Naji'] = 'trust_naji',
-    ['Nanaa Mihgo'] = 'trust_nanaa-mihgo',
-    ['Ovjang'] = 'trust_ovjang',
-    ['Prishe'] = 'trust_prishe',
-    ['Qultada'] = 'trust_qultada',
-    ['Rahal'] = 'trust_rahal',
-    ['Rongelouts'] = 'trust_rongelouts',
-    ['Rughadjeen'] = 'trust_rughadjeen',
-    ['Sakura'] = 'trust_sakura',
-    ['Semih Lafihna'] = 'trust_semih-lafihna',
-    ['Shantotto'] = 'trust_shantotto',
-    ['Shantotto II'] = 'trust_shantotto-II',
-    ['Star Sibyl'] = 'trust_star-sibyl',
-    ['Tenzen'] = 'trust_tenzen',
-    ['Trion'] = 'trust_trion',
-    ['Valaineral'] = 'trust_valaineral',
-    ['Volker'] = 'trust_volker',
-    ['Yoran-Oran'] = 'trust_yoran-oran',
-    ['Zazarg'] = 'trust_zazarg',
-    ['Zeid'] = 'trust_zeid',
-    ['Zeid II'] = 'trust_zeid-II',
-};
-
--- Mapping from Blue Magic spell names to texture cache keys
-local blueMagicToIconKey = {
-    ['Battle Dance'] = 'blue_battle_dance',
-    ['Blank Gaze'] = 'blue_blank_gaze',
-    ['Cocoon'] = 'blue_cocoon',
-    ['Foot Kick'] = 'blue_foot_kick',
-    ['Grand Slam'] = 'blue_grand_slam',
-    ['Head Butt'] = 'blue_headbutt',
-    ['Healing Breeze'] = 'blue_healing_breeze',
-    ['Jet Stream'] = 'blue_jet_stream',
-    ['Light of Penance'] = 'blue_light_of_penance',
-    ['Magic Fruit'] = 'blue_magic_fruit',
-    ['Metallic Body'] = 'blue_metallic_body',
-    ['Power Attack'] = 'blue_power_attack',
-    ['Sheep Song'] = 'blue_sheep_song',
-    ['Terror Touch'] = 'blue_terror_touch',
-    ['Uppercut'] = 'blue_uppercut',
-    ['Wild Oats'] = 'blue_wild_oats',
-    ['Zephyr Mantle'] = 'blue_zephyr_mantle',
-};
-
--- Mapping from Mount names to texture cache keys
-local mountToIconKey = {
-    ['Beetle'] = 'mount_beetle',
-    ['Bomb'] = 'mount_bomb',
-    ['Chocobo'] = 'mount_chocobo',
-    ['Crab'] = 'mount_crab',
-    ['Crawler'] = 'mount_crawler',
-    ['Fenrir'] = 'mount_fenrir',
-    ['Magic Pot'] = 'mount_magic_pot',
-    ['Moogle'] = 'mount_moogle',
-    ['Morbol'] = 'mount_morbol',
-    ['Raptor'] = 'mount_raptor',
-    ['Red Crab'] = 'mount_red_crab',
-    ['Sheep'] = 'mount_sheep',
-    ['Tiger'] = 'mount_tiger',
-    ['Tulfaire'] = 'mount_tulfaire',
-    ['Warmachine'] = 'mount_warmachine',
-};
-
--- Mapping from Rune Fencer abilities to texture cache keys
-local runAbilityToIconKey = {
-    -- Runes
-    ['Ignis'] = 'rune_ignis',
-    ['Gelus'] = 'rune_gelus',
-    ['Flabra'] = 'rune_flabra',
-    ['Tellus'] = 'rune_tellus',
-    ['Sulpor'] = 'rune_sulpor',
-    ['Unda'] = 'rune_unda',
-    ['Lux'] = 'rune_lux',
-    ['Tenebrae'] = 'rune_tenebrae',
-    -- Abilities
-    ['Battuta'] = 'ability_battuta',
-    ['Gambit'] = 'ability_gambit',
-    ['Liement'] = 'ability_liement',
-    ['Pflug'] = 'ability_pflug',
-    ['Rayke'] = 'ability_pulse',
-    ['Foil'] = 'ability_foil',
-};
-
--- Mapping from other job abilities to texture cache keys
-local otherAbilityToIconKey = {
-    -- DRG
-    ['Jump'] = 'ability_jump',
-    ['High Jump'] = 'ability_jump',
-    ['Super Jump'] = 'ability_jump',
-    -- RDM
-    ['Chainspell'] = 'ability_chainspell',
-    ['Stymie'] = 'ability_stymie',
-    ['Convert'] = 'ability_2hr',
-    -- BLM
-    ['Elemental Seal'] = 'ability_2hr',
-};
-
 -- Track currently pressed hotbar/slot for visual feedback
 local currentPressedHotbar = nil;
 local currentPressedSlot = nil;
@@ -404,84 +227,357 @@ local itemIconCache = {};
 -- Helper Functions
 -- ============================================
 
--- O(1) lookup from English spell name -> horizonSpells entry. Built lazily on first use.
-local spellByNameLookup = nil;
+--- Load spell slot icon texture from Ashita dat ListIcon1/ListIcon2.
+local function GetSpellIconTexture(spellId)
+    if not spellId then return nil; end
+    local resMgr = AshitaCore:GetResourceManager();
+    if not resMgr then return nil; end
+    local spell = resMgr:GetSpellById(spellId);
+    if not spell then return nil; end
+    if actiondb.IsSummonerPactSpell(spell, spellId) then
+        return textures:GetSummonerPactAsset(spellId, actiondb.GetSummonerPactListIconId(spell));
+    end
+    return textures:GetSpellAsset(spellId);
+end
 
-local function buildSpellByNameLookup()
-    spellByNameLookup = {};
-    for _, spell in pairs(horizonSpells) do
-        if spell.en then
-            local existing = spellByNameLookup[spell.en];
-            if not existing or (existing.unlearnable and not spell.unlearnable) then
-                spellByNameLookup[spell.en] = spell;
+--- Bundled default icon for an ability bind (folder chosen by hotbar action type).
+local function GetBundledAbilityIcon(actionType, abilityId)
+    if not abilityId then
+        return nil;
+    end
+    if actionType == 'ws' then
+        return textures:GetWeaponskillAsset(abilityId);
+    end
+    if actionType == 'pet' then
+        return textures:GetPetCommandAsset(abilityId);
+    end
+    return textures:GetAbilityAsset(abilityId);
+end
+
+-- Buff IDs for MP cost display (game constants; read live buff state, not server-specific lists).
+local BUFF_MANAFONT = { [47] = true, [229] = true };
+local BUFF_PENURY_WHITE = 360;
+local BUFF_PENURY_BLACK = 361;
+local BUFF_ARTS_LIGHT = { [358] = true, [401] = true };
+local BUFF_ARTS_DARK = { [359] = true, [402] = true };
+local FINISHING_MOVE_BUFFS = {
+    [381] = 1, [382] = 2, [383] = 3, [384] = 4, [385] = 5, [588] = 6,
+};
+local FLOURISH_MIN_MOVES = {
+    [716] = 1, [717] = 1, [718] = 1, [719] = 1, [720] = 1, [721] = 2,
+    [776] = 1, [825] = 2, [826] = 3,
+};
+local RUNE_ENCHANTMENT_IDS = {
+    [856] = true, [878] = true, [880] = true, [881] = true, [883] = true,
+    [884] = true, [885] = true, [887] = true, [888] = true,
+};
+-- Dancer Trance (status 376) drops every DNC job-ability TP cost to 0 (like Manafont for MP).
+local BUFF_TRANCE = { [376] = true };
+
+-- Spells that consume all current MP (dat ManaCost is 1; display and readiness use max MP).
+local ALL_MP_SPELL_NAMES = {
+    ['death'] = true,
+};
+local function IsAllMpSpellName(spellName)
+    return spellName ~= nil and spellName ~= '' and ALL_MP_SPELL_NAMES[spellName:lower()] == true;
+end
+local function IsAtMaxMp()
+    local party = AshitaCore:GetMemoryManager():GetParty();
+    local player = AshitaCore:GetMemoryManager():GetPlayer();
+    if not party or not player then
+        return false;
+    end
+    local mp = party:GetMemberMP(0) or 0;
+    local maxMp = player:GetMPMax() or 0;
+    return maxMp > 0 and mp >= maxMp;
+end
+
+-- Scholar stratagems share recast timer 231; Tabula Rasa (status 377) makes them free.
+local STRATAGEM_TIMER_ID = 231;
+local STRATAGEM_BASE_RECAST = 240;  -- seconds for a full stratagem cycle before merits/JP
+local BUFF_TABULA_RASA = { [377] = true };
+local function PlayerHasAnyBuff(buffSet)
+    local player = AshitaCore:GetMemoryManager():GetPlayer();
+    if not player then return false; end
+    local buffs = player:GetBuffs();
+    if not buffs then return false; end
+    for i = 1, 32 do
+        if buffSet[buffs[i]] then return true; end
+    end
+    return false;
+end
+local function GetFinishingMoveCount()
+    local player = AshitaCore:GetMemoryManager():GetPlayer();
+    if not player then return 0; end
+    local buffs = player:GetBuffs();
+    if not buffs then return 0; end
+    local moves = 0;
+    for i = 1, 32 do
+        local count = FINISHING_MOVE_BUFFS[buffs[i]];
+        if count ~= nil then moves = count; end
+    end
+    return moves;
+end
+local function GetRuneEnchantmentCount()
+    local player = AshitaCore:GetMemoryManager():GetPlayer();
+    if not player then return 0; end
+    local buffs = player:GetBuffs();
+    if not buffs then return 0; end
+    local count = 0;
+    for i = 1, 32 do
+        local buff = buffs[i];
+        if buff > 522 and buff < 531 then count = count + 1; end
+    end
+    return count;
+end
+local function GetAdjustedSpellManaCost(spell)
+    if not spell then return 0; end
+    local cost = spell.ManaCost or 0;
+    if cost <= 0 then return 0; end
+    if PlayerHasAnyBuff(BUFF_MANAFONT) then return 0; end
+    local player = AshitaCore:GetMemoryManager():GetPlayer();
+    if not player then return cost; end
+    local buffs = player:GetBuffs();
+    if not buffs then return cost; end
+    local artsMod, penuryMod;
+    if spell.Type == 1 then
+        for i = 1, 32 do
+            local buff = buffs[i];
+            if buff == 255 then break; end
+            if BUFF_ARTS_LIGHT[buff] then artsMod = 0.9;
+            elseif BUFF_ARTS_DARK[buff] then artsMod = 1.2;
+            elseif buff == BUFF_PENURY_WHITE then penuryMod = 0.5; end
+        end
+    elseif spell.Type == 2 then
+        for i = 1, 32 do
+            local buff = buffs[i];
+            if buff == 255 then break; end
+            if BUFF_ARTS_LIGHT[buff] then artsMod = 1.2;
+            elseif BUFF_ARTS_DARK[buff] then artsMod = 0.9;
+            elseif buff == BUFF_PENURY_BLACK then penuryMod = 0.5; end
+        end
+    end
+    if penuryMod then return math.ceil(cost * penuryMod); end
+    if artsMod then return math.ceil(cost * artsMod); end
+    return cost;
+end
+
+--- Scholar's maximum stratagem charges for the current setup (0 if not SCH main/sub).
+local function GetMaxStratagems()
+    local player = AshitaCore:GetMemoryManager():GetPlayer();
+    if not player then return 0; end
+    local level = player:GetMainJobLevel();
+    if player:GetMainJob() ~= 20 then
+        if player:GetSubJob() == 20 then
+            level = player:GetSubJobLevel();
+        else
+            return 0;
+        end
+    end
+    if level < 10 then return 0; end
+    return math.floor((level - 10) / 20) + 1;
+end
+
+-- Stratagems are a shared charge pool; compute at most ~10x/sec and reuse across slots.
+local stratagemMemo = { time = -1, charges = 0, max = 0 };
+local STRATAGEM_MEMO_TTL = 0.1;
+
+--- Current available stratagem charges (Tabula Rasa => full). Cached briefly.
+local function GetStratagemCharges()
+    local now = os.clock();
+    if stratagemMemo.time >= 0 and (now - stratagemMemo.time) < STRATAGEM_MEMO_TTL then
+        return stratagemMemo.charges, stratagemMemo.max;
+    end
+    local maxCount = GetMaxStratagems();
+    local charges = 0;
+    if maxCount > 0 then
+        if PlayerHasAnyBuff(BUFF_TABULA_RASA) then
+            charges = maxCount;  -- Tabula Rasa: stratagems are free/unlimited
+        else
+            local timer = abilityRecast.GetAbilityTimerDataByTimerId(STRATAGEM_TIMER_ID);
+            local recast = (timer and timer.Recast) or 0;
+            if recast <= 0 then
+                charges = maxCount;
+            else
+                local baseRecast = 60 * (STRATAGEM_BASE_RECAST + ((timer and timer.Modifier) or 0));
+                local chargeValue = baseRecast / maxCount;
+                if chargeValue > 0 then
+                    charges = math.floor((baseRecast - recast) / chargeValue);
+                end
+                if charges < 0 then charges = 0; end
+                if charges > maxCount then charges = maxCount; end
             end
         end
     end
+    stratagemMemo.time = now;
+    stratagemMemo.charges = charges;
+    stratagemMemo.max = maxCount;
+    return charges, maxCount;
 end
+local function GetAbilityResourceCost(ability)
+    if not ability then return nil, true, nil; end
+    local abilityId = ability.Id or ability.Index;
 
---- Find a spell by English name in horizonspells
----@param spellName string The English name of the spell
----@return table|nil The spell data table with en, icon_id, prefix, and id fields
-local function GetSpellByName(spellName)
-    if not spellName then return nil; end
-    if not spellByNameLookup then buildSpellByNameLookup(); end
-    return spellByNameLookup[spellName];
-end
-
--- Ability MP cost cache (static resource data), keyed by ability name
-local abilityMpCostCache = {};
-
---- MP cost for a job ability (e.g. SMN Blood Pacts), read from the resource
---- manager so it stays correct for any ability without a curated table.
----@param abilityName string|nil
----@return number|nil mpCost
-local function GetAbilityMpCost(abilityName)
-    if not abilityName or abilityName == '' then return nil; end
-
-    local cached = abilityMpCostCache[abilityName];
-    if cached ~= nil then
-        return cached or nil;
+    -- Scholar stratagems: charge-based pool (shared timer 231); show charges as the cost.
+    if ability.RecastTimerId == STRATAGEM_TIMER_ID then
+        local charges = GetStratagemCharges();
+        return charges, charges > 0, 'charge';
     end
-
-    local mpCost = false;
-    local abilityId = actiondb.GetAbilityId(abilityName);
-    if abilityId then
-        local ability = AshitaCore:GetResourceManager():GetAbilityById(abilityId);
-        if ability and ability.ManaCost and ability.ManaCost > 0 then
-            mpCost = ability.ManaCost;
+    local party = AshitaCore:GetMemoryManager():GetParty();
+    local flourishMin = FLOURISH_MIN_MOVES[abilityId];
+    if flourishMin then
+        local moves = GetFinishingMoveCount();
+        return moves, moves >= flourishMin, 'finishing';
+    end
+    if RUNE_ENCHANTMENT_IDS[abilityId] then
+        local runes = GetRuneEnchantmentCount();
+        return runes, runes > 0, 'rune';
+    end
+    if ability.ManaCost and ability.ManaCost > 0 then
+        local mp = party and party:GetMemberMP(0) or 0;
+        return ability.ManaCost, mp >= ability.ManaCost, 'mp';
+    end
+    if ability.TPCost and ability.TPCost >= 1 then
+        -- Dancer Trance reduces all DNC ability TP costs to 0.
+        if PlayerHasAnyBuff(BUFF_TRANCE) then
+            return 0, true, 'tp';
+        end
+        local tp = party and party:GetMemberTP(0) or 0;
+        return ability.TPCost, tp >= ability.TPCost, 'tp';
+    end
+    return nil, true, nil;
+end
+local function PlayerKnowsAnyAbility(player, abilityIds)
+    if not abilityIds then return false; end
+    for _, abilityId in ipairs(abilityIds) do
+        if playerdata.PlayerOwnsAbility(abilityId) then return true; end
+    end
+    return false;
+end
+local function PlayerKnowsPetCommand(player, commandName, abilityIds)
+    if PlayerKnowsAnyAbility(player, abilityIds) then
+        return true;
+    end
+    if commandName and playerdata.HasKnownPetCommand(commandName) then
+        return true;
+    end
+    if player and player.HasPetCommand and abilityIds then
+        for _, abilityId in ipairs(abilityIds) do
+            if player:HasPetCommand(abilityId) then
+                return true;
+            end
         end
     end
-
-    abilityMpCostCache[abilityName] = mpCost;
-    return mpCost or nil;
+    return false;
 end
 
---- Get MP cost for an action (magic spells and MP-costing job abilities)
----@param bind table The keybind data with actionType and action fields
----@return number|nil mpCost The MP cost, or nil if not applicable
-function M.GetMPCost(bind)
-    if not bind then return nil; end
-
-    -- A macro surfaces its recast source's cost; a direct ma/ja bind uses its
-    -- own action.
-    local actionType, actionName = bind.actionType, bind.action;
-    if bind.actionType == 'macro' then
-        actionType, actionName = bind.recastSourceType, bind.recastSourceAction;
+--- Whether a pet command is learned (runtime context checked earlier in IsActionAvailable).
+local function IsPetActionUsable(player, actionName, abilityIds)
+    if not PlayerKnowsPetCommand(player, actionName, abilityIds) then
+        return false, "N/A";
     end
+    return true, nil;
+end
 
+--- Ashita spell resource by English name (first duplicate ID).
+local function GetAshitaSpellByName(spellName)
+    if not spellName or spellName == '' then
+        return nil, nil;
+    end
+    local ids = actiondb.GetSpellIds(spellName);
+    if not ids or #ids == 0 then
+        return nil, nil;
+    end
+    local resMgr = AshitaCore:GetResourceManager();
+    if not resMgr then return nil, nil; end
+    local spell = resMgr:GetSpellById(ids[1]);
+    return spell, ids[1];
+end
+
+--- Ashita ability resource by English name (first duplicate ID).
+local function GetAshitaAbilityByName(actionName)
+    if not actionName or actionName == '' then
+        return nil, nil;
+    end
+    local ids = actiondb.GetAbilityIds(actionName);
+    if not ids or #ids == 0 then
+        return nil, nil;
+    end
+    local resMgr = AshitaCore:GetResourceManager();
+    if not resMgr then return nil, nil; end
+    local ability = resMgr:GetAbilityById(ids[1]);
+    return ability, ids[1];
+end
+
+--- Resource cost for slot overlay (MP, TP, finishing moves, runes).
+function M.GetActionCost(bind)
+    if not bind then return nil, nil, nil; end
+    local actionType = bind.actionType;
+    local actionName = bind.action;
+    if actionType == 'macro' and bind.recastSourceAction then
+        actionType = bind.recastSourceType;
+        actionName = bind.recastSourceAction;
+    end
     if actionType == 'ma' then
-        local spell = GetSpellByName(actionName);
-        if spell and spell.mp_cost and spell.mp_cost > 0 then
-            return spell.mp_cost;
+        local spell = GetAshitaSpellByName(actionName);
+        if not spell then return nil, nil, nil; end
+        if IsAllMpSpellName(actionName) then
+            return 0, IsAtMaxMp(), 'mp_all';
         end
+        local baseCost = spell.ManaCost or 0;
+        if baseCost <= 0 then return nil, nil, nil; end
+        local cost = GetAdjustedSpellManaCost(spell);
+        local party = AshitaCore:GetMemoryManager():GetParty();
+        local mp = party and party:GetMemberMP(0) or 0;
+        return cost, mp >= cost, 'mp';
+    end
+    if actionType == 'pet' or actionType == 'ja' then
+        local ability = GetAshitaAbilityByName(actionName);
+        if not ability then return nil, nil, nil; end
+        return GetAbilityResourceCost(ability);
+    end
+    return nil, nil, nil;
+end
+
+--- Get MP cost for an action (buff-adjusted Ashita dat; legacy name kept for callers).
+function M.GetMPCost(bind)
+    local cost, _, kind = M.GetActionCost(bind);
+    if cost ~= nil and kind == 'mp' then
+        return cost;
+    end
+    return nil;
+end
+
+--- Whether the player currently meets the slot resource cost (MP/TP/flourish/rune).
+function M.HasEnoughResourceForBind(bind)
+    local _, costMet, _ = M.GetActionCost(bind);
+    if costMet == nil then
+        return true;
+    end
+    return costMet;
+end
+
+--- Live check for a cached resource cost (MP/TP change every frame; buff signature alone is not enough).
+function M.IsResourceCostMet(kind, cost)
+    if kind == nil or cost == nil then
         return nil;
     end
-
-    -- Blood Pacts and similar pet commands are abilities behind a /pet prefix.
-    if actionType == 'ja' or actionType == 'pet' then
-        return GetAbilityMpCost(actionName);
+    if kind == 'mp' then
+        local party = AshitaCore:GetMemoryManager():GetParty();
+        local mp = party and party:GetMemberMP(0) or 0;
+        return mp >= cost;
     end
-
+    if kind == 'mp_all' then
+        return IsAtMaxMp();
+    end
+    if kind == 'tp' then
+        if PlayerHasAnyBuff(BUFF_TRANCE) then
+            return true;
+        end
+        local party = AshitaCore:GetMemoryManager():GetParty();
+        local tp = party and party:GetMemberTP(0) or 0;
+        return tp >= cost;
+    end
     return nil;
 end
 
@@ -493,56 +589,114 @@ local AVAILABILITY_ACTION_TYPES = {
     ma = true, ja = true, ws = true, pet = true, equip = true, item = true,
 };
 
---- Whether a bind shows item quantity on the slot (item action or macro item recast)
----@param bind table|nil
----@return boolean
+--- Whether this bind shows a resource cost overlay (MP, TP, finishing moves, runes).
+function M.NeedsActionCostDisplay(bind)
+    if not bind then return false; end
+    if bind.actionType == 'ma' or bind.actionType == 'ja' or bind.actionType == 'pet' then
+        return true;
+    end
+    return bind.actionType == 'macro'
+        and bind.recastSourceAction
+        and (bind.recastSourceType == 'ma' or bind.recastSourceType == 'ja' or bind.recastSourceType == 'pet');
+end
+
+--- Whether a bind uses item quantity instead of the unavailable "X" overlay.
+--- Pure item slots keep x-count visible; macros with item recast show "X" when unavailable.
 function M.UsesItemQuantityOverlay(bind)
     if not bind then return false; end
-    return bind.actionType == 'item'
-        or (bind.actionType == 'macro' and bind.recastSourceType == 'item');
+    return bind.actionType == 'item';
+end
+
+-- Ranged attack slash commands that require equipped range/ammo gear.
+local RANGED_ATTACK_COMMANDS = {
+    ra = 'range',
+    range = 'range',
+    ranged = 'range',
+    shoot = 'range',
+    throw = 'ammo',
+};
+
+--- Macro body text for availability checks.
+local function GetMacroText(bind)
+    if not bind or bind.actionType ~= 'macro' then
+        return '';
+    end
+    return bind.macroText or bind.action or '';
+end
+
+--- Whether macro text contains /ra, /range, /shoot, /throw, etc.
+local function GetMacroRangedRequirements(macroText)
+    if not macroText or macroText == '' then
+        return false, false;
+    end
+    local needsRangeWeapon = false;
+    local needsAmmo = false;
+    for line in macroText:gmatch('[^\r\n]+') do
+        local cmd = line:match('^%s*/%s*(%S+)');
+        if cmd then
+            local req = RANGED_ATTACK_COMMANDS[cmd:lower()];
+            if req == 'range' then
+                needsRangeWeapon = true;
+            elseif req == 'ammo' then
+                needsAmmo = true;
+            end
+        end
+    end
+    return needsRangeWeapon, needsAmmo;
+end
+
+--- Whether a macro bind is missing gear required by /ra, /range, /shoot, or /throw lines.
+function M.IsMacroMissingRangedEquipment(bind)
+    if not bind or bind.actionType ~= 'macro' then
+        return false;
+    end
+    local needsRangeWeapon, needsAmmo = GetMacroRangedRequirements(GetMacroText(bind));
+    if needsRangeWeapon and not playerdata.HasEquippedRangeWeapon() then
+        return true;
+    end
+    if needsAmmo and not playerdata.HasEquippedAmmo() then
+        return true;
+    end
+    return false;
 end
 
 --- Whether this bind should be checked for job/gear availability dimming
----@param bind table
----@return boolean
 function M.NeedsAvailabilityCheck(bind)
     if not bind then return false; end
     if AVAILABILITY_ACTION_TYPES[bind.actionType] then return true; end
-    return bind.actionType == 'macro'
-        and bind.recastSourceType ~= nil
-        and bind.recastSourceType ~= 'none';
+    if bind.actionType == 'macro' then
+        if bind.recastSourceType and bind.recastSourceType ~= 'none' then
+            return true;
+        end
+        local needsRange, needsAmmo = GetMacroRangedRequirements(GetMacroText(bind));
+        if needsRange or needsAmmo then
+            return true;
+        end
+    end
+    return false;
 end
 
 --- Whether this bind should be dimmed when the player lacks enough TP
----@param bind table
----@return boolean
 function M.NeedsTpCheck(bind)
     if not bind then return false; end
-
     if bind.actionType == 'ws' then
         return true;
     end
-
     if bind.actionType == 'macro' and bind.recastSourceType == 'ws' and bind.recastSourceAction then
         return true;
     end
-
     return false;
 end
 
 --- Get TP cost for a weaponskill (clamped to 1000-3000)
----@param wsName string
----@return number
 function M.GetWeaponskillTpCost(wsName)
     if not wsName or wsName == '' then
         return 1000;
     end
-
     local cached = wsTpCostCache[wsName];
     if cached then
         return cached;
     end
-
     local tpCost = 1000;
     local abilityId = actiondb.GetAbilityId(wsName);
     if abilityId then
@@ -551,37 +705,45 @@ function M.GetWeaponskillTpCost(wsName)
             tpCost = ability.TP;
         end
     end
-
     if tpCost > 3000 then
         tpCost = 3000;
     end
-
     wsTpCostCache[wsName] = tpCost;
     return tpCost;
 end
 
 --- Check if the player currently has enough TP for a weaponskill bind
----@param bind table
----@return boolean hasEnoughTp
 function M.HasEnoughTpForBind(bind)
     if not M.NeedsTpCheck(bind) then
         return true;
     end
-
     local wsName = bind.action;
     if bind.actionType == 'macro' then
         wsName = bind.recastSourceAction;
     end
-
     local tpCost = M.GetWeaponskillTpCost(wsName);
     local party = AshitaCore:GetMemoryManager():GetParty();
     local playerTp = party and party:GetMemberTP(0) or 0;
     return playerTp >= tpCost;
 end
 
+--- Whether this bind should grey the magic burst highlight when MP is too low
+function M.NeedsMpCheck(bind)
+    if not bind then return false; end
+    local _, _, kind = M.GetActionCost(bind);
+    return kind == 'mp' or kind == 'mp_all';
+end
+
+--- Check if the player currently has enough MP for a spell bind
+function M.HasEnoughMpForBind(bind)
+    if not M.NeedsMpCheck(bind) then
+        return true;
+    end
+    local _, costMet, _ = M.GetActionCost(bind);
+    return costMet ~= false;
+end
+
 --- Resolve macro recast source into a bind suitable for availability checks
----@param bind table
----@return table
 local function ResolveAvailabilityBind(bind)
     if bind.actionType == 'macro' and bind.recastSourceType and bind.recastSourceType ~= 'none' then
         return {
@@ -594,129 +756,127 @@ local function ResolveAvailabilityBind(bind)
     return bind;
 end
 
---- Check if the player currently has a named ability or weaponskill
----@param player table
----@param actionName string
----@param cacheFallback function|nil Fallback when ability ID lookup fails
----@return boolean
-local function PlayerHasNamedAbility(player, actionName, cacheFallback)
-    local abilityId = actiondb.GetAbilityId(actionName);
-    if abilityId then
-        return player:HasAbility(abilityId);
+--- Pet/automaton context dimming (live HasPetCommand/entity; does not wait for ability memory scan).
+local function MeetsPetRuntimeAvailability(actionName, mainJobId, player)
+    local petregistry = require('modules.hotbar.petregistry');
+    if not petregistry.HasPetRuntimeRequirement(actionName, mainJobId) then
+        return true;
     end
-    return cacheFallback and cacheFallback(actionName) or false;
+    return petregistry.MeetsPetRuntimeRequirement(actionName, mainJobId, player);
 end
 
---- Check if an action is currently available to use
---- Takes into account job, level, subjob, and level sync
----@param bind table The keybind data with actionType and action fields
----@return boolean isAvailable True if the action can be used
----@return string|nil reason Reason if not available (e.g., "Level 50 required", "Wrong job")
+--- Whether the player can use this action right now (ownership, job gates, inventory).
+--- Slot renderer caches results until job, buff, equipment, or list-packet context changes.
 function M.IsActionAvailable(bind)
     if not bind then return true, nil; end
-
+    local sourceBind = bind;
     bind = ResolveAvailabilityBind(bind);
-
     local player = AshitaCore:GetMemoryManager():GetPlayer();
     if not player then return true, nil; end
-
     local mainJobId = player:GetMainJob();
     local mainJobLevel = player:GetMainJobLevel();
     local subJobId = player:GetSubJob();
     local subJobLevel = player:GetSubJobLevel();
 
-    -- Guard: If job data is invalid (e.g., during zoning), assume available
-    -- Don't cache this result - return nil as reason to signal "don't cache"
-    if mainJobId == 0 or mainJobLevel == 0 then
-        return true, "pending";  -- "pending" signals not to cache this result
+    -- Player memory is unreliable while zoning or before job/level is valid.
+    -- Return "pending" so false results are not cached (optimistic UI).
+    if player.isZoning or mainJobId == 0 or mainJobLevel == 0 then
+        return true, "pending";
     end
-
     if bind.actionType == 'macro' then
+        if M.IsMacroMissingRangedEquipment(sourceBind) then
+            return false, "N/A";
+        end
         return true, nil;
     end
 
-    -- Handle magic spells
+    -- Pet-context dimming uses live memory (HasPetCommand / pet entity), not the ability scan.
+    if bind.actionType == 'ja' or bind.actionType == 'pet' then
+        if not MeetsPetRuntimeAvailability(bind.action, mainJobId, player) then
+            return false, "N/A";
+        end
+    end
+    if bind.actionType == 'item' or bind.actionType == 'equip' then
+        if not playerdata.IsActionDataReadyForType(bind.actionType) then
+            return true, "pending";
+        end
+    end
+
+    -- Spells: tHotBar model — 0x0AA ownership (PlayerOwnsSpell) + job level/JP gate for Available.
     if bind.actionType == 'ma' then
-        local spellId = actiondb.GetSpellId(bind.action);
-        if spellId and not player:HasSpell(spellId) then
-            -- Volatile: HasSpell reads false right after zone-in until the spell
-            -- list repopulates; don't cache or it sticks "N/A". See ja/ws.
-            return false, "N/A", false;
+        local spellIds = actiondb.GetSpellIds(bind.action);
+        if not spellIds or #spellIds == 0 then
+            return true, "pending";
         end
-
-        local spell = GetSpellByName(bind.action);
-        if not spell then return true, nil; end  -- Unknown spell, assume available
-
-        local levels = spell.levels;
-        if not levels then return true, nil; end  -- No level requirements
-
-        -- Check if main job can cast this spell
-        local mainReqLevel = levels[mainJobId];
-        local subReqLevel = subJobId and levels[subJobId] or nil;
-
-        -- Check main job first (Job Point spells report level > 99)
-        if mainReqLevel then
-            if mainJobLevel >= mainReqLevel or mainReqLevel > MAX_JOB_LEVEL then
-                return true, nil;  -- Can cast with main job
+        local resMgr = AshitaCore:GetResourceManager();
+        local canUse = false;
+        for _, spellId in ipairs(spellIds) do
+            if playerdata.PlayerOwnsSpell(spellId) then
+                if playerdata.IsSpellOwnedFromPacket(spellId) then
+                    canUse = true;
+                    break;
+                end
+                local spell = resMgr and resMgr:GetSpellById(spellId);
+                if not spell or playerdata.IsSpellJobUnlockedForHotbar(spell, player, mainJobId, subJobId) then
+                    canUse = true;
+                    break;
+                end
             end
         end
-
-        -- Check subjob
-        if subReqLevel then
-            if subJobLevel >= subReqLevel then
-                return true, nil;  -- Can cast with subjob
-            end
+        if not canUse then
+            return false, "N/A";
         end
-
-        -- Spell exists but can't be cast
-        if mainReqLevel then
-            -- Has the job but not the level
-            return false, string.format("Lv%d", mainReqLevel);
-        elseif subReqLevel then
-            -- Subjob has it but not the level
-            return false, string.format("Lv%d", subReqLevel);
-        else
-            -- Job can't cast this spell at all
-            return false, "Job";
-        end
-
-    -- Handle job abilities (live HasAbility reflects current job/gear state)
     elseif bind.actionType == 'ja' then
-        if not PlayerHasNamedAbility(player, bind.action, playerdata.IsAbilityInCache) then
-            -- Volatile: HasAbility reads false briefly after zoning until the
-            -- ability list repopulates; don't cache or it sticks "N/A".
-            return false, "N/A", false;
+        local abilityIds = actiondb.GetAbilityIds(bind.action);
+        if not abilityIds or #abilityIds == 0 then
+            return true, "pending";
         end
-
-    -- Handle weapon skills (HasAbility reflects currently equipped weapon types)
+        if not PlayerKnowsAnyAbility(player, abilityIds) then
+            return false, "N/A";
+        end
     elseif bind.actionType == 'ws' then
-        if not PlayerHasNamedAbility(player, bind.action, playerdata.IsWeaponskillInCache) then
-            return false, "N/A", false;
+        local abilityIds = actiondb.GetAbilityIds(bind.action);
+        if not abilityIds or #abilityIds == 0 then
+            return true, "pending";
         end
-
-    elseif bind.actionType == 'pet' then
-        if not playerdata.IsPetCommandAvailable(bind.action) then
+        if not PlayerKnowsAnyAbility(player, abilityIds) then
             return false, "N/A";
         end
 
+    -- Pet commands: pet job + runtime HasPetCommand/context (not HasAbility alone).
+    elseif bind.actionType == 'pet' then
+        local petregistry = require('modules.hotbar.petregistry');
+        if not petregistry.IsPetJob(mainJobId) then
+            return false, "N/A";
+        end
+        local abilityIds = actiondb.GetAbilityIds(bind.action);
+        if not abilityIds or #abilityIds == 0 then
+            return true, "pending";
+        end
+        local petAvailable, petReason = IsPetActionUsable(player, bind.action, abilityIds);
+        if not petAvailable then
+            return false, petReason or "N/A";
+        end
+        if petReason == "pending" then
+            return true, "pending";
+        end
     elseif bind.actionType == 'equip' then
         if not playerdata.IsEquipActionAvailable(bind.equipSlot, bind.action, bind.itemId) then
             return false, "N/A";
         end
-
     elseif bind.actionType == 'item' then
         if not playerdata.IsItemInAccessibleInventory(bind.itemId, bind.action) then
             return false, "N/A";
         end
     end
-
+    if M.IsMacroMissingRangedEquipment(sourceBind) then
+        return false, "N/A";
+    end
     return true, nil;
 end
 
 --- Load item icon from game resources by item ID
 --- Uses file cache for primitive rendering compatibility
----@param itemId number The item ID
----@return table|nil texture The icon texture with path field for primitive rendering
 local function LoadItemIconById(itemId)
     if not itemId or itemId == 0 or itemId == 65535 then
         return nil;
@@ -739,17 +899,13 @@ local function LoadItemIconById(itemId)
     local success, result = pcall(function()
         local device = GetD3D8Device();
         if device == nil then return nil; end
-
         local resMgr = AshitaCore:GetResourceManager();
         if not resMgr then return nil; end
-
         local item = resMgr:GetItemById(itemId);
         if item == nil then return nil; end
-
         if item.Bitmap == nil or item.ImageSize == nil or item.ImageSize <= 0 then
             return nil;
         end
-
         local dx_texture_ptr = ffi.new('IDirect3DTexture8*[1]');
         if ffi.C.D3DXCreateTextureFromFileInMemoryEx(
             device, item.Bitmap, item.ImageSize,
@@ -767,11 +923,9 @@ local function LoadItemIconById(itemId)
         end
         return nil;
     end);
-
     if success and result then
         itemIconCache[itemId] = result;
     end
-
     return itemIconCache[itemId];
 end
 
@@ -781,8 +935,6 @@ local itemNameToIdCache = {};
 local ITEM_NOT_FOUND = -1;  -- Marker for "searched but not found"
 
 --- Load item icon from game resources by item name (slower, uses name lookup)
----@param itemName string The item name to look up
----@return table|nil texture The icon texture
 local function LoadItemIconByName(itemName)
     if not itemName or itemName == '' then
         return nil;
@@ -800,7 +952,6 @@ local function LoadItemIconByName(itemName)
     -- Search for item by name (slow, but cached after first find)
     local resMgr = AshitaCore:GetResourceManager();
     if not resMgr then return nil; end
-
     for itemId = 1, 65535 do
         local item = resMgr:GetItemById(itemId);
         if item and item.Name and item.Name[1] == itemName then
@@ -815,9 +966,6 @@ local function LoadItemIconByName(itemName)
 end
 
 --- Get icon for a bind (separate from command building for use in drag preview)
----@param bind table The keybind data
----@return any|nil icon The icon texture (if available)
----@return number|nil iconId The icon ID (for reference)
 function M.GetBindIcon(bind)
     if not bind then
         return nil, nil;
@@ -828,7 +976,6 @@ function M.GetBindIcon(bind)
     if noIconKey and noIconCache[noIconKey] then
         return nil, nil;
     end
-
     local icon = nil;
     local iconId = nil;
 
@@ -844,15 +991,11 @@ function M.GetBindIcon(bind)
                     -- Found the source macro - use its current custom icon if set
                     if macro.customIconType then
                         if macro.customIconType == 'spell' and macro.customIconId then
-                            icon = textures:Get('spells' .. string.format('%05d', macro.customIconId));
+                            icon = GetSpellIconTexture(macro.customIconId);
                             iconId = macro.customIconId;
                             if icon then return icon, iconId; end
                         elseif macro.customIconType == 'ability' and macro.customIconId then
-                            -- customIconId is the icon file stem (ability id); pad numbers.
-                            local key = type(macro.customIconId) == 'number'
-                                and string.format('%05d', macro.customIconId)
-                                or macro.customIconId;
-                            icon = textures:Get('abilities' .. key);
+                            icon = textures:GetDefaultAbilityIcon(macro.customIconId);
                             iconId = macro.customIconId;
                             if icon then return icon, iconId; end
                         elseif macro.customIconType == 'item' and macro.customIconId then
@@ -883,15 +1026,11 @@ function M.GetBindIcon(bind)
     -- Check for custom icon override on the bind itself
     if bind.customIconType then
         if bind.customIconType == 'spell' and bind.customIconId then
-            icon = textures:Get('spells' .. string.format('%05d', bind.customIconId));
+            icon = GetSpellIconTexture(bind.customIconId);
             iconId = bind.customIconId;
             if icon then return icon, iconId; end
         elseif bind.customIconType == 'ability' and bind.customIconId then
-            -- customIconId is the icon file stem (ability id); pad numbers.
-            local key = type(bind.customIconId) == 'number'
-                and string.format('%05d', bind.customIconId)
-                or bind.customIconId;
-            icon = textures:Get('abilities' .. key);
+            icon = textures:GetDefaultAbilityIcon(bind.customIconId);
             iconId = bind.customIconId;
             if icon then return icon, iconId; end
         elseif bind.customIconType == 'item' and bind.customIconId then
@@ -914,82 +1053,31 @@ function M.GetBindIcon(bind)
             end
         end
     end
-
     if bind.actionType == 'ma' then
-        -- Check for summoning magic first (custom icons)
-        local summonIconKey = summonSpellToIconKey[bind.action];
-        if summonIconKey then
-            icon = textures:Get(summonIconKey);
-            if icon then
-                local spell = GetSpellByName(bind.action);
-                if spell then iconId = spell.id; end
-                return icon, iconId;
+        local spellId = actiondb.GetSpellId(bind.action);
+        if spellId then
+            local resMgr = AshitaCore:GetResourceManager();
+            local spell = resMgr and resMgr:GetSpellById(spellId);
+            if actiondb.IsSummonerPactSpell(spell, spellId) then
+                iconId = spellId;
+                icon = textures:GetSummonerPactAsset(spellId, actiondb.GetSummonerPactListIconId(spell));
+                if icon then
+                    return icon, iconId;
+                end
             end
         end
-        -- Check for Trust icons
-        local trustIconKey = trustToIconKey[bind.action];
-        if trustIconKey then
-            icon = textures:Get(trustIconKey);
-            if icon then
-                local spell = GetSpellByName(bind.action);
-                if spell then iconId = spell.id; end
-                return icon, iconId;
-            end
+        if spellId then
+            iconId = spellId;
+            icon = GetSpellIconTexture(spellId);
         end
-        -- Check for Blue Magic icons
-        local blueIconKey = blueMagicToIconKey[bind.action];
-        if blueIconKey then
-            icon = textures:Get(blueIconKey);
-            if icon then
-                local spell = GetSpellByName(bind.action);
-                if spell then iconId = spell.id; end
-                return icon, iconId;
-            end
-        end
-        -- Magic spell - look up in horizonspells database
-        local spell = GetSpellByName(bind.action);
-        if spell then
-            iconId = spell.id;
-            icon = textures:Get('spells' .. string.format('%05d', spell.id));
-        end
-    elseif bind.actionType == 'ja' then
-        -- Check for SMN ability icons first
-        local smnIconKey = smnAbilityToIconKey[bind.action];
-        if smnIconKey then
-            icon = textures:Get(smnIconKey);
-            if icon then return icon, iconId; end
-        end
-        -- Check for RUN ability icons
-        local runIconKey = runAbilityToIconKey[bind.action];
-        if runIconKey then
-            icon = textures:Get(runIconKey);
-            if icon then return icon, iconId; end
-        end
-        -- Check for other job ability icons
-        local otherIconKey = otherAbilityToIconKey[bind.action];
-        if otherIconKey then
-            icon = textures:Get(otherIconKey);
-            if icon then return icon, iconId; end
-        end
-        -- Fall back to the native game ability icon (abilities/<id>.png), keyed by the
-        -- ability's resource Id, so any JA without a curated icon still shows real art.
+    elseif bind.actionType == 'ja' or bind.actionType == 'pet' or bind.actionType == 'ws' then
         local abilityId = actiondb.GetAbilityId(bind.action);
         if abilityId then
-            icon = textures:Get('abilities' .. string.format('%05d', abilityId));
-            if icon then return icon, abilityId; end
-        end
-        -- No icon source left for this job ability; abbreviation fallback handles display.
-    elseif bind.actionType == 'pet' then
-        -- Check for pet command icons first
-        local petIconKey = petCommandToIconKey[bind.action];
-        if petIconKey then
-            icon = textures:Get(petIconKey);
+            icon = GetBundledAbilityIcon(bind.actionType, abilityId);
             if icon then
-                return icon, iconId;
+                return icon, abilityId;
             end
         end
-    elseif bind.actionType == 'ws' then
-        -- No icon source for weaponskills; abbreviation fallback handles display.
     elseif bind.actionType == 'item' or bind.actionType == 'equip' then
         -- Item or Equipment - load icon from game resources
         -- Use itemId if available (faster), otherwise fall back to name lookup
@@ -1005,7 +1093,6 @@ function M.GetBindIcon(bind)
     if not icon and noIconKey then
         noIconCache[noIconKey] = true;
     end
-
     return icon, iconId;
 end
 
@@ -1020,13 +1107,8 @@ local function FormatTargetForCommand(target)
     if cleaned == '' then return '<t>'; end
     return '<' .. cleaned .. '>';
 end
-
----@param bind table The keybind data with actionType, action, and target fields
----@return string|nil command The command to execute
----@return any|nil icon The icon texture (if applicable)
 function M.BuildCommand(bind)
     local command = nil;
-
     if not bind then
         return nil, nil;
     end
@@ -1061,11 +1143,8 @@ function M.BuildCommand(bind)
         -- Macro command (raw command or use macroText)
         command = bind.macroText or bind.action;
     end
-
     return command, icon;
 end
-
-
 
 -- Parse lParam bits per Keystroke Message Flags:
 -- bit 31 - transition state: 0 = key press, 1 = key release
@@ -1136,7 +1215,6 @@ end
 
 -- Subtarget tags that open the in-game selection UI (<lastst> excluded - reuses prior target)
 local SUBTARGET_TAGS = { 'stpc', 'stpt', 'stal', 'stnpc', 'st' };
-
 local function extractSubtargetTag(line)
     local unquoted = line:gsub('"[^"]*"', '');
     for _, tag in ipairs(SUBTARGET_TAGS) do
@@ -1167,7 +1245,6 @@ local function macroHasSubtarget(lines)
     end
     return false;
 end
-
 local SUBTARGET_POLL_INTERVAL = 0.05;
 local SUBTARGET_CHOICE_TIMEOUT_SEC = 30.0;
 local SUBTARGET_NO_OPEN_FALLTHROUGH_SEC = 1.0;
@@ -1186,15 +1263,12 @@ local ST_PRETARGET_COMMANDS = {
     stpt = '/target <me>',
     stal = '/target <me>',
 };
-
 local pendingSubtargetWait = nil;
-
 local function shouldApplyStPreTarget(stTag)
     return stTag ~= nil
         and ST_PRETARGET_COMMANDS[stTag] ~= nil
         and not targetLib.HasMainTarget();
 end
-
 local function queueStPreTarget(stTag)
     local preTarget = ST_PRETARGET_COMMANDS[stTag];
     if not preTarget then
@@ -1213,10 +1287,8 @@ local function queueStPreTarget(stTag)
     SubtargetDebugLog(('ST pre-target queued for <%s>: %s'):format(stTag, preTarget));
     return true;
 end
-
 local function runAfterStPreTarget(onReady, cancelCheck)
     local deadline = os.clock() + ST_PRETARGET_MAX_WAIT_SEC;
-
     local function poll()
         if cancelCheck and cancelCheck() then
             return;
@@ -1232,10 +1304,8 @@ local function runAfterStPreTarget(onReady, cancelCheck)
         end
         ashita.tasks.once(0, poll);
     end
-
     ashita.tasks.once(0, poll);
 end
-
 local function isSubtargetMode(mode)
     return mode ~= nil and mode >= 3 and mode <= 7;
 end
@@ -1250,7 +1320,6 @@ local function getSubtargetEventMode(e, nType)
     end
     return nil;
 end
-
 local function normalizeCommand(cmd)
     cmd = tostring(cmd or '');
     return cmd:lower():gsub('%s+', ' '):match('^%s*(.-)%s*$') or '';
@@ -1260,7 +1329,6 @@ end
 local function stripTargetTokens(cmd)
     return normalizeCommand(cmd):gsub('<[^>]+>', ''):gsub('%s+', ' '):match('^%s*(.-)%s*$') or '';
 end
-
 local function getExpectedSubtargetMode(stTag)
     if not stTag then
         return nil;
@@ -1278,26 +1346,22 @@ local function getCommandActionKey(cmd)
     end
     return stripTargetTokens(norm):gsub('%s+%d+$', '');
 end
-
 local function commandHasStTag(cmd, stTag)
     if not cmd or not stTag then
         return false;
     end
     return normalizeCommand(cmd):find('<' .. stTag .. '>', 1, true) ~= nil;
 end
-
 local function commandMatchesActionKey(wait, incomingCmd)
     if not wait or not incomingCmd then
         return false;
     end
     return getCommandActionKey(incomingCmd) == wait.actionKey;
 end
-
 local function isStActivationEvent(e, nType, wait)
     if not commandMatchesActionKey(wait, e.command) then
         return false;
     end
-
     local stMode = getSubtargetEventMode(e, nType);
     if stMode == wait.expectedMode and commandHasStTag(e.command, wait.stTag) then
         return true;
@@ -1307,19 +1371,15 @@ local function isStActivationEvent(e, nType, wait)
     if (e.mode == 1 or e.mode == 2) and commandHasStTag(e.command, wait.stTag) then
         return true;
     end
-
     return false;
 end
-
 local function isStResolvedTargetPass(e, nType, wait)
     if wait.stPassCount < 1 then
         return false;
     end
-
     if getSubtargetEventMode(e, nType) ~= wait.expectedMode then
         return false;
     end
-
     if not commandMatchesActionKey(wait, e.command) then
         return false;
     end
@@ -1328,16 +1388,13 @@ local function isStResolvedTargetPass(e, nType, wait)
     if commandHasStTag(e.command, wait.stTag) then
         return false;
     end
-
     return true;
 end
-
 local function clearSubtargetWait(wait)
     if wait == nil or pendingSubtargetWait == wait then
         pendingSubtargetWait = nil;
     end
 end
-
 local function finishSubtargetAdvance(wait, logMsg)
     if not wait or wait.finished or pendingSubtargetWait ~= wait then
         return;
@@ -1346,9 +1403,7 @@ local function finishSubtargetAdvance(wait, logMsg)
     local onComplete = wait.onComplete;
     local cancelCheck = wait.cancelCheck;
     clearSubtargetWait(wait);
-
     SubtargetDebugLog(logMsg);
-
     ashita.tasks.once(0, function()
         if cancelCheck and cancelCheck() then
             return;
@@ -1356,7 +1411,6 @@ local function finishSubtargetAdvance(wait, logMsg)
         onComplete();
     end);
 end
-
 local function finishSubtargetTimeout(wait)
     if not wait or wait.finished or pendingSubtargetWait ~= wait then
         return;
@@ -1365,9 +1419,7 @@ local function finishSubtargetTimeout(wait)
     local onAbort = wait.onAbort;
     local cancelCheck = wait.cancelCheck;
     clearSubtargetWait(wait);
-
     SubtargetDebugLog('ST wait timed out, aborting macro');
-
     if cancelCheck and cancelCheck() then
         return;
     end
@@ -1394,21 +1446,17 @@ local function isSubtargetDismissedWithoutConfirm(wait, stActive)
     end
     return wait.sawStActive;
 end
-
 local function onSubtargetCommandEvent(e, nType)
     local wait = pendingSubtargetWait;
     if not wait or wait.finished then
         return;
     end
-
     if wait.cancelCheck and wait.cancelCheck() then
         wait.finished = true;
         clearSubtargetWait(wait);
         return;
     end
-
     local stMode = getSubtargetEventMode(e, nType);
-
     SubtargetDebugLog(('ST cmd event e.mode=%s nType=%s stMode=%s expect=%s pass=%d resolved=%d st=%s: %s'):format(
         tostring(e.mode),
         tostring(nType),
@@ -1419,38 +1467,31 @@ local function onSubtargetCommandEvent(e, nType)
         tostring(targetLib.GetSubTargetActive()),
         tostring(e.command)
     ));
-
     if isStActivationEvent(e, nType, wait) and wait.stPassCount == 0 then
         wait.stPassCount = 1;
         SubtargetDebugLog('ST activation pass recorded');
         return;
     end
-
     if not isStResolvedTargetPass(e, nType, wait) then
         return;
     end
-
     if targetLib.GetSubTargetActive() then
         wait.sawStActive = true;
     end
-
     if wait.resolvedPassCount == 0 then
         wait.resolvedPassCount = 1;
         wait.sawStOpen = true;
         SubtargetDebugLog('ST open pass (cursor default) recorded');
         return;
     end
-
     if not wait.sawStOpen then
         SubtargetDebugLog('ST confirm pass ignored (no open pass yet)');
         return;
     end
-
     wait.resolvedPassCount = 2;
     SubtargetDebugLog('ST confirm pass matched');
     finishSubtargetAdvance(wait, 'ST wait confirmed, advancing macro');
 end
-
 ashita.events.register('command', 'xiui_subtarget_cmd', function(e, nType)
     onSubtargetCommandEvent(e, nType);
 end);
@@ -1459,7 +1500,6 @@ end);
 local function waitForSubtargetComplete(commandLine, onComplete, onAbort, cancelCheck)
     local stTag = extractSubtargetTag(commandLine);
     local expectedMode = getExpectedSubtargetMode(stTag);
-
     pendingSubtargetWait = {
         actionKey = getCommandActionKey(commandLine),
         stTag = stTag,
@@ -1475,61 +1515,48 @@ local function waitForSubtargetComplete(commandLine, onComplete, onAbort, cancel
         onComplete = onComplete,
         onAbort = onAbort,
     };
-
     local myWait = pendingSubtargetWait;
-
     SubtargetDebugLog(('ST wait begin tag=%s expectMode=%s cmd=%s'):format(
         tostring(stTag),
         tostring(expectedMode),
         commandLine
     ));
-
     local function poll()
         if pendingSubtargetWait ~= myWait or myWait.finished then
             return;
         end
-
         local wait = myWait;
-
         if cancelCheck and cancelCheck() then
             SubtargetDebugLog('ST wait superseded by newer macro');
             myWait.finished = true;
             clearSubtargetWait(myWait);
             return;
         end
-
         local stActive = targetLib.GetSubTargetActive();
         if stActive then
             wait.sawStActive = true;
         end
-
         if isWaitingForStChoice(wait) then
             if not wait.choiceDeadline then
                 wait.choiceDeadline = os.clock() + SUBTARGET_CHOICE_TIMEOUT_SEC;
             end
-
             if isSubtargetDismissedWithoutConfirm(wait, stActive) then
                 finishSubtargetAdvance(wait, 'ST wait ended (cancelled), advancing macro');
                 return;
             end
-
             if os.clock() >= wait.choiceDeadline then
                 finishSubtargetTimeout(wait);
                 return;
             end
-
             ashita.tasks.once(SUBTARGET_POLL_INTERVAL, poll);
             return;
         end
-
         if os.clock() >= wait.noOpenDeadline then
             finishSubtargetAdvance(wait, 'ST wait fallthrough (selection never opened)');
             return;
         end
-
         ashita.tasks.once(SUBTARGET_POLL_INTERVAL, poll);
     end
-
     ashita.tasks.once(0, poll);
 end
 
@@ -1557,11 +1584,9 @@ function M.ExecuteCommandString(commandText, isMacro)
             table.insert(lines, line);
         end
     end
-
     if #lines == 0 then
         return false;
     end
-
     local myMacroId = nil;
     if isMacro then
         -- Block new macros only while the game reports subtarget mode is active.
@@ -1603,9 +1628,7 @@ function M.ExecuteCommandString(commandText, isMacro)
     local function isMacroCancelled()
         return myMacroId ~= nil and myMacroId ~= activeMacroId;
     end
-
     local executeNextLine;
-
     local function scheduleNextLine(index, delay)
         if index > #lines then
             return;
@@ -1614,7 +1637,6 @@ function M.ExecuteCommandString(commandText, isMacro)
             executeNextLine(index);
         end);
     end
-
     executeNextLine = function(index)
         if index > #lines then
             return;
@@ -1624,7 +1646,6 @@ function M.ExecuteCommandString(commandText, isMacro)
         if isMacroCancelled() then
             return;
         end
-
         local line = lines[index]:match('^%s*(.-)%s*$');  -- Trim whitespace
         if line == '' then
             scheduleNextLine(index + 1, 0);
@@ -1635,7 +1656,6 @@ function M.ExecuteCommandString(commandText, isMacro)
         local waitMatch = line:match('^/wait%s*(%d*%.?%d*)') or
                           line:match('^/pause%s*(%d*%.?%d*)') or
                           line:match('^/sleep%s*(%d*%.?%d*)');
-
         if waitMatch then
             -- It's a wait command - schedule the next line after the delay
             local delay = tonumber(waitMatch) or 1;
@@ -1650,7 +1670,6 @@ function M.ExecuteCommandString(commandText, isMacro)
             -- mode -1 (AshitaParse) for /echo and other non-action lines
             local cmdMode = isMacro and getMacroCommandQueueMode(commandToExecute) or -1;
             local stTag = requiresSubtargetPause and extractSubtargetTag(commandToExecute) or nil;
-
             local function queueActionLine()
                 if requiresSubtargetPause then
                     waitForSubtargetComplete(commandToExecute, function()
@@ -1663,23 +1682,19 @@ function M.ExecuteCommandString(commandText, isMacro)
                         end
                     end, isMacroCancelled);
                 end
-
                 local ok, err = pcall(function()
                     local chatManager = AshitaCore:GetChatManager();
                     if chatManager then
                         chatManager:QueueCommand(cmdMode, commandToExecute);
                     end
                 end);
-
                 if not ok then
                     print('[XIUI] Command execution error: ' .. tostring(err));
                 end
-
                 if index < #lines and not requiresSubtargetPause then
                     scheduleNextLine(index + 1, inlineWait or 0);
                 end
             end
-
             local function executeCommandLine()
                 if stTag and shouldApplyStPreTarget(stTag) and queueStPreTarget(stTag) then
                     runAfterStPreTarget(queueActionLine, isMacroCancelled);
@@ -1687,7 +1702,6 @@ function M.ExecuteCommandString(commandText, isMacro)
                 end
                 queueActionLine();
             end
-
             executeCommandLine();
         end
     end
@@ -1746,7 +1760,6 @@ end
 -- Debug: Always log Ctrl+Arrow presses to diagnose palette cycling issues
 -- Set to true via /xiui debug palette
 local PALETTE_DEBUG_KEYS = false;
-
 function M.HandleKey(event)
    -- https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
    local isRelease = parseKeyEventFlags(event)
@@ -1754,7 +1767,6 @@ function M.HandleKey(event)
 
    -- Get current modifier states (queries actual OS key state)
    local controlPressed, altPressed, shiftPressed = GetModifierStates();
-
    DebugLog(string.format('HandleKey: keyCode=%d (0x%02X) %s | Ctrl=%s Alt=%s Shift=%s',
        keyCode, keyCode,
        isRelease and 'RELEASE' or 'PRESS',
@@ -1768,6 +1780,7 @@ function M.HandleKey(event)
        local modMatch = (mod == 'ctrl' and controlPressed and not altPressed and not shiftPressed)
                      or (mod == 'alt' and altPressed and not controlPressed and not shiftPressed)
                      or (mod == 'shift' and shiftPressed and not controlPressed and not altPressed)
+                     or (mod == 'ctrlalt' and not shiftPressed and ((controlPressed and not altPressed) or (altPressed and not controlPressed)))
                      or (mod == 'none' and not controlPressed and not altPressed and not shiftPressed);
        print(string.format('[XIUI Palette Debug] Key=%d Ctrl=%s Alt=%s Shift=%s | enabled=%s mod=%s modMatch=%s',
            keyCode, tostring(controlPressed), tostring(altPressed), tostring(shiftPressed),
@@ -1806,10 +1819,13 @@ function M.HandleKey(event)
            modifierMatch = true;
        elseif modifier == 'shift' and shiftPressed and not controlPressed and not altPressed then
            modifierMatch = true;
+       elseif modifier == 'ctrlalt' and not shiftPressed
+           and ((controlPressed and not altPressed) or (altPressed and not controlPressed)) then
+           -- Either Ctrl OR Alt (not both) triggers cycling.
+           modifierMatch = true;
        elseif modifier == 'none' and not controlPressed and not altPressed and not shiftPressed then
            modifierMatch = true;
        end
-
        if modifierMatch and (keyCode == prevKey or keyCode == nextKey) then
            if PALETTE_DEBUG_KEYS then
                print('[XIUI Palette Debug] Cycling palettes...');
@@ -1825,7 +1841,6 @@ function M.HandleKey(event)
            if PALETTE_DEBUG_KEYS then
                print(string.format('[XIUI Palette Debug] Result=%s', tostring(result)));
            end
-
            if result then
                local logPaletteName = gConfig.hotbarGlobal and gConfig.hotbarGlobal.logPaletteName;
                if logPaletteName == nil then logPaletteName = true; end  -- Default to true
@@ -1837,7 +1852,6 @@ function M.HandleKey(event)
                    print('[XIUI Palette Debug] No palettes to cycle');
                end
            end
-
            event.blocked = true;
            return;
        end
@@ -1879,7 +1893,6 @@ function M.HandleKey(event)
        local ctrlVal = controlPressed or false;
        local altVal = altPressed or false;
        local shiftVal = shiftPressed or false;
-
        for _, blocked in ipairs(blockedKeys) do
            if blocked.key == keyCode and
               (blocked.ctrl or false) == ctrlVal and
@@ -1896,7 +1909,6 @@ function M.HandleKey(event)
    -- Find matching keybind from custom key assignments
    local hotbar, slot = FindMatchingKeybind(keyCode, controlPressed, altPressed, shiftPressed);
    DebugLog(string.format('FindMatchingKeybind result: hotbar=%s slot=%s', tostring(hotbar), tostring(slot)));
-
    if hotbar and slot then
        if isRelease then
            -- Clear pressed state on release (only if it matches what was pressed)
@@ -1910,7 +1922,6 @@ function M.HandleKey(event)
            if currentPressedHotbar == hotbar and currentPressedSlot == slot then
                return; -- Key repeat - don't re-execute
            end
-
            DebugLog('Key pressed: hotbar=' .. tostring(hotbar) .. ', slot=' .. tostring(slot));
 
            -- Set pressed state and execute the keybind
@@ -1937,8 +1948,6 @@ end
 
 --- Execute an action directly from slot data
 --- Used by crossbar for controller input
----@param slotAction table The slot action with actionType, action, target, etc.
----@return boolean success Whether the action was executed
 function M.ExecuteAction(slotAction)
     if not slotAction then return false; end
     if not slotAction.actionType or not slotAction.action then return false; end
@@ -1996,8 +2005,6 @@ end
 
 --- Get item icon for browsing (memory only, no PNG file creation)
 --- Use this in the icon picker to avoid creating PNG files for every browsed item
----@param itemId number The item ID to get icon for
----@return table|nil icon The icon texture (with .image but no .path)
 function M.GetItemIconForBrowsing(itemId)
     if not itemId or itemId == 0 or itemId == 65535 then
         return nil;
@@ -2013,5 +2020,4 @@ function M.GetItemIconForBrowsing(itemId)
     -- The page-level cache in macropalette.lua handles per-page caching
     return textures:LoadItemIconFromMemory(itemId);
 end
-
 return M

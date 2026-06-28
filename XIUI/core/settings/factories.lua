@@ -2,7 +2,6 @@
 * XIUI Settings Factory Functions
 * Reusable factory functions for creating default settings with overrides
 ]]--
-
 local M = {};
 
 -- Virtual key codes for number row keys
@@ -306,6 +305,8 @@ function M.createHotbarGlobalDefaults()
         showActionLabels = false,
         actionLabelOffsetX = 0,
         actionLabelOffsetY = 0,
+        actionLabelWrap = true,     -- Wrap long labels onto up to two whole-word lines
+        actionLabelSpacing = 8,     -- Extra gap between anchored bars added when labels are shown
         hideEmptySlots = false, -- Hide slots with no action assigned
 
         -- Slot padding (gap between slots)
@@ -314,7 +315,8 @@ function M.createHotbarGlobalDefaults()
 
         -- Bar positioning (hotbar only; crossbar unchanged)
         positionMode = 'absolute',  -- 'absolute' or 'anchored'
-        hotbarSpacing = 0,        -- Vertical gap between anchored hotbars
+        anchorStackDirection = 'up',  -- 'up' or 'down' (anchored mode only)
+        hotbarSpacing = 8,        -- Vertical gap between anchored hotbars
 
         -- Gap between window background edge and slot grid
         backgroundPaddingX = 0,
@@ -334,7 +336,7 @@ function M.createHotbarGlobalDefaults()
         labelFontColor = 0xFFFFFFFF,
         labelCooldownColor = 0xFF888888,
         labelNoMpColor = 0xFFFF4444,
-        
+
         -- Text position settings
         showKeybinds = true,
         keybindAnchor = 'topLeft',      -- topLeft, topRight, bottomLeft, bottomRight
@@ -358,7 +360,9 @@ function M.createHotbarGlobalDefaults()
         skillchainIconScale = 1.0,              -- Scale multiplier for icon (0.5-2.0)
         skillchainIconOffsetX = 0,              -- X offset in pixels
         skillchainIconOffsetY = 0,              -- Y offset in pixels
-    
+        magicBurstHighlightEnabled = true,      -- Show magic burst highlight on spell/pact slots
+        magicBurstHighlightColor = 0xFF44D4FF,  -- Fallback MB border color when element unknown (ARGB)
+
         -- Cooldown timer settings
         recastTimerFontSize = 11,               -- Font size for cooldown timer display
         recastTimerFontColor = 0xFFFFFFFF,      -- Color for cooldown timer text
@@ -383,7 +387,7 @@ function M.createHotbarBarDefaults(overrides)
 
         -- Layout settings (always per-bar)
         enabled = true,
-        anchoredInStack = true,  -- Include in bottom-up stack when positionMode is anchored
+        anchoredInStack = true,  -- Include in anchored stack when positionMode is anchored
         rows = 1,               -- Number of rows (1-12)
         columns = 12,           -- Number of columns (1-12)
         slots = 12,             -- Total slots, auto-calculated from rows*columns
@@ -401,6 +405,8 @@ function M.createHotbarBarDefaults(overrides)
         showActionLabels = false,
         actionLabelOffsetX = 0,     -- X offset for action labels
         actionLabelOffsetY = 0,     -- Y offset for action labels
+        actionLabelWrap = true,     -- Wrap long labels onto up to two whole-word lines
+        actionLabelSpacing = 8,     -- Extra gap between anchored bars added when labels are shown
         hideEmptySlots = false,     -- Hide slots with no action assigned
 
         -- Slot padding (gap between slots)
@@ -426,7 +432,7 @@ function M.createHotbarBarDefaults(overrides)
         labelFontColor = 0xFFFFFFFF,       -- Action label text color (ARGB)
         labelCooldownColor = 0xFF888888,   -- Action label color when on cooldown (grey)
         labelNoMpColor = 0xFFFF4444,       -- Action label color when not enough MP (red)
-        
+
         -- Text position settings
         showKeybinds = true,
         keybindAnchor = 'topLeft',         -- topLeft, topRight, bottomLeft, bottomRight
@@ -510,10 +516,12 @@ function M.createCrossbarDefaults()
         activeSlotHighlight = 0x44FFFFFF,   -- Highlight color when trigger held
         inactiveSlotDim = 0.5,              -- Dim multiplier for inactive side
 
-        -- Display mode
-        displayMode = 'normal',             -- 'normal', 'activeOnly', or 'combatOnly'
-        fadeAnimationDuration = 0.15,       -- Fade in/out duration for visibility-managed modes
-        combatTriggerReleaseDelay = 5.0,    -- Seconds to keep combatOnly visible after L2/R2 release
+        -- Crossbar visibility toggles (combat-only and active-only are independent)
+        displayMode = 'normal',             -- Legacy dropdown value; migrated to toggles on load
+        combatOnlyEnabled = false,
+        activeOnlyEnabled = false,
+        fadeAnimationDuration = 0.15,
+        combatTriggerReleaseDelay = 5.0,    -- Grace period after L2/R2 release (combat-only mode)
 
         -- Window colors
         bgColor = 0xFFFFFFFF,
@@ -584,6 +592,12 @@ function M.createCrossbarDefaults()
         -- Window position (saved on drag)
         windowX = nil,                      -- nil = use default centered position
         windowY = nil,
+
+        -- Action labels (below/above slots)
+        showActionLabels = false,
+        actionLabelOffsetX = 0,
+        actionLabelOffsetY = 0,
+        actionLabelWrap = true,
 
         -- Cooldown timer settings
         recastTimerFontSize = 11,               -- Font size for cooldown timer display
@@ -674,5 +688,4 @@ function M.createNotificationGroupDefaults(overrides)
     end
     return defaults;
 end
-
 return M;
