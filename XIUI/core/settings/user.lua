@@ -213,7 +213,7 @@ function M.createUserSettingsDefaults()
         jobIconTheme = 'FFXI',
         fontFamily = 'Tahoma',
         fontWeight = 'Bold', -- Options: 'Normal', 'Bold'
-        fontOutlineWidth = 2, -- Global outline width for all text (range: 0-5)
+        fontOutlineWidth = 1, -- Global outline width for all text (range: 0-5)
 
         showPartyListWhenSolo = false,
         maxEnemyListEntries = 8,  -- Legacy, now calculated from rows * columns
@@ -308,6 +308,7 @@ function M.createUserSettingsDefaults()
         enemyListIconScale = 1,
         showEnemyDistance = true,
         showEnemyHPPText = true,
+        showEnemyListCastBar = true,
         showEnemyListBookends = false,
         showEnemyListBorders = true,
         showEnemyListBordersUseNameColor = false,
@@ -425,14 +426,17 @@ function M.createUserSettingsDefaults()
 
         showSatchelModule = true,
         satchelVisible = false,
-        -- Horizon (limited mode) leaves /satchel to the game by default.
         satchelOverrideCommand = (not HzLimitedMode),
         satchelCloseOnEscape = false,
+        satchelTooltipIconsAsWords = false,
+        satchelTooltipFontFamily = 'Consolas',
+        satchelTooltipFontSize = 14,
+        satchelAutoSortBags = false,
         satchelHideDuringEvents = false,
         satchelHideOnMenuFocus = false,
         satchelHideMacroPalette = false,
         satchelColumns = 10,
-        satchelRows = 10,
+        satchelRows = 8,
         satchelSlotSize = 40,
         satchelShowEmptySlots = true,
         satchelIncludeContainers = T{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 },

@@ -64,6 +64,9 @@ function M.createColorCustomizationDefaults()
         -- Enemy List
         enemyList = T{
             hpGradient = T{ enabled = true, start = '#e16c6c', stop = '#fb9494' },
+            castBarGradient = T{ enabled = true, start = '#ffaa00', stop = '#ffcc44' },
+            castTextColor = 0xFFFFAA00,        -- Orange - enemy cast spell name
+            castTargetTextColor = 0xFF66CCFF,  -- Light blue - who the enemy is casting on
             distanceTextColor = 0xFFFFFFFF,
             percentTextColor = 0xFFFFFFFF,
             backgroundColor = 0x66000000,        -- Semi-transparent black - Alpha is the first byte: 0.4 * 255 = 102 = 0x66
@@ -103,6 +106,21 @@ function M.createColorCustomizationDefaults()
             usedSlotColor = T{ r = 0.37, g = 0.7, b = 0.88, a = 1 },        -- Normal (white/blue)
             usedSlotColorThreshold1 = T{ r = 1.0, g = 1.0, b = 0, a = 1 },  -- Warning (yellow)
             usedSlotColorThreshold2 = T{ r = 1.0, g = 0, b = 0, a = 1 },    -- Critical (red)
+        },
+
+        -- Satchel module window (XIUI theme + original item border palette)
+        satchelModule = T{
+            dragDropHighlightColor = 0x40F4DA97,
+            dragDropHighlightHoverColor = 0xFFC3AE79,
+            dragDropInvalidHighlightColor = 0x40B56C72,
+            dragDropInvalidHighlightHoverColor = 0xFF8F5358,
+            emptySlotBorderColor = 0xCC4C473D,
+            lockedSlotBorderColor = 0xBF615C51,
+            bazaarBorderColor = 0xFFF25252,
+            equippedBorderColor = 0xFFE900DC,
+            equipmentBorderColor = 0xFF59A1F2,
+            usableBorderColor = 0xFF94DB80,
+            itemBorderColor = 0xFFB89959,
         },
 
         -- Satchel Tracker

@@ -59,7 +59,15 @@ local function resolveFontPath(fontFamily, isBold)
     return 'C:\\Windows\\Fonts\\' .. fileName;
 end
 
-local function loadFont(fontFamily, isBold)
+--- Resolve a Windows font-file path for a family/weight. Public so other
+--- modules (e.g. satchel tooltip fonts) reuse the shared map instead of duplicating it.
+function M.ResolveFontPath(fontFamily, isBold)
+    return resolveFontPath(fontFamily or 'Tahoma', isBold == true);
+end
+
+-- quiet: suppress the failure print (used by prewarm, which probes fonts the
+-- user never selected — a missing Windows font there shouldn't spam the console).
+local function loadFont(fontFamily, isBold, quiet)
     local fontKey = (fontFamily or 'Tahoma') .. (isBold and ':bold' or ':regular');
     if fontKey == activeFontKey then return; end
 
@@ -90,7 +98,9 @@ local function loadFont(fontFamily, isBold)
         fontCache[fontKey] = false;
         activeFont = nil;
         activeFontKey = fontKey;
-        print(string.format('[XIUI] Failed to load font: %s (%s)', fontKey, path));
+        if not quiet then
+            print(string.format('[XIUI] Failed to load font: %s (%s)', fontKey, path));
+        end
     end
 end
 
@@ -120,6 +130,8 @@ end
 function M.GetFont()
     return activeFont or imgui.GetFont();
 end
+
+M.BAKE_PIXEL_SIZE = 20.0;
 
 --- Configure the text renderer from individual parameters.
 --- @param fontFamily string Font family name (e.g. 'Tahoma')
@@ -154,8 +166,8 @@ function M.PrewarmFonts(families)
     if type(families) ~= 'table' then return; end
     for _, family in ipairs(families) do
         if type(family) == 'string' then
-            loadFont(family, false);
-            loadFont(family, true);
+            loadFont(family, false, true);
+            loadFont(family, true, true);
         end
     end
     activeFont = nil;

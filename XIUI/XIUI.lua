@@ -24,7 +24,7 @@
 
 addon.name      = 'XIUI';
 addon.author    = 'Team XIUI';
-addon.version   = '1.8.2';
+addon.version   = '1.8.3';
 addon.desc      = 'Multiple UI elements with manager';
 addon.link      = 'https://github.com/tirem/XIUI'
 
@@ -32,6 +32,10 @@ addon.link      = 'https://github.com/tirem/XIUI'
 -- Set to nil for auto-detection, true to force 4.3 mode, and false for 4.16 mode
 _G._XIUI_USE_ASHITA_4_3 = nil;
 require('handlers.imgui_compat');
+
+-- Global switch to hard-disable functionality that is limited on HX servers.
+-- Set before module requires so load-time checks (e.g. petbar data) see the correct value.
+HzLimitedMode = false;
 
 -- =================
 -- = XIUI DEV ONLY =
@@ -55,6 +59,7 @@ local settingsUpdater = require('core.settings.updater');
 local gameState = require('core.gamestate');
 local uiModules = require('core.moduleregistry');
 local profileManager = require('core.profile_manager');
+local uiRecovery = require('core.ui_recovery');
 
 -- UI modules
 local uiMods = require('modules.init');
@@ -87,16 +92,16 @@ local commandHelp = require('libs.help');
 local debuffHandler = require('handlers.debuffhandler');
 local petBuffHandler = require('handlers.petbuffhandler');
 local actionTracker = require('handlers.actiontracker');
+local enemyCasts = require('handlers.enemycasts');
 local mobInfo = require('modules.mobinfo.init');
 local statusHandler = require('handlers.statushandler');
 local progressbar = require('libs.progressbar');
+local drawing = require('libs.drawing');
 local diagnostics = require('libs.diagnostics');
 local TextureManager = require('libs.texturemanager');
 local imtext = require('libs.imtext');
 local components = require('config.components');
-
--- Global switch to hard-disable functionality that is limited on HX servers
-HzLimitedMode = true;
+local satchelTooltipFonts = require('modules.satchel.tooltips');
 
 -- Flag to skip settings_update callback during internal saves
 local bInternalSave = false;
@@ -741,25 +746,54 @@ function ResetSettings()
     DeferredUpdateVisuals();
 end
 
-function RecoverAllPositions()
-    if not gConfig.windowPositions then gConfig.windowPositions = {}; end
+uiRecovery.Configure({
+    save = function()
+        profileManager.SaveProfileSettings(config.currentProfile, gConfig);
+        bInternalSave = true;
+        settings.save();
+        if bIsAshita43 then bPendingInternalSaveClear = true; else bInternalSave = false; end
+    end,
+});
 
-    -- Move every known window position to top-left corner
-    for windowName, _ in pairs(gConfig.windowPositions) do
-        gConfig.windowPositions[windowName] = { x = 20, y = 20 };
+function RecoverAllPositions()
+    uiRecovery.RecoverAllModulePositions();
+end
+
+function RecoverSelectedModulePositions(selections)
+    return uiRecovery.RecoverSelectedModulePositions(selections);
+end
+
+local function HandleRecoverCommand(target)
+    if (target == 'enable') then
+        if uiRecovery.ToggleCommands() then
+            print(chat.header(addon.name)
+                :append(chat.message('Recover commands are now: '))
+                :append(chat.success('Enabled')));
+        else
+            print(chat.header(addon.name)
+                :append(chat.message('Recover commands are now: '))
+                :append(chat.error('Disabled')));
+        end
+        return;
     end
 
-    -- Force re-apply on next frame
-    gConfig.appliedPositions = {};
+    if not uiRecovery.IsCommandsEnabled() then
+        print(chat.header(addon.name)
+            :append(chat.error('Command is disabled: Use '))
+            :append(chat.success('/xiui recover enable'))
+            :append(chat.error(' to enable.')));
+        return;
+    end
 
-    -- Clear persisted alignment state so alignBottom doesn't override the restored positions
-    gConfig.partyListState = {};
-
-    -- Save
-    profileManager.SaveProfileSettings(config.currentProfile, gConfig);
-    bInternalSave = true;
-    settings.save();
-    if bIsAshita43 then bPendingInternalSaveClear = true; else bInternalSave = false; end
+    if (target == 'all') then
+        RecoverAllPositions();
+    elseif (target == 'config') then
+        uiRecovery.RecoverConfigWindow();
+    elseif (target and target:any('help', 'commands', 'cmds', '?')) then
+        uiRecovery.RecoverCommandsWindow();
+    elseif (target) then
+        uiRecovery.RecoverModulePositionsByAlias(target);
+    end
 end
 
 function SavePartyListLayoutSetting(key, value)
@@ -989,18 +1023,60 @@ end);
 ]]--
 
 -- Rate-limited error logging for render errors (avoids chat spam)
-local lastPresentErrorTime = 0;
 local PRESENT_ERROR_INTERVAL = 60; -- seconds between error messages
+local presentErrorLastLogged = {
+    present = 0,
+    module = 0,
+    config = 0,
+};
+
+local function LogPresentError(label, err)
+    local key = presentErrorLastLogged[label] and label or 'present';
+    local now = os.time();
+    if now - presentErrorLastLogged[key] >= PRESENT_ERROR_INTERVAL then
+        presentErrorLastLogged[key] = now;
+        print(chat.header(addon.name):append(chat.error(key .. ' render error: ' .. tostring(err))));
+    end
+end
+
+-- Ashita 4.3 (ImGui 1.92) bumped the default chrome font from 14px to 18px, which
+-- oversizes XIUI's config window and satchel. ImGui 1.92's PushFont takes a size
+-- arg, so we scope the base to 16 around our own draws (no global side effects and
+-- no per-frame fighting of Ashita's global FontSizeBase). On 4.16 PushFont has no
+-- size arg, so FontSizeBase's absence disables this.
+local XIUI_CHROME_FONT_SIZE = 16.0;
+local imguiLib = require('imgui');
+local CHROME_FONT_OVERRIDE = false;
+do
+    local ok, style = pcall(imguiLib.GetStyle);
+    CHROME_FONT_OVERRIDE = ok and style ~= nil and type(style.FontSizeBase) == 'number';
+end
+local function PushChromeFont()
+    if not CHROME_FONT_OVERRIDE then return false; end
+    imguiLib.PushFont(imguiLib.GetFont(), XIUI_CHROME_FONT_SIZE);
+    return true;
+end
+local function PopChromeFont(pushed)
+    if pushed then imguiLib.PopFont(); end
+end
 
 ashita.events.register('d3d_present', 'present_cb', function ()
     if not bInitialized then return; end
 
     local ok, err = pcall(function()
+        -- Deferred satchel tooltip font loads (family/size Selectable). Must run
+        -- before any module/config draw so AddFontFromFileTTF is not mid-frame.
+        if satchelTooltipFonts.has_pending_load() then
+            satchelTooltipFonts.tick_load();
+        end
+
         -- Drop references to textures evicted/cleared during the PREVIOUS
         -- frame so Lua GC is free to run d3d8.gc_safe_release on them.
         -- Must run before anything else this frame queues new draws or
         -- triggers another cache clear.
         TextureManager.FlushPendingReleases();
+        progressbar.FlushPendingReleases();
+        progressbar.ProcessPendingEvictions();
 
         -- Process deferred icon cache clears scheduled by macro CRUD last frame.
         -- Must run AFTER FlushPendingReleases (so prior evictions are safe) and
@@ -1051,16 +1127,41 @@ ashita.events.register('d3d_present', 'present_cb', function ()
                 notifications.CheckPendingPoolNotifications();
             end
 
-            -- Render all registered modules
-            for name, _ in pairs(uiModules.GetAll()) do
-                uiModules.RenderModule(name, gConfig, gAdjustedSettings, eventSystemActive, menuOpen);
+            local function tryPresentDraw(label, fn)
+                local ok, drawErr = pcall(fn);
+                if not ok then
+                    LogPresentError(label, drawErr);
+                end
             end
 
-            configMenu.DrawWindow();
-            commandHelp.Draw();
+            local function drawConfigChrome()
+                configMenu.DrawWindow();
+                commandHelp.Draw();
+            end
 
-            -- Render deferred hotbar tooltip after all modules (correct z-order)
-            slotrenderer.FlushTooltip();
+            -- Draw config/help before modules so off-screen module draws cannot
+            -- take down ImGui windows for this frame.
+            local chromeVisible = showConfig[1] or commandHelp.IsOpen();
+            local chromeFontPushed = PushChromeFont();
+            if chromeVisible then
+                tryPresentDraw('config', drawConfigChrome);
+            end
+
+            tryPresentDraw('module', function()
+                drawing.RunWithScreenClip(function()
+                    for name, _ in pairs(uiModules.GetAll()) do
+                        uiModules.RenderModule(name, gConfig, gAdjustedSettings, eventSystemActive, menuOpen);
+                    end
+                end);
+            end);
+
+            if not chromeVisible then
+                tryPresentDraw('config', drawConfigChrome);
+            end
+
+            tryPresentDraw('config', slotrenderer.FlushTooltip);
+            tryPresentDraw('config', statusHandler.FlushTooltip);
+            PopChromeFont(chromeFontPushed);
         else
             uiModules.HideAll();
         end
@@ -1079,11 +1180,7 @@ ashita.events.register('d3d_present', 'present_cb', function ()
     end);
 
     if not ok then
-        local now = os.time();
-        if now - lastPresentErrorTime >= PRESENT_ERROR_INTERVAL then
-            lastPresentErrorTime = now;
-            print(chat.header(addon.name):append(chat.error('Render error: ' .. tostring(err))));
-        end
+        LogPresentError('present', err);
     end
 end);
 
@@ -1092,9 +1189,10 @@ ashita.events.register('load', 'load_cb', function ()
     gConfig.appliedPositions = {};
     UpdateUserSettings();
 
-    -- Populate the ImGui font atlas now, before the first d3d_present, so
-    -- no font change in the config menu has to mutate the atlas mid-frame.
-    -- See libs/imtext.lua PrewarmFonts comment for the underlying constraint.
+    -- Custom fonts go into ImGui's shared atlas (survives /addon reload).
+    -- Only prewarm here; satchel Initialize adds the active tooltip family sizes.
+    -- Do not also prewarm the full tooltip catalog — reload would re-add dozens of
+    -- fonts each time, freeze the client, and can exhaust the atlas.
     imtext.PrewarmFonts(components.available_fonts);
 
     uiModules.InitializeAll(gAdjustedSettings);
@@ -1507,8 +1605,18 @@ ashita.events.register('command', 'command_cb', function (e)
             return;
         end
 
-        --@cmd /xiui satchel [config] : Toggle the satchel window (or open its config)
+        --@cmd /xiui satchel [config] : Toggle all satchel windows (or open satchel settings)
         if satchelModule.HandleXiuiCommand and satchelModule.HandleXiuiCommand(command_args) then
+            return;
+        end
+
+        --@cmd /xiui recover enable : Toggle recover commands on/off for this session (required before other recover commands)
+        --@cmd /xiui recover all : Recover all UI module positions to top-left
+        --@cmd /xiui recover <module> : Recover one module (playerbar, partylist, hotbar, ...)
+        --@cmd /xiui recover config : Recover the XIUI Config window position to top-left
+        --@cmd /xiui recover help : Recover the XIUI Commands window position to top-left (aliases: commands, cmds, ?)
+        if (command_args[2] == 'recover') then
+            HandleRecoverCommand(command_args[3]);
             return;
         end
 
@@ -1520,16 +1628,8 @@ ashita.events.register('command', 'command_cb', function (e)
         --@cmd /xiui profile next : Cycle to next profile
         --@cmd /xiui profile previous : Cycle to previous profile
         --@cmd /xiui profile reset : Open the reset settings popup
-        --@cmd /xiui profile reset positions : Reset all UI positions to center
         --@cmd /xiui profile sync : Sync profiles with disk
         if (command_args[2] == 'profile') then
-            -- /xiui profile reset positions
-            if (command_args[3] == 'reset' and command_args[4] == 'positions') then
-                RecoverAllPositions();
-                print(chat.header(addon.name):append(chat.message('All UI positions recovered to top-left.')));
-                return;
-            end
-
             -- /xiui profile reset
             if (command_args[3] == 'reset') then
                  configMenu.OpenResetSettingsPopup();
@@ -1690,6 +1790,12 @@ ashita.events.register('text_in', 'readycheck_text_in_cb', function (e)
     end
 end);
 
+-- Enemy cast bars (target bar + enemy list) share one packet-driven tracker.
+local function enemyCastTrackingEnabled()
+    return not HzLimitedMode and ((gConfig.showTargetBar and gConfig.showTargetBarCastBar)
+        or (gConfig.showEnemyList and gConfig.showEnemyListCastBar));
+end
+
 ashita.events.register('packet_in', 'packet_in_cb', function (e)
     if satchelModule.HandlePacketIn then
         satchelModule.HandlePacketIn(e);
@@ -1712,9 +1818,7 @@ ashita.events.register('packet_in', 'packet_in_cb', function (e)
         if actionPacket then
             if gConfig.showEnemyList then enemyList.HandleActionPacket(actionPacket); end
             if gConfig.showCastBar then castBar.HandleActionPacket(actionPacket); end
-            if gConfig.showTargetBar and gConfig.showTargetBarCastBar and not HzLimitedMode then
-                targetBar.HandleActionPacket(actionPacket);
-            end
+            if enemyCastTrackingEnabled() then enemyCasts.HandleActionPacket(actionPacket); end
             if gConfig.showPartyList then partyList.HandleActionPacket(actionPacket); end
             debuffHandler.HandleActionPacket(actionPacket);
             petBuffHandler.HandleActionPacket(actionPacket);
@@ -1734,6 +1838,7 @@ ashita.events.register('packet_in', 'packet_in_cb', function (e)
         notifications.HandleZonePacket();
         treasurePool.HandleZonePacket();
         enemyList.HandleZonePacket(e);
+        enemyCasts.HandleZonePacket();
         partyList.HandleZonePacket(e);
         debuffHandler.HandleZonePacket(e);
         petBuffHandler.HandleZonePacket();
@@ -1755,6 +1860,7 @@ ashita.events.register('packet_in', 'packet_in_cb', function (e)
         if messagePacket then
             debuffHandler.HandleMessagePacket(messagePacket);
             petBuffHandler.HandleMessagePacket(messagePacket);
+            if enemyCastTrackingEnabled() then enemyCasts.HandleMessagePacket(messagePacket); end
             if gConfig.showNotifications then
                 notifications.HandleMessagePacket(e, messagePacket, 0x0029);
             end

@@ -6,6 +6,18 @@
 local M = {};
 local profileManager = require('core.profile_manager');
 
+-- Fill any missing profile keys (nil or absent) from defaults to avoid load
+-- errors. DeepMergeWithDefaults recurses into nested dictionaries (including
+-- colorCustomization) and leaves user-provided arrays intact, so no per-key
+-- fill lists are needed here.
+function M.EnsureProfileHasAllDefaults(gConfig, defaults)
+    if gConfig == nil or defaults == nil then
+        return;
+    end
+
+    DeepMergeWithDefaults(gConfig, defaults);
+end
+
 -- Migrate settings from HXUI to XIUI (one-time migration for users upgrading from HXUI)
 -- IMPORTANT: This must be called BEFORE settings.load() so that copied files are picked up
 -- Returns: { count = number } or nil if no migration occurred
@@ -1092,6 +1104,7 @@ end
 -- Run structure migrations (called AFTER settings.load())
 -- These handle migrating old settings structures to new ones
 function M.RunStructureMigrations(gConfig, defaults)
+    M.EnsureProfileHasAllDefaults(gConfig, defaults);
     M.MigratePartyListLayoutSettings(gConfig, defaults);
     M.MigratePerPartySettings(gConfig, defaults);
     M.MigratePerPetTypeSettings(gConfig, defaults);
@@ -1105,13 +1118,6 @@ function M.RunStructureMigrations(gConfig, defaults)
     M.MigrateCrossbarComboModeSettings(gConfig, defaults);
     M.MigrateLegacyPositionFields(gConfig);
     M.MigrateSlotMacroRefs(gConfig);
-end
-
--- Legacy function for backward compatibility (if any external code calls it)
-function M.RunAllMigrations(gConfig, defaults)
-    -- NOTE: MigrateFromHXUI should be called separately BEFORE settings.load()
-    -- This function now only runs structure migrations
-    M.RunStructureMigrations(gConfig, defaults);
 end
 
 return M;
