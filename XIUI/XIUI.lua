@@ -83,6 +83,7 @@ local treasurePool = uiMods.treasurepool;
 local hotbar = uiMods.hotbar;
 local readyCheck = uiMods.readycheck;
 local satchelModule = uiMods.satchel;
+local magicBurst = uiMods.magicburst;
 local macropalette = require('modules.hotbar.macropalette');
 local palette = require('modules.hotbar.palette');
 local skillchainModule = require('modules.hotbar.skillchain');
@@ -186,6 +187,13 @@ uiModules.Register('expBar', {
     configKey = 'showExpBar',
     hideOnMenuFocusKey = 'expBarHideOnMenuFocus',
     hideMacroPaletteKey = 'expBarHideMacroPalette',
+    hasSetHidden = true,
+});
+uiModules.Register('magicBurst', {
+    module = magicBurst,
+    settingsKey = 'magicBurstSettings',
+    configKey = 'magicBurstEnabled',
+    hideOnEventKey = 'hideDuringEvents',
     hasSetHidden = true,
 });
 uiModules.Register('gilTracker', {
@@ -543,6 +551,7 @@ local function GetDefaultWindowPositions()
     local sx, sy = defPos.GetSatchelPosition();
     local elx, ely = defPos.GetEnemyListPosition();
     local ccx, ccy = defPos.GetCastCostPosition();
+    local mbx, mby = defPos.GetMagicBurstPosition();
 
     local staggerY = 35;
     return {
@@ -560,6 +569,7 @@ local function GetDefaultWindowPositions()
         GilTracker = { x = gx, y = gy },
         EnemyList = { x = elx, y = ely },
         CastCost = { x = ccx, y = ccy },
+        MagicBurst = { x = mbx, y = mby },
         InventoryTracker = { x = ix, y = iy },
         Satchel = { x = sx, y = sy },
         SatchelTracker = { x = ix, y = iy + staggerY },
@@ -733,6 +743,7 @@ function ResetSettings()
     uiMods.notifications.ResetPositions();
     uiMods.treasurepool.ResetPositions();
     uiMods.satchel.ResetPositions();
+    uiMods.magicburst.ResetPositions();
     hotbar.ResetPositions();
 
     -- Persist + defer the heavy visual update cascade. ResetSettings is called
@@ -1796,6 +1807,11 @@ local function enemyCastTrackingEnabled()
         or (gConfig.showEnemyList and gConfig.showEnemyListCastBar));
 end
 
+-- Shared by hotbar/crossbar WS highlighting and the magic burst overlay.
+local function skillchainTrackingEnabled()
+    return gConfig.hotbarEnabled or gConfig.magicBurstEnabled;
+end
+
 ashita.events.register('packet_in', 'packet_in_cb', function (e)
     if satchelModule.HandlePacketIn then
         satchelModule.HandlePacketIn(e);
@@ -1824,8 +1840,7 @@ ashita.events.register('packet_in', 'packet_in_cb', function (e)
             petBuffHandler.HandleActionPacket(actionPacket);
             actionTracker.HandleActionPacket(actionPacket);
             if gConfig.showNotifications then notifications.HandleActionPacket(actionPacket); end
-            -- Skillchain tracking for hotbar/crossbar WS highlighting
-            if gConfig.hotbarEnabled then
+            if skillchainTrackingEnabled() then
                 skillchainModule.HandleActionPacket(actionPacket);
             end
         end
@@ -1903,6 +1918,8 @@ ashita.events.register('packet_in', 'packet_in_cb', function (e)
         -- Also notify hotbar of zone (clears state)
         if gConfig.hotbarEnabled then
             hotbar.HandleZonePacket();
+        end
+        if skillchainTrackingEnabled() then
             skillchainModule.ClearState();  -- Clear skillchain tracking on zone
         end
     elseif (e.id == 0x001B) then
