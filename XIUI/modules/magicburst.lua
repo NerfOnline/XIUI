@@ -29,19 +29,28 @@ local PREVIEW_ELEMENTS = {
 local PREVIEW_LENGTH = 9.0;
 
 local hidden = false;
-local previewEnabled = false;
+local previewActive = false;
 local previewStart = 0;
 
 -- Reused so the per-frame tint costs no allocation.
 local tintRGBA = { 1.0, 1.0, 1.0, 1.0 };
 
 local function GetBurstState()
-    if previewEnabled then
+    -- A real burst window only lasts seconds, so cycle the elements while the
+    -- config is open to give something to position against.
+    if showConfig and showConfig[1] then
+        if not previewActive then
+            previewActive = true;
+            previewStart = os.clock();
+        end
+
         local since = os.clock() - previewStart;
         local index = (math.floor(since / PREVIEW_LENGTH) % #PREVIEW_ELEMENTS) + 1;
         local elapsed = since % PREVIEW_LENGTH;
         return PREVIEW_ELEMENTS[index], PREVIEW_LENGTH - elapsed, PREVIEW_LENGTH;
     end
+
+    previewActive = false;
     return skillchain.GetActiveBurst();
 end
 
@@ -144,15 +153,6 @@ end
 
 magicburst.Cleanup = function()
     hidden = false;
-end
-
--- Config preview: the real window only lasts seconds, so allow forcing it on
--- while positioning and sizing.
-magicburst.SetPreview = function(enabled)
-    if enabled and not previewEnabled then
-        previewStart = os.clock();
-    end
-    previewEnabled = enabled == true;
 end
 
 magicburst.ResetPositions = function()

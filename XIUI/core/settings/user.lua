@@ -32,7 +32,6 @@ function M.createUserSettingsDefaults()
 
         -- Magic burst notification (checkbox lives under Hotbar > Skillchain)
         magicBurstEnabled = false,
-        magicBurstPreview = false,            -- Force display while positioning
         magicBurstScale = 1.0,
         magicBurstShowTimer = true,
 
