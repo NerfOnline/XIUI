@@ -23,6 +23,59 @@ end
 -- Layout constants
 local windowMargin = 6;  -- Extra margin around window content to prevent clipping
 
+-- Status effects that restrict what a mob can do, for the CC-only timer filter.
+-- Ids match LSB's status_effect.h.
+local CC_STATUS = {
+	[2] = true,    -- Sleep
+	[6] = true,    -- Silence
+	[7] = true,    -- Petrification
+	[10] = true,   -- Stun
+	[11] = true,   -- Bind
+	[12] = true,   -- Weight
+	[14] = true,   -- Charm
+	[16] = true,   -- Amnesia
+	[19] = true,   -- Sleep II
+	[28] = true,   -- Terror
+	[193] = true,  -- Lullaby
+};
+
+-- Reused so reordering doesn't allocate per enemy per frame.
+local sortedIds = {};
+local sortedTimes = {};
+local sortedCount = 0;
+
+-- CC first, so those icons survive the icon cap: the handler yields debuffs in hash
+-- order, which otherwise decides arbitrarily what gets dropped. ccTimersOnly drops
+-- the timer text on everything else. Two passes keep the original order per group.
+local function SortCCFirst(statusIds, times, ccTimersOnly)
+	for i = 1, sortedCount do
+		sortedIds[i] = nil;
+		sortedTimes[i] = nil;
+	end
+	sortedCount = 0;
+
+	for pass = 1, 2 do
+		local wantCC = (pass == 1);
+		for i = 1, #statusIds do
+			local id = statusIds[i];
+			if (id == -1) then
+				break;
+			end
+
+			local isCC = CC_STATUS[id] == true;
+			if (isCC == wantCC) then
+				sortedCount = sortedCount + 1;
+				sortedIds[sortedCount] = id;
+				if (times ~= nil and (isCC or not ccTimersOnly)) then
+					sortedTimes[sortedCount] = times[i];
+				end
+			end
+		end
+	end
+
+	return sortedIds, (times ~= nil) and sortedTimes or nil;
+end
+
 -- Enemy tracking
 local allClaimedTargets = {};
 local enemylist = {};
@@ -454,6 +507,7 @@ enemylist.DrawWindow = function(settings)
 				-- Positioned at left or right of entry based on anchor setting (offset by user settings)
 				if (gConfig.showEnemyListDebuffs) then
 					local buffIds = nil;
+					local buffTimes = nil;
 					if isPreviewMode then
 						-- Use preview debuff data
 						buffIds = previewDebuffs[k];
@@ -463,6 +517,9 @@ enemylist.DrawWindow = function(settings)
 						buffIds, buffTimes = debuffHandler.GetActiveDebuffs(entityMgr:GetServerId(k));
 					end
 					if (buffIds ~= nil and #buffIds > 0) then
+						local timesIn = gConfig.showEnemyListDebuffTimers and buffTimes or nil;
+						local drawIds, drawTimes = SortCCFirst(buffIds, timesIn, gConfig.enemyListDebuffTimersCCOnly);
+
 						local debuffX;
 						local debuffY = entryStartY + settings.debuffOffsetY;
 						local anchor = gConfig.enemyListDebuffsAnchor or 'right';
@@ -472,7 +529,7 @@ enemylist.DrawWindow = function(settings)
 							debuffX = entryStartX + entryWidth + settings.debuffOffsetX;
 						else
 							-- Left anchor: calculate width of debuff icons and position to the left of entry
-							local numIcons = math.min(#buffIds, settings.maxIcons);
+							local numIcons = math.min(#drawIds, settings.maxIcons);
 							local iconSpacing = 1; -- matches ImGuiStyleVar_ItemSpacing
 							local debuffWidth = (numIcons * settings.iconSize) + ((numIcons - 1) * iconSpacing);
 							debuffX = entryStartX - debuffWidth - settings.debuffOffsetX;
@@ -481,11 +538,7 @@ enemylist.DrawWindow = function(settings)
 						imgui.SetNextWindowPos({debuffX, debuffY});
 						if (imgui.Begin('EnemyDebuffs'..k, true, bit.bor(ImGuiWindowFlags_NoDecoration, ImGuiWindowFlags_AlwaysAutoResize, ImGuiWindowFlags_NoFocusOnAppearing, ImGuiWindowFlags_NoNav, ImGuiWindowFlags_NoBackground, ImGuiWindowFlags_NoSavedSettings, ImGuiWindowFlags_NoDocking))) then
 							imgui.PushStyleVar(ImGuiStyleVar_ItemSpacing, {1, 1});
-							if (gConfig.showEnemyListDebuffTimers) then
-								DrawStatusIcons(buffIds, settings.iconSize, settings.maxIcons, 1, false, 0, buffTimes);
-							else
-								DrawStatusIcons(buffIds, settings.iconSize, settings.maxIcons, 1);
-							end
+							DrawStatusIcons(drawIds, settings.iconSize, settings.maxIcons, 1, false, 0, drawTimes);
 							imgui.PopStyleVar(1);
 						end
 						imgui.End();

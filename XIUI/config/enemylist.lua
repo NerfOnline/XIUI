@@ -69,6 +69,10 @@ function M.DrawSettings()
     if components.CollapsingSection('Debuffs##enemyList') then
         components.DrawCheckbox('Show Debuffs', 'showEnemyListDebuffs');
         components.DrawCheckbox('Show Debuff Timers', 'showEnemyListDebuffTimers');
+        if (gConfig.showEnemyListDebuffTimers) then
+            components.DrawCheckbox('CC Status Only', 'enemyListDebuffTimersCCOnly');
+            imgui.ShowHelp('Only time CC effects: Sleep, Lullaby, Stun, Bind, Weight,\nPetrification, Terror, Charm, Silence and Amnesia.');
+        end
         if (gConfig.showEnemyListDebuffs) then
             components.DrawLeftRightAnchorDropdown('Debuff Anchor', gConfig, 'enemyListDebuffsAnchor',
                 'Which side of the enemy entry to anchor debuff icons.');
