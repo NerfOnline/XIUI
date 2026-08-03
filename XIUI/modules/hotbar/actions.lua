@@ -10,6 +10,7 @@ local horizonSpells = require('modules.hotbar.database.horizonspells');
 local textures = require('modules.hotbar.textures');
 local actiondb = require('modules.hotbar.actiondb');
 local playerdata = require('modules.hotbar.playerdata');
+local recast = require('modules.hotbar.recast');
 local TextureManager = require('libs.texturemanager');
 local macrosLib = require('libs.ffxi.macros');
 package.loaded['libs.target'] = nil;
@@ -428,65 +429,210 @@ local function GetSpellByName(spellName)
     return spellByNameLookup[spellName];
 end
 
--- Ability MP cost cache (static resource data), keyed by ability name
-local abilityMpCostCache = {};
+-- Buff ids used for cost overrides
+local BUFF_MANAFONT = 47;
+local BUFF_MANAWELL = 229;
+local BUFF_TRANCE = 376;
+local BUFF_TABULA_RASA = 377;
 
---- MP cost for a job ability (e.g. SMN Blood Pacts), read from the resource
---- manager so it stays correct for any ability without a curated table.
----@param abilityName string|nil
----@return number|nil mpCost
-local function GetAbilityMpCost(abilityName)
-    if not abilityName or abilityName == '' then return nil; end
+-- Finishing-move count encoded in status ids.
+-- Buff 588 is the client's "5+" icon (JP gifts raise the real cap to 7/9).
+local FINISHING_MOVE_BUFF = {
+    [381] = 1, [382] = 2, [383] = 3, [384] = 4, [385] = 5,
+};
+local BUFF_FINISHING_MOVE_5_PLUS = 588;
 
-    local cached = abilityMpCostCache[abilityName];
-    if cached ~= nil then
-        return cached or nil;
+-- Flourish ability ids -> required finishing moves
+local FLOURISH_FM_COST = {
+    [716] = 1, [717] = 1, [718] = 1, [719] = 1, [720] = 1,
+    [721] = 2, [776] = 1, [825] = 2, [826] = 3,
+};
+
+local function PlayerHasBuff(buffId)
+    local player = AshitaCore:GetMemoryManager():GetPlayer();
+    if not player then return false; end
+    local buffs = player:GetBuffs();
+    if not buffs then return false; end
+    for i = 1, 32 do
+        if buffs[i] == buffId then
+            return true;
+        end
+    end
+    return false;
+end
+
+--- @return number count Exact 1-5, or 5 when buff 588 (5+) is active
+--- @return string label "1".."5" or "5+"
+local function GetFinishingMoveDisplay()
+    local player = AshitaCore:GetMemoryManager():GetPlayer();
+    if not player then return 0, '0'; end
+    local buffs = player:GetBuffs();
+    if not buffs then return 0, '0'; end
+
+    for i = 1, 32 do
+        local buff = buffs[i];
+        if buff == BUFF_FINISHING_MOVE_5_PLUS then
+            return 5, '5+';
+        end
+        local mapped = FINISHING_MOVE_BUFF[buff];
+        if mapped then
+            return mapped, tostring(mapped);
+        end
+    end
+    return 0, '0';
+end
+
+local function GetPartyMp()
+    local party = AshitaCore:GetMemoryManager():GetParty();
+    return party and party:GetMemberMP(0) or 0;
+end
+
+local function GetPartyTp()
+    local party = AshitaCore:GetMemoryManager():GetParty();
+    return party and party:GetMemberTP(0) or 0;
+end
+
+--- Effective spell MP after Manafont / arts-style buffs (simplified SCH arts)
+---@param spellRes table
+---@return number cost
+---@return boolean met
+local function ComputeSpellMpCost(spellRes)
+    local cost = spellRes.ManaCost or 0;
+    if cost < 1 then
+        return 0, true;
+    end
+    if PlayerHasBuff(BUFF_MANAFONT) or PlayerHasBuff(BUFF_MANAWELL) then
+        return 0, true;
     end
 
-    local mpCost = false;
-    local abilityId = actiondb.GetAbilityId(abilityName);
-    if abilityId then
-        local ability = AshitaCore:GetResourceManager():GetAbilityById(abilityId);
-        if ability and ability.ManaCost and ability.ManaCost > 0 then
-            mpCost = ability.ManaCost;
+    local player = AshitaCore:GetMemoryManager():GetPlayer();
+    local buffs = player and player:GetBuffs();
+    if buffs and cost > 0 then
+        local artsMod, penuryMod;
+        local spellType = spellRes.Type or 0;
+        for i = 1, 32 do
+            local buff = buffs[i];
+            if buff == 255 then
+                break;
+            elseif spellType == 1 then -- white
+                if buff == 358 or buff == 401 then artsMod = 0.9;
+                elseif buff == 359 or buff == 402 then artsMod = 1.2;
+                elseif buff == 360 then penuryMod = 0.5; end
+            elseif spellType == 2 then -- black
+                if buff == 358 or buff == 401 then artsMod = 1.2;
+                elseif buff == 359 or buff == 402 then artsMod = 0.9;
+                elseif buff == 361 then penuryMod = 0.5; end
+            end
+        end
+        if penuryMod then
+            cost = math.ceil(cost * penuryMod);
+        elseif artsMod then
+            cost = math.ceil(cost * artsMod);
         end
     end
 
-    abilityMpCostCache[abilityName] = mpCost;
-    return mpCost or nil;
+    return cost, GetPartyMp() >= cost;
 end
 
---- Get MP cost for an action (magic spells and MP-costing job abilities)
----@param bind table The keybind data with actionType and action fields
----@return number|nil mpCost The MP cost, or nil if not applicable
-function M.GetMPCost(bind)
-    if not bind then return nil; end
+--- Unified cost readout for slot overlays and soft-dimming.
+--- Returns a reused table — read values immediately, do not cache the reference.
+---@param bind table|nil
+---@return table info { kind, amount, met, label }
+local costResult = { kind = 'none', amount = 0, met = true, label = nil };
+local function SetCostResult(kind, amount, met, label)
+    costResult.kind = kind;
+    costResult.amount = amount;
+    costResult.met = met;
+    costResult.label = label;
+    return costResult;
+end
 
-    -- A macro surfaces its recast source's cost; a direct ma/ja bind uses its
-    -- own action.
+function M.GetActionCostInfo(bind)
+    SetCostResult('none', 0, true, nil);
+    if not bind then return costResult; end
+
     local actionType, actionName = bind.actionType, bind.action;
     if bind.actionType == 'macro' then
         actionType, actionName = bind.recastSourceType, bind.recastSourceAction;
     end
+    if not actionType or actionType == 'none' or not actionName then
+        return costResult;
+    end
 
     if actionType == 'ma' then
-        local spell = GetSpellByName(actionName);
-        if spell and spell.mp_cost and spell.mp_cost > 0 then
-            return spell.mp_cost;
+        local spellId = actiondb.GetSpellId(actionName);
+        local spellRes = spellId and AshitaCore:GetResourceManager():GetSpellById(spellId);
+        if not spellRes then
+            local hz = GetSpellByName(actionName);
+            if hz and hz.mp_cost and hz.mp_cost > 0 then
+                local cost = hz.mp_cost;
+                if PlayerHasBuff(BUFF_MANAFONT) or PlayerHasBuff(BUFF_MANAWELL) then
+                    cost = 0;
+                end
+                return SetCostResult('mp', cost, GetPartyMp() >= cost, tostring(cost));
+            end
+            return costResult;
         end
-        return nil;
+        local cost, met = ComputeSpellMpCost(spellRes);
+        if cost < 1 and not (spellRes.ManaCost and spellRes.ManaCost > 0) then
+            return costResult;
+        end
+        return SetCostResult('mp', cost, met, tostring(cost));
     end
 
-    -- Blood Pacts and similar pet commands are abilities behind a /pet prefix.
+    if actionType == 'ws' then
+        local tpCost = M.GetWeaponskillTpCost(actionName);
+        return SetCostResult('tp', tpCost, GetPartyTp() >= tpCost, tostring(tpCost));
+    end
+
     if actionType == 'ja' or actionType == 'pet' then
-        return GetAbilityMpCost(actionName);
+        local abilityId = actiondb.GetAbilityId(actionName);
+        local ability = abilityId and AshitaCore:GetResourceManager():GetAbilityById(abilityId);
+        if not ability then
+            return costResult;
+        end
+
+        local timerId = ability.RecastTimerId;
+
+        if timerId == recast.CHARGE_TIMER.STRATAGEM then
+            if PlayerHasBuff(BUFF_TABULA_RASA) then
+                return SetCostResult('charges', 0, true, '0');
+            end
+            local charges = recast.GetStratagemCharges();
+            return SetCostResult('charges', charges, charges > 0, tostring(charges));
+        elseif timerId == recast.CHARGE_TIMER.READY then
+            local charges = recast.GetReadyCharges();
+            return SetCostResult('charges', charges, charges > 0, tostring(charges));
+        elseif timerId == recast.CHARGE_TIMER.QUICK_DRAW then
+            local charges = recast.GetQuickDrawCharges();
+            return SetCostResult('charges', charges, charges > 0, tostring(charges));
+        end
+
+        local fmNeed = abilityId and FLOURISH_FM_COST[abilityId];
+        if fmNeed then
+            local have, label = GetFinishingMoveDisplay();
+            return SetCostResult('fm', fmNeed, have >= fmNeed, label);
+        end
+
+        local tpCost = ability.TP or 0;
+        if tpCost >= 1 then
+            if PlayerHasBuff(BUFF_TRANCE) then
+                return SetCostResult('tp', 0, true, '0');
+            end
+            return SetCostResult('tp', tpCost, GetPartyTp() >= tpCost, tostring(tpCost));
+        end
+
+        local manaCost = ability.ManaCost or 0;
+        if manaCost > 0 then
+            if PlayerHasBuff(BUFF_MANAFONT) or PlayerHasBuff(BUFF_MANAWELL) then
+                return SetCostResult('mp', 0, true, '0');
+            end
+            return SetCostResult('mp', manaCost, GetPartyMp() >= manaCost, tostring(manaCost));
+        end
     end
 
-    return nil;
+    return costResult;
 end
-
--- TP cost cache for weaponskills (static resource data)
-local wsTpCostCache = {};
 
 -- Action types checked directly for job/gear/inventory availability dimming
 local AVAILABILITY_ACTION_TYPES = {
@@ -519,16 +665,12 @@ end
 function M.NeedsTpCheck(bind)
     if not bind then return false; end
 
-    if bind.actionType == 'ws' then
-        return true;
-    end
-
-    if bind.actionType == 'macro' and bind.recastSourceType == 'ws' and bind.recastSourceAction then
-        return true;
-    end
-
-    return false;
+    local info = M.GetActionCostInfo(bind);
+    return info.kind == 'tp';
 end
+
+-- TP cost cache for weaponskills (static resource data)
+local wsTpCostCache = {};
 
 --- Get TP cost for a weaponskill (clamped to 1000-3000)
 ---@param wsName string
@@ -564,19 +706,19 @@ end
 ---@param bind table
 ---@return boolean hasEnoughTp
 function M.HasEnoughTpForBind(bind)
-    if not M.NeedsTpCheck(bind) then
+    local info = M.GetActionCostInfo(bind);
+    if info.kind ~= 'tp' then
         return true;
     end
+    return info.met == true;
+end
 
-    local wsName = bind.action;
-    if bind.actionType == 'macro' then
-        wsName = bind.recastSourceAction;
-    end
-
-    local tpCost = M.GetWeaponskillTpCost(wsName);
-    local party = AshitaCore:GetMemoryManager():GetParty();
-    local playerTp = party and party:GetMemberTP(0) or 0;
-    return playerTp >= tpCost;
+--- Whether cost requirements are currently met (MP/TP/charges/FM)
+---@param bind table
+---@return boolean
+function M.HasEnoughCostForBind(bind)
+    local info = M.GetActionCostInfo(bind);
+    return info.met ~= false;
 end
 
 --- Resolve macro recast source into a bind suitable for availability checks
@@ -595,23 +737,32 @@ local function ResolveAvailabilityBind(bind)
 end
 
 --- Check if the player currently has a named ability or weaponskill
----@param player table
 ---@param actionName string
 ---@param cacheFallback function|nil Fallback when ability ID lookup fails
 ---@return boolean
-local function PlayerHasNamedAbility(player, actionName, cacheFallback)
+---@return boolean cacheable Negative HasAbility results are volatile post-zone
+local function PlayerHasNamedAbility(actionName, cacheFallback)
     local abilityId = actiondb.GetAbilityId(actionName);
     if abilityId then
-        return player:HasAbility(abilityId);
+        local player = AshitaCore:GetMemoryManager():GetPlayer();
+        if player and player:HasAbility(abilityId) then
+            return true, true;
+        end
+        -- Volatile: HasAbility can read false briefly after zoning
+        return false, false;
     end
-    return cacheFallback and cacheFallback(actionName) or false;
+    if cacheFallback and cacheFallback(actionName) then
+        return true, true;
+    end
+    return false, false;
 end
 
---- Check if an action is currently available to use
---- Takes into account job, level, subjob, and level sync
+--- Check if an action is currently known/available to the player (hard dim)
+--- Cost and recast are handled separately as "ready" soft-dim.
 ---@param bind table The keybind data with actionType and action fields
----@return boolean isAvailable True if the action can be used
----@return string|nil reason Reason if not available (e.g., "Level 50 required", "Wrong job")
+---@return boolean isAvailable True if the action is known
+---@return string|nil reason Reason if not available
+---@return boolean|nil cacheable When false, do not cache this negative
 function M.IsActionAvailable(bind)
     if not bind then return true, nil; end
 
@@ -620,84 +771,60 @@ function M.IsActionAvailable(bind)
     local player = AshitaCore:GetMemoryManager():GetPlayer();
     if not player then return true, nil; end
 
-    local mainJobId = player:GetMainJob();
-    local mainJobLevel = player:GetMainJobLevel();
-    local subJobId = player:GetSubJob();
-    local subJobLevel = player:GetSubJobLevel();
+    local mainJobId = player:GetMainJob() or 0;
+    local mainJobLevel = player:GetMainJobLevel() or 0;
 
     -- Guard: If job data is invalid (e.g., during zoning), assume available
-    -- Don't cache this result - return nil as reason to signal "don't cache"
     if mainJobId == 0 or mainJobLevel == 0 then
-        return true, "pending";  -- "pending" signals not to cache this result
+        return true, "pending";
     end
 
     if bind.actionType == 'macro' then
         return true, nil;
     end
 
-    -- Handle magic spells
     if bind.actionType == 'ma' then
         local spellId = actiondb.GetSpellId(bind.action);
-        if spellId and not player:HasSpell(spellId) then
-            -- Volatile: HasSpell reads false right after zone-in until the spell
-            -- list repopulates; don't cache or it sticks "N/A". See ja/ws.
-            return false, "N/A", false;
-        end
-
-        local spell = GetSpellByName(bind.action);
-        if not spell then return true, nil; end  -- Unknown spell, assume available
-
-        local levels = spell.levels;
-        if not levels then return true, nil; end  -- No level requirements
-
-        -- Check if main job can cast this spell
-        local mainReqLevel = levels[mainJobId];
-        local subReqLevel = subJobId and levels[subJobId] or nil;
-
-        -- Check main job first (Job Point spells report level > 99)
-        if mainReqLevel then
-            if mainJobLevel >= mainReqLevel or mainReqLevel > MAX_JOB_LEVEL then
-                return true, nil;  -- Can cast with main job
+        local spellRes = spellId and AshitaCore:GetResourceManager():GetSpellById(spellId);
+        if spellRes then
+            local canCast, _, reqLevel = playerdata.EvaluateSpellAccess(spellRes, player);
+            if canCast then
+                return true, nil;
             end
-        end
-
-        -- Check subjob
-        if subReqLevel then
-            if subJobLevel >= subReqLevel then
-                return true, nil;  -- Can cast with subjob
+            if not player:HasSpell(spellRes.Index) then
+                return false, "N/A", false;
             end
-        end
-
-        -- Spell exists but can't be cast
-        if mainReqLevel then
-            -- Has the job but not the level
-            return false, string.format("Lv%d", mainReqLevel);
-        elseif subReqLevel then
-            -- Subjob has it but not the level
-            return false, string.format("Lv%d", subReqLevel);
-        else
-            -- Job can't cast this spell at all
+            if reqLevel and reqLevel > 0 and reqLevel < 255 then
+                return false, string.format("Lv%d", reqLevel);
+            end
             return false, "Job";
         end
 
-    -- Handle job abilities (live HasAbility reflects current job/gear state)
-    elseif bind.actionType == 'ja' then
-        if not PlayerHasNamedAbility(player, bind.action, playerdata.IsAbilityInCache) then
-            -- Volatile: HasAbility reads false briefly after zoning until the
-            -- ability list repopulates; don't cache or it sticks "N/A".
+        -- Fallback for horizon-only names
+        if spellId and not player:HasSpell(spellId) then
             return false, "N/A", false;
         end
+        return true, nil;
 
-    -- Handle weapon skills (HasAbility reflects currently equipped weapon types)
-    elseif bind.actionType == 'ws' then
-        if not PlayerHasNamedAbility(player, bind.action, playerdata.IsWeaponskillInCache) then
-            return false, "N/A", false;
+    elseif bind.actionType == 'ja' or bind.actionType == 'ws' then
+        local known, cacheable = PlayerHasNamedAbility(
+            bind.action,
+            bind.actionType == 'ws' and playerdata.IsWeaponskillInCache or playerdata.IsAbilityInCache
+        );
+        if not known then
+            return false, "N/A", cacheable;
         end
 
     elseif bind.actionType == 'pet' then
-        if not playerdata.IsPetCommandAvailable(bind.action) then
-            return false, "N/A";
+        -- Pet bits are volatile across summon/release; never permanently cache.
+        local abilityId = actiondb.GetAbilityId(bind.action);
+        if abilityId and player:HasAbility(abilityId) then
+            return true, nil, false;
         end
+        if not playerdata.IsPetCommandAvailable(bind.action) then
+            return false, "N/A", false;
+        end
+        return true, nil, false;
 
     elseif bind.actionType == 'equip' then
         if not playerdata.IsEquipActionAvailable(bind.equipSlot, bind.action, bind.itemId) then
@@ -1814,7 +1941,7 @@ function M.HandleKey(event)
            if PALETTE_DEBUG_KEYS then
                print('[XIUI Palette Debug] Cycling palettes...');
            end
-           -- DOWN = next (+1), UP = previous (-1) to match tHotBar/in-game macro convention
+           -- DOWN = next (+1), UP = previous (-1) to match in-game macro convention
            local direction = (keyCode == nextKey) and 1 or -1;
            local jobId = data.jobId or 1;
            local subjobId = data.subjobId or 0;
