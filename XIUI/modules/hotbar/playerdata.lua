@@ -25,15 +25,22 @@ local JOB_CAP = 99;
 -- Spell / ability access rules (Ashita APIs)
 -- ============================================
 
+-- GetJobPointsSpent is missing on older Ashita builds; probe once rather than
+-- paying for a pcall on every spell we evaluate.
+local jobPointsApi = nil;
+
 local function GetSpentJobPoints(player, jobId)
     if not player or not jobId or jobId <= 0 then return 0; end
-    local ok, spent = pcall(function()
-        return player:GetJobPointsSpent(jobId);
-    end);
-    if ok and type(spent) == 'number' then
-        return spent;
+
+    if jobPointsApi == nil then
+        jobPointsApi = pcall(function()
+            return player:GetJobPointsSpent(jobId);
+        end);
     end
-    return 0;
+    if not jobPointsApi then return 0; end
+
+    local spent = player:GetJobPointsSpent(jobId);
+    return type(spent) == 'number' and spent or 0;
 end
 
 --- Whether the player can cast a spell on main or sub (HasSpell + level/JP gates)

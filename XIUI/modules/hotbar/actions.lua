@@ -429,57 +429,71 @@ local function GetSpellByName(spellName)
     return spellByNameLookup[spellName];
 end
 
--- Buff ids used for cost overrides
-local BUFF_MANAFONT = 47;
-local BUFF_MANAWELL = 229;
-local BUFF_TRANCE = 376;
-local BUFF_TABULA_RASA = 377;
-
--- Finishing-move count encoded in status ids.
--- Buff 588 is the client's "5+" icon (JP gifts raise the real cap to 7/9).
-local FINISHING_MOVE_BUFF = {
-    [381] = 1, [382] = 2, [383] = 3, [384] = 4, [385] = 5,
-};
-local BUFF_FINISHING_MOVE_5_PLUS = 588;
-
 -- Flourish ability ids -> required finishing moves
 local FLOURISH_FM_COST = {
     [716] = 1, [717] = 1, [718] = 1, [719] = 1, [720] = 1,
     [721] = 2, [776] = 1, [825] = 2, [826] = 3,
 };
 
-local function PlayerHasBuff(buffId)
-    local player = AshitaCore:GetMemoryManager():GetPlayer();
-    if not player then return false; end
-    local buffs = player:GetBuffs();
-    if not buffs then return false; end
-    for i = 1, 32 do
-        if buffs[i] == buffId then
-            return true;
-        end
-    end
-    return false;
-end
+-- Status id -> the cost flag it raises
+local BUFF_FLAG = {
+    [47]  = 'manaFree',     -- Manafont
+    [229] = 'manaFree',     -- Manawell
+    [376] = 'tranceFree',   -- Trance
+    [377] = 'tabulaRasa',   -- Tabula Rasa
+    [358] = 'lightArts',    -- Light Arts
+    [401] = 'lightArts',    -- Addendum: White
+    [359] = 'darkArts',     -- Dark Arts
+    [402] = 'darkArts',     -- Addendum: Black
+    [360] = 'penury',       -- Penury
+    [361] = 'parsimony',    -- Parsimony
+};
 
---- @return number count Exact 1-5, or 5 when buff 588 (5+) is active
---- @return string label "1".."5" or "5+"
-local function GetFinishingMoveDisplay()
+-- Finishing-move count by status id. 588 is the client's "5+" icon: worth 5 for
+-- flourish checks, but labelled "5+" since JP gifts raise the real cap.
+local FM_FIVE_PLUS = 588;
+local FINISHING_MOVE = {
+    [381] = 1, [382] = 2, [383] = 3, [384] = 4, [385] = 5, [FM_FIVE_PLUS] = 5,
+};
+
+-- Buff state is identical for every slot in a frame, so snapshot it rather than
+-- walking the 32-entry array per slot. MP/TP stay live so dimming keeps up.
+local BUFF_SNAPSHOT_TTL = 0.1;
+local buffState = { ts = -1, fmCount = 0, fmLabel = '0' };
+
+local function GetBuffState()
+    local now = os.clock();
+    if (now - buffState.ts) < BUFF_SNAPSHOT_TTL then
+        return buffState;
+    end
+    buffState.ts = now;
+
+    for _, name in pairs(BUFF_FLAG) do
+        buffState[name] = false;
+    end
+    buffState.fmCount, buffState.fmLabel = 0, '0';
+
     local player = AshitaCore:GetMemoryManager():GetPlayer();
-    if not player then return 0, '0'; end
-    local buffs = player:GetBuffs();
-    if not buffs then return 0, '0'; end
+    local buffs = player and player:GetBuffs();
+    if not buffs then
+        return buffState;
+    end
 
     for i = 1, 32 do
         local buff = buffs[i];
-        if buff == BUFF_FINISHING_MOVE_5_PLUS then
-            return 5, '5+';
-        end
-        local mapped = FINISHING_MOVE_BUFF[buff];
-        if mapped then
-            return mapped, tostring(mapped);
+        local flag = BUFF_FLAG[buff];
+        if flag then
+            buffState[flag] = true;
+        else
+            local fm = FINISHING_MOVE[buff];
+            if fm and fm > buffState.fmCount then
+                buffState.fmCount = fm;
+                buffState.fmLabel = (buff == FM_FIVE_PLUS) and '5+' or tostring(fm);
+            end
         end
     end
-    return 0, '0';
+
+    return buffState;
 end
 
 local function GetPartyMp()
@@ -492,146 +506,151 @@ local function GetPartyTp()
     return party and party:GetMemberTP(0) or 0;
 end
 
---- Effective spell MP after Manafont / arts-style buffs (simplified SCH arts)
----@param spellRes table
----@return number cost
----@return boolean met
-local function ComputeSpellMpCost(spellRes)
-    local cost = spellRes.ManaCost or 0;
-    if cost < 1 then
-        return 0, true;
-    end
-    if PlayerHasBuff(BUFF_MANAFONT) or PlayerHasBuff(BUFF_MANAWELL) then
-        return 0, true;
-    end
+-- Static cost shape per resolved action, derived from resource data only.
+-- Nested by actionType/actionName so the hot path allocates no lookup key.
+local costDescriptorCache = {};
 
-    local player = AshitaCore:GetMemoryManager():GetPlayer();
-    local buffs = player and player:GetBuffs();
-    if buffs and cost > 0 then
-        local artsMod, penuryMod;
-        local spellType = spellRes.Type or 0;
-        for i = 1, 32 do
-            local buff = buffs[i];
-            if buff == 255 then
-                break;
-            elseif spellType == 1 then -- white
-                if buff == 358 or buff == 401 then artsMod = 0.9;
-                elseif buff == 359 or buff == 402 then artsMod = 1.2;
-                elseif buff == 360 then penuryMod = 0.5; end
-            elseif spellType == 2 then -- black
-                if buff == 358 or buff == 401 then artsMod = 1.2;
-                elseif buff == 359 or buff == 402 then artsMod = 0.9;
-                elseif buff == 361 then penuryMod = 0.5; end
-            end
-        end
-        if penuryMod then
-            cost = math.ceil(cost * penuryMod);
-        elseif artsMod then
-            cost = math.ceil(cost * artsMod);
-        end
-    end
+local NO_COST = { kind = 'none' };
 
-    return cost, GetPartyMp() >= cost;
-end
-
---- Unified cost readout for slot overlays and soft-dimming.
---- Returns a reused table — read values immediately, do not cache the reference.
----@param bind table|nil
----@return table info { kind, amount, met, label }
-local costResult = { kind = 'none', amount = 0, met = true, label = nil };
-local function SetCostResult(kind, amount, met, label)
-    costResult.kind = kind;
-    costResult.amount = amount;
-    costResult.met = met;
-    costResult.label = label;
-    return costResult;
-end
-
-function M.GetActionCostInfo(bind)
-    SetCostResult('none', 0, true, nil);
-    if not bind then return costResult; end
-
-    local actionType, actionName = bind.actionType, bind.action;
-    if bind.actionType == 'macro' then
-        actionType, actionName = bind.recastSourceType, bind.recastSourceAction;
-    end
-    if not actionType or actionType == 'none' or not actionName then
-        return costResult;
-    end
-
+local function BuildCostDescriptor(actionType, actionName)
     if actionType == 'ma' then
         local spellId = actiondb.GetSpellId(actionName);
         local spellRes = spellId and AshitaCore:GetResourceManager():GetSpellById(spellId);
-        if not spellRes then
-            local hz = GetSpellByName(actionName);
-            if hz and hz.mp_cost and hz.mp_cost > 0 then
-                local cost = hz.mp_cost;
-                if PlayerHasBuff(BUFF_MANAFONT) or PlayerHasBuff(BUFF_MANAWELL) then
-                    cost = 0;
-                end
-                return SetCostResult('mp', cost, GetPartyMp() >= cost, tostring(cost));
-            end
-            return costResult;
+        if spellRes then
+            local base = spellRes.ManaCost or 0;
+            if base < 1 then return NO_COST; end
+            return { kind = 'mp', base = base, label = tostring(base), spellType = spellRes.Type or 0 };
         end
-        local cost, met = ComputeSpellMpCost(spellRes);
-        if cost < 1 and not (spellRes.ManaCost and spellRes.ManaCost > 0) then
-            return costResult;
+        -- Horizon-only names have no resource entry; no arts scaling for these
+        local hz = GetSpellByName(actionName);
+        if hz and hz.mp_cost and hz.mp_cost > 0 then
+            return { kind = 'mp', base = hz.mp_cost, label = tostring(hz.mp_cost) };
         end
-        return SetCostResult('mp', cost, met, tostring(cost));
+        return NO_COST;
     end
 
     if actionType == 'ws' then
-        local tpCost = M.GetWeaponskillTpCost(actionName);
-        return SetCostResult('tp', tpCost, GetPartyTp() >= tpCost, tostring(tpCost));
+        -- No label: every weaponskill costs the same 1000 TP at this cap, so the
+        -- number is noise. Keep the cost so the slot still dims when TP is short.
+        return { kind = 'tp', base = M.GetWeaponskillTpCost(actionName) };
     end
 
     if actionType == 'ja' or actionType == 'pet' then
         local abilityId = actiondb.GetAbilityId(actionName);
         local ability = abilityId and AshitaCore:GetResourceManager():GetAbilityById(abilityId);
-        if not ability then
-            return costResult;
-        end
+        if not ability then return NO_COST; end
 
         local timerId = ability.RecastTimerId;
-
-        if timerId == recast.CHARGE_TIMER.STRATAGEM then
-            if PlayerHasBuff(BUFF_TABULA_RASA) then
-                return SetCostResult('charges', 0, true, '0');
-            end
-            local charges = recast.GetStratagemCharges();
-            return SetCostResult('charges', charges, charges > 0, tostring(charges));
-        elseif timerId == recast.CHARGE_TIMER.READY then
-            local charges = recast.GetReadyCharges();
-            return SetCostResult('charges', charges, charges > 0, tostring(charges));
-        elseif timerId == recast.CHARGE_TIMER.QUICK_DRAW then
-            local charges = recast.GetQuickDrawCharges();
-            return SetCostResult('charges', charges, charges > 0, tostring(charges));
+        if timerId == recast.CHARGE_TIMER.STRATAGEM
+            or timerId == recast.CHARGE_TIMER.READY
+            or timerId == recast.CHARGE_TIMER.QUICK_DRAW then
+            return { kind = 'charges', timerId = timerId };
         end
 
-        local fmNeed = abilityId and FLOURISH_FM_COST[abilityId];
+        local fmNeed = FLOURISH_FM_COST[abilityId];
         if fmNeed then
-            local have, label = GetFinishingMoveDisplay();
-            return SetCostResult('fm', fmNeed, have >= fmNeed, label);
+            return { kind = 'fm', base = fmNeed };
         end
 
         local tpCost = ability.TP or 0;
         if tpCost >= 1 then
-            if PlayerHasBuff(BUFF_TRANCE) then
-                return SetCostResult('tp', 0, true, '0');
-            end
-            return SetCostResult('tp', tpCost, GetPartyTp() >= tpCost, tostring(tpCost));
+            return { kind = 'tp', base = tpCost, label = tostring(tpCost), trance = true };
         end
 
         local manaCost = ability.ManaCost or 0;
         if manaCost > 0 then
-            if PlayerHasBuff(BUFF_MANAFONT) or PlayerHasBuff(BUFF_MANAWELL) then
-                return SetCostResult('mp', 0, true, '0');
-            end
-            return SetCostResult('mp', manaCost, GetPartyMp() >= manaCost, tostring(manaCost));
+            return { kind = 'mp', base = manaCost, label = tostring(manaCost) };
         end
     end
 
-    return costResult;
+    return NO_COST;
+end
+
+local function GetCostDescriptor(actionType, actionName)
+    local byName = costDescriptorCache[actionType];
+    if not byName then
+        byName = {};
+        costDescriptorCache[actionType] = byName;
+    end
+    local desc = byName[actionName];
+    if desc == nil then
+        desc = BuildCostDescriptor(actionType, actionName);
+        byName[actionName] = desc;
+    end
+    return desc;
+end
+
+local CHARGE_READERS = {
+    [recast.CHARGE_TIMER.STRATAGEM] = recast.GetStratagemCharges,
+    [recast.CHARGE_TIMER.READY] = recast.GetReadyCharges,
+    [recast.CHARGE_TIMER.QUICK_DRAW] = recast.GetQuickDrawCharges,
+};
+
+-- Per-kind readers, each returning kind, label, met. Keyed by descriptor kind,
+-- so 'none' simply has no entry.
+local COST_READERS = {
+    charges = function(desc, buffs)
+        if desc.timerId == recast.CHARGE_TIMER.STRATAGEM and buffs.tabulaRasa then
+            return 'charges', '0', true;
+        end
+        local charges = CHARGE_READERS[desc.timerId]() or 0;
+        return 'charges', tostring(charges), charges > 0;
+    end,
+
+    fm = function(desc, buffs)
+        return 'fm', buffs.fmLabel, buffs.fmCount >= desc.base;
+    end,
+
+    tp = function(desc, buffs)
+        if desc.trance and buffs.tranceFree then
+            return 'tp', '0', true;
+        end
+        return 'tp', desc.label, GetPartyTp() >= desc.base;
+    end,
+
+    mp = function(desc, buffs)
+        if buffs.manaFree then
+            return 'mp', '0', true;
+        end
+
+        -- Ordered by precedence: a stratagem discount overrides the arts multiplier.
+        local cost = desc.base;
+        if desc.spellType == 1 then          -- white
+            if buffs.penury then cost = math.ceil(cost * 0.5);
+            elseif buffs.lightArts then cost = math.ceil(cost * 0.9);
+            elseif buffs.darkArts then cost = math.ceil(cost * 1.2); end
+        elseif desc.spellType == 2 then      -- black
+            if buffs.parsimony then cost = math.ceil(cost * 0.5);
+            elseif buffs.darkArts then cost = math.ceil(cost * 0.9);
+            elseif buffs.lightArts then cost = math.ceil(cost * 1.2); end
+        end
+
+        local label = (cost == desc.base) and desc.label or tostring(cost);
+        return 'mp', label, GetPartyMp() >= cost;
+    end,
+};
+
+--- Cost readout for slot overlays and soft-dimming.
+---@param bind table|nil
+---@return string kind 'none'|'mp'|'tp'|'charges'|'fm'
+---@return string|nil label Text to draw on the slot
+---@return boolean met Whether the player can currently pay it
+function M.GetActionCostInfo(bind)
+    if not bind then return 'none', nil, true; end
+
+    local actionType, actionName = bind.actionType, bind.action;
+    if actionType == 'macro' then
+        actionType, actionName = bind.recastSourceType, bind.recastSourceAction;
+    end
+    if not actionType or actionType == 'none' or not actionName then
+        return 'none', nil, true;
+    end
+
+    local desc = GetCostDescriptor(actionType, actionName);
+    local reader = COST_READERS[desc.kind];
+    if not reader then return 'none', nil, true; end
+
+    return reader(desc, GetBuffState());
 end
 
 -- Action types checked directly for job/gear/inventory availability dimming
@@ -657,16 +676,6 @@ function M.NeedsAvailabilityCheck(bind)
     return bind.actionType == 'macro'
         and bind.recastSourceType ~= nil
         and bind.recastSourceType ~= 'none';
-end
-
---- Whether this bind should be dimmed when the player lacks enough TP
----@param bind table
----@return boolean
-function M.NeedsTpCheck(bind)
-    if not bind then return false; end
-
-    local info = M.GetActionCostInfo(bind);
-    return info.kind == 'tp';
 end
 
 -- TP cost cache for weaponskills (static resource data)
@@ -700,25 +709,6 @@ function M.GetWeaponskillTpCost(wsName)
 
     wsTpCostCache[wsName] = tpCost;
     return tpCost;
-end
-
---- Check if the player currently has enough TP for a weaponskill bind
----@param bind table
----@return boolean hasEnoughTp
-function M.HasEnoughTpForBind(bind)
-    local info = M.GetActionCostInfo(bind);
-    if info.kind ~= 'tp' then
-        return true;
-    end
-    return info.met == true;
-end
-
---- Whether cost requirements are currently met (MP/TP/charges/FM)
----@param bind table
----@return boolean
-function M.HasEnoughCostForBind(bind)
-    local info = M.GetActionCostInfo(bind);
-    return info.met ~= false;
 end
 
 --- Resolve macro recast source into a bind suitable for availability checks

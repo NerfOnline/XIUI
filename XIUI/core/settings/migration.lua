@@ -1128,9 +1128,13 @@ function M.MigrateUniqueMacroIds(gConfig)
         end
     end
 
-    -- Second pass: rewrite collisions (same id in multiple palettes)
+    -- Second pass: rewrite collisions (same id in multiple palettes) and record
+    -- which final ids each palette owns, so slots can be resolved without guessing.
+    local ownedIds = {};
     for paletteKey, macros in pairs(gConfig.macroDB) do
         if type(macros) == 'table' then
+            local owned = {};
+            ownedIds[paletteKey] = owned;
             for _, macro in ipairs(macros) do
                 if macro and macro.id then
                     local oldId = macro.id;
@@ -1146,6 +1150,7 @@ function M.MigrateUniqueMacroIds(gConfig)
                     else
                         seen[oldId] = true;
                     end
+                    owned[macro.id] = true;
                 end
             end
         end
@@ -1157,31 +1162,49 @@ function M.MigrateUniqueMacroIds(gConfig)
         return 0, 0;
     end
 
+    -- Storage keys ("15:0:avatar:ifrit", "14:3:palette:drg/whm") drop the subjob
+    -- to form the macroDB key; fall back to the bare job id when none matches.
+    local function PaletteHintFor(storageKey)
+        local key = tostring(storageKey);
+        local jobId, suffix = key:match('^(%d+):%d+:(.+)$');
+        if jobId and suffix and gConfig.macroDB[jobId .. ':' .. suffix] ~= nil then
+            return jobId .. ':' .. suffix;
+        end
+        return tonumber(key:match('^(%d+)'));
+    end
+
     local function RemapSlot(slot, contextPaletteHint)
         if type(slot) ~= 'table' or not slot.macroRef then
             return false;
         end
+
         local paletteKey = slot.macroPaletteKey or contextPaletteHint;
-        local map = paletteKey and remaps[paletteKey];
-        if map and map[slot.macroRef] then
-            slot.macroRef = map[slot.macroRef];
-            if not slot.macroPaletteKey and paletteKey then
+        if paletteKey ~= nil then
+            local newId = remaps[paletteKey] and remaps[paletteKey][slot.macroRef];
+            if newId then
+                slot.macroRef = newId;
                 slot.macroPaletteKey = paletteKey;
+                return true;
             end
-            return true;
+            -- The palette kept this id, so the slot is already correct. Guessing
+            -- here would retarget it at another palette's macro.
+            if ownedIds[paletteKey] and ownedIds[paletteKey][slot.macroRef] then
+                return false;
+            end
         end
-        -- Ambiguous: if only one remap table contains this old id, use it
-        local matchNew, matchCount = nil, 0;
+
+        -- Palette unknown or it does not own the id (composite/avatar keys, slots
+        -- referencing global macros): only safe when exactly one palette remapped it.
+        local matchNew, matchKey, matchCount = nil, nil, 0;
         for pKey, pMap in pairs(remaps) do
             if pMap[slot.macroRef] then
                 matchCount = matchCount + 1;
-                matchNew = pMap[slot.macroRef];
-                paletteKey = pKey;
+                matchNew, matchKey = pMap[slot.macroRef], pKey;
             end
         end
         if matchCount == 1 then
             slot.macroRef = matchNew;
-            slot.macroPaletteKey = slot.macroPaletteKey or paletteKey;
+            slot.macroPaletteKey = slot.macroPaletteKey or matchKey;
             return true;
         end
         return false;
@@ -1193,7 +1216,7 @@ function M.MigrateUniqueMacroIds(gConfig)
         if bar and bar.slotActions then
             for storageKey, slots in pairs(bar.slotActions) do
                 if type(slots) == 'table' then
-                    local jobHint = tonumber(tostring(storageKey):match('^(%d+)'));
+                    local jobHint = PaletteHintFor(storageKey);
                     for _, slot in pairs(slots) do
                         if RemapSlot(slot, jobHint) then
                             rewrittenSlots = rewrittenSlots + 1;
@@ -1207,7 +1230,7 @@ function M.MigrateUniqueMacroIds(gConfig)
     if gConfig.hotbarCrossbar and gConfig.hotbarCrossbar.slotActions then
         for storageKey, combos in pairs(gConfig.hotbarCrossbar.slotActions) do
             if type(combos) == 'table' then
-                local jobHint = tonumber(tostring(storageKey):match('^(%d+)'));
+                local jobHint = PaletteHintFor(storageKey);
                 for _, slots in pairs(combos) do
                     if type(slots) == 'table' then
                         for _, slot in pairs(slots) do

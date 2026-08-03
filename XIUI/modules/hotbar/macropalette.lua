@@ -823,7 +823,8 @@ local function InvalidateBrowsingIconCache()
 end
 
 -- Build/return pet commands for the macro editor dropdown.
--- Only includes commands the player currently knows (pet must be out for pet-specific bits).
+-- Lists what the palette's job can learn, not what is usable right now: the
+-- editor must work off-job and with no pet out. Slot dimming handles usability.
 local function GetEditorPetCommands()
     if not cachedPetCommands then
         local viewedJobId = selectedPaletteType;
@@ -851,17 +852,7 @@ local function GetEditorPetCommands()
             activePetName = petpalette.GetCurrentPetEntityName();
         end
 
-        local allCommands = GetPetCommandsForJob(viewedJobId, avatarName, activePetName);
-        local actiondb = require('modules.hotbar.actiondb');
-        local player = AshitaCore:GetMemoryManager():GetPlayer();
-        local filtered = {};
-        for _, cmd in ipairs(allCommands) do
-            local abilityId = actiondb.GetAbilityId(cmd.name);
-            if not abilityId or (player and player:HasAbility(abilityId)) then
-                filtered[#filtered + 1] = cmd;
-            end
-        end
-        cachedPetCommands = filtered;
+        cachedPetCommands = GetPetCommandsForJob(viewedJobId, avatarName, activePetName);
     end
 
     return cachedPetCommands or {};
@@ -1459,32 +1450,6 @@ function M.SyncToCurrentJob()
     end
 end
 
---- Allocate a macro id unique across the entire macroDB
----@return number
-local function AllocateUniqueMacroId()
-    if not gConfig then
-        return 1;
-    end
-    local nextId = (gConfig.macroIdSeq or 0) + 1;
-    if gConfig.macroDB then
-        local used = {};
-        for _, macros in pairs(gConfig.macroDB) do
-            if type(macros) == 'table' then
-                for _, macro in ipairs(macros) do
-                    if macro and macro.id then
-                        used[macro.id] = true;
-                    end
-                end
-            end
-        end
-        while used[nextId] do
-            nextId = nextId + 1;
-        end
-    end
-    gConfig.macroIdSeq = nextId;
-    return nextId;
-end
-
 -- Clear pet commands cache (call on pet change for BST)
 function M.ClearPetCommandsCache()
     cachedPetCommands = nil;
@@ -1509,7 +1474,7 @@ end
 function M.AddMacro(macroData)
     local db, _ = M.GetMacroDatabase();
 
-    macroData.id = AllocateUniqueMacroId();
+    macroData.id = data.AllocateUniqueMacroId();
     table.insert(db, macroData);
     MarkHotbarDirty();
     data.MarkMacroLookupDirty();
@@ -1550,7 +1515,7 @@ local function AddMacroToTypeKey(typeKey, macroData)
 
     local db = gConfig.macroDB[typeKey];
     local copy = deep_copy_table(macroData);
-    copy.id = AllocateUniqueMacroId();
+    copy.id = data.AllocateUniqueMacroId();
     table.insert(db, copy);
     SaveSettingsToDisk();
     data.MarkMacroLookupDirty();

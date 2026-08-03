@@ -139,13 +139,13 @@ local function RecastRawToDisplaySeconds(raw)
     return raw / 60;
 end
 
---- Remaining charges + seconds until next charge for a charge pool
----@param timerId number
----@param maxCharges number
----@param baseSeconds number Base full-pool recast in seconds (before modifier)
----@return number charges
----@return number nextChargeSeconds
-local function GetChargePool(timerId, maxCharges, baseSeconds)
+-- Every slot sharing a pool (all stratagems, all ready moves) asks for the same
+-- timer, so cache at 20 Hz like the other recasts instead of rescanning per slot.
+local chargeCount = {};            -- timerId -> remaining charges
+local chargeNext = {};             -- timerId -> seconds until the next charge
+local chargeExpiry = {};           -- timerId -> os.clock() expiry
+
+local function ComputeChargePool(timerId, maxCharges, baseSeconds)
     if maxCharges <= 0 then
         return 0, 0;
     end
@@ -163,6 +163,25 @@ local function GetChargePool(timerId, maxCharges, baseSeconds)
     if remainingCharges < 0 then remainingCharges = 0; end
     if remainingCharges > maxCharges then remainingCharges = maxCharges; end
     return remainingCharges, RecastRawToDisplaySeconds(timeUntilNext);
+end
+
+--- Remaining charges + seconds until next charge for a charge pool
+---@param timerId number
+---@param maxCharges number
+---@param baseSeconds number Base full-pool recast in seconds (before modifier)
+---@return number charges
+---@return number nextChargeSeconds
+local function GetChargePool(timerId, maxCharges, baseSeconds)
+    local now = os.clock();
+    local exp = chargeExpiry[timerId];
+    if exp and now < exp then
+        return chargeCount[timerId], chargeNext[timerId];
+    end
+
+    local charges, nextCharge = ComputeChargePool(timerId, maxCharges, baseSeconds);
+    chargeCount[timerId], chargeNext[timerId] = charges, nextCharge;
+    chargeExpiry[timerId] = now + ACTION_RECAST_TTL;
+    return charges, nextCharge;
 end
 
 function M.GetReadyCharges()

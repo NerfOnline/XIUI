@@ -183,8 +183,8 @@ local function DrawPaletteModal()
         if paletteModal.mode == 'create' and subjobId ~= 0 then
             local usingFallback = palette.IsUsingFallback(jobId, subjobId, paletteModal.paletteType);
             if usingFallback then
-                local jobName = jobs[jobId] or ('Job ' .. jobId);
-                local subjobName = jobs[subjobId] or ('Job ' .. subjobId);
+                local jobName = jobs.GetDisplayName(jobId);
+                local subjobName = jobs.GetDisplayName(subjobId);
                 imgui.TextColored({1.0, 0.7, 0.3, 1.0}, 'Warning: Creating this palette will stop');
                 imgui.TextColored({1.0, 0.7, 0.3, 1.0}, 'using shared palettes for ' .. jobName .. '/' .. subjobName .. '.');
                 imgui.Spacing();

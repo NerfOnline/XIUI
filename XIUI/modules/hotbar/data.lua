@@ -90,6 +90,33 @@ local function GetMacroFromLookup(macroId, paletteKey)
     return nil;
 end
 
+--- Allocate a macro id unique across every palette. All writers must use this;
+--- per-palette numbering leaves slots pointing at the wrong macro.
+---@return number
+function M.AllocateUniqueMacroId()
+    if not gConfig then return 1; end
+
+    local nextId = (gConfig.macroIdSeq or 0) + 1;
+    if gConfig.macroDB then
+        local used = {};
+        for _, macros in pairs(gConfig.macroDB) do
+            if type(macros) == 'table' then
+                for _, macro in ipairs(macros) do
+                    if macro and macro.id then
+                        used[macro.id] = true;
+                    end
+                end
+            end
+        end
+        while used[nextId] do
+            nextId = nextId + 1;
+        end
+    end
+
+    gConfig.macroIdSeq = nextId;
+    return nextId;
+end
+
 -- ============================================
 -- Performance: Storage Key Cache
 -- ============================================
@@ -697,32 +724,19 @@ local function GetMacroById(macroId, paletteKey)
                     return macro;
                 end
             end
-            if paletteKey == 'other' or paletteKey:match('^other') then
+            if paletteKey:match('^other') then
                 macro = GetMacroFromLookup(macroId, 'other');
                 if macro then return macro; end
             end
         end
     end
 
-    -- Globally unique ids: O(1) regardless of palette
+    -- Covers legacy slots with no macroPaletteKey. Holds every id in macroDB, so
+    -- a miss here means the macro is gone; no per-palette scan can beat it.
     if macroIdLookupDirty or macroIdLookupSource ~= (gConfig and gConfig.macroDB) then
         RebuildMacroLookup();
     end
-    if macroIdGlobalLookup[macroId] then
-        return macroIdGlobalLookup[macroId];
-    end
-
-    -- Fallback for legacy slots missing macroPaletteKey: scan all palettes
-    for key, paletteLookup in pairs(macroIdLookup) do
-        if key ~= paletteKey then
-            local macro = paletteLookup[macroId];
-            if macro then
-                return macro;
-            end
-        end
-    end
-
-    return nil;
+    return macroIdGlobalLookup[macroId];
 end
 
 -- Get action assignment for a specific bar and slot

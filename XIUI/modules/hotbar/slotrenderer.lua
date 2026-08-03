@@ -758,17 +758,13 @@ function M.DrawSlot(params)
     local isOnCooldown = cooldown.isOnCooldown;
     local recastText = cooldown.recastText;
 
-    -- Check resource cost (MP / TP / charges / finishing moves).
-    -- Not cached across frames: charges/TP/buffs change continuously.
-    local notEnoughCost = false;
-    local costInfo = nil;
+    -- Resource cost (MP / TP / charges / finishing moves)
+    local costKind, costLabel, costMet = 'none', nil, true;
     local bindKey = bind and ((bind.actionType or '') .. ':' .. (bind.action or '')) or '';
     if bind then
-        costInfo = actions.GetActionCostInfo(bind);
-        if costInfo and costInfo.kind ~= 'none' then
-            notEnoughCost = costInfo.met == false;
-        end
+        costKind, costLabel, costMet = actions.GetActionCostInfo(bind);
     end
+    local notEnoughCost = (costKind ~= 'none') and not costMet;
 
     -- Check if action is available (job/level/gear/pet/inventory requirements)
     local isUnavailable = false;
@@ -956,28 +952,16 @@ function M.DrawSlot(params)
                     mpX = mpX - w;
                 end
                 imtext.Draw(drawList, xText, mpX, mpY, xColor, mpFontSize);
-            else
-                local info = costInfo;
-                if info == nil then
-                    info = actions.GetActionCostInfo(bind);
+            elseif costLabel then
+                local mpCostColor = params.mpCostFontColor or 0xFFD4FF97;
+                if notEnoughCost then
+                    mpCostColor = params.mpCostNoMpColor or 0xFFFF4444;
                 end
-                if info and info.kind ~= 'none' and info.label then
-                    local mpText = info.label;
-                    local mpCostColor = params.mpCostFontColor or 0xFFD4FF97;
-                    if info.kind == 'tp' then
-                        mpCostColor = params.mpCostFontColor or 0xFF97D4FF;
-                    elseif info.kind == 'charges' or info.kind == 'fm' then
-                        mpCostColor = params.mpCostFontColor or 0xFFFFE097;
-                    end
-                    if notEnoughCost then
-                        mpCostColor = params.mpCostNoMpColor or 0xFFFF4444;
-                    end
-                    if mpAnchor == 'topRight' or mpAnchor == 'bottomRight' then
-                        local w = imtext.Measure(mpText, mpFontSize);
-                        mpX = mpX - w;
-                    end
-                    imtext.Draw(drawList, mpText, mpX, mpY, mpCostColor, mpFontSize);
+                if mpAnchor == 'topRight' or mpAnchor == 'bottomRight' then
+                    local w = imtext.Measure(costLabel, mpFontSize);
+                    mpX = mpX - w;
                 end
+                imtext.Draw(drawList, costLabel, mpX, mpY, mpCostColor, mpFontSize);
             end
         end
     end
