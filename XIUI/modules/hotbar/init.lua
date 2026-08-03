@@ -448,39 +448,49 @@ function M.HandleZonePacket()
     slotrenderer.ClearAvailabilityCache();
 end
 
+-- Rebind the bars to whatever job the client reports. Job data lags the packet
+-- (and login), so poll briefly rather than reading once.
+local function RebindWhenJobReady(attempt)
+    attempt = attempt or 1;
+    local maxAttempts = 20;
+
+    if data.SetPlayerJob() then
+        macropalette.SyncToCurrentJob();
+        palette.ValidatePalettesForJob(data.jobId, data.subjobId);
+        display.ClearIconCache();
+        actions.ClearNoIconCache();
+        if crossbarInitialized then
+            crossbar.ClearIconCache();
+        end
+        slotrenderer.ClearAvailabilityCache();
+        petpalette.CheckPetState();
+    elseif attempt < maxAttempts then
+        local delay = math.min(0.5, 0.2 + (attempt * 0.05));
+        ashita.tasks.once(delay, function()
+            RebindWhenJobReady(attempt + 1);
+        end);
+    end
+end
+
 function M.HandleJobChangePacket(e)
     -- Persist pending edits before storage keys rematerialize for the new job
     macropalette.FlushPendingSave();
     palette.FlushPendingSave();
 
-    local function TrySetJob(attempt)
-        attempt = attempt or 1;
-        local maxAttempts = 20;
-
-        if data.SetPlayerJob() then
-            -- Job successfully read - proceed with refresh
-            macropalette.SyncToCurrentJob();
-            palette.ValidatePalettesForJob(data.jobId, data.subjobId);
-            display.ClearIconCache();
-            actions.ClearNoIconCache();
-            if crossbarInitialized then
-                crossbar.ClearIconCache();
-            end
-            slotrenderer.ClearAvailabilityCache();
-            petpalette.CheckPetState();
-        elseif attempt < maxAttempts then
-            -- Not logged in yet or job not ready - retry
-            local delay = math.min(0.5, 0.2 + (attempt * 0.05));
-            ashita.tasks.once(delay, function()
-                TrySetJob(attempt + 1);
-            end);
-        end
-    end
-
     -- Initial delay to allow zone transition to complete
     ashita.tasks.once(0.5, function()
-        TrySetJob(1);
+        RebindWhenJobReady(1);
     end);
+end
+
+-- A profile swap replaces gConfig wholesale, so palette selection and macro
+-- state still point at the old profile until the bars are rebound. The job
+-- itself is unchanged, so SetPlayerJob will not invalidate these on its own.
+function M.HandleProfileChange()
+    if not M.initialized then return; end
+    data.InvalidateStorageKeyCache();
+    data.MarkMacroLookupDirty();
+    RebindWhenJobReady(1);
 end
 
 -- Reapply the current job's palettes to the live bars without an addon reload.
