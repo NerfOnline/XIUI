@@ -55,25 +55,27 @@ local resonationNames = {
 
 -- Magic burst element per skillchain, from LSB GetSkillchainMagicElement().
 -- Multi-element chains use the first-listed (primary) one; names match assets.
-local resonationBurstElement = {
-    [Resonation.Transfixion]   = 'light',
-    [Resonation.Compression]   = 'dark',
-    [Resonation.Liquefaction]  = 'fire',
-    [Resonation.Scission]      = 'earth',
-    [Resonation.Reverberation] = 'water',
-    [Resonation.Detonation]    = 'wind',
-    [Resonation.Induration]    = 'ice',
-    [Resonation.Impaction]     = 'lightning',
-    [Resonation.Gravitation]   = 'dark',
-    [Resonation.Distortion]    = 'water',
-    [Resonation.Fusion]        = 'light',
-    [Resonation.Fragmentation] = 'wind',
-    [Resonation.Light]         = 'light',
-    [Resonation.Light2]        = 'light',
-    [Resonation.Darkness]      = 'dark',
-    [Resonation.Darkness2]     = 'dark',
-    [Resonation.Radiance]      = 'light',
-    [Resonation.Umbra]         = 'dark',
+-- Elements each burst can hit, in the server's own order (GetSkillchainMagicElement).
+-- Light and Darkness cover four, but their single orb reads better than four icons.
+local resonationBurstElements = {
+    [Resonation.Transfixion]   = { 'light' },
+    [Resonation.Compression]   = { 'dark' },
+    [Resonation.Liquefaction]  = { 'fire' },
+    [Resonation.Scission]      = { 'earth' },
+    [Resonation.Reverberation] = { 'water' },
+    [Resonation.Detonation]    = { 'wind' },
+    [Resonation.Induration]    = { 'ice' },
+    [Resonation.Impaction]     = { 'lightning' },
+    [Resonation.Gravitation]   = { 'dark', 'earth' },
+    [Resonation.Distortion]    = { 'water', 'ice' },
+    [Resonation.Fusion]        = { 'light', 'fire' },
+    [Resonation.Fragmentation] = { 'wind', 'lightning' },
+    [Resonation.Light]         = { 'light' },
+    [Resonation.Light2]        = { 'light' },
+    [Resonation.Darkness]      = { 'dark' },
+    [Resonation.Darkness2]     = { 'dark' },
+    [Resonation.Radiance]      = { 'light' },
+    [Resonation.Umbra]         = { 'dark' },
 };
 
 -- Possible skillchain combinations: {result, opening, closing}
@@ -608,7 +610,7 @@ function M.HandleActionPacket(actionPacket)
 
                     -- Burst window runs from the chain landing to WindowClose;
                     -- WindowOpen instead gates when the next weaponskill can chain.
-                    resonation.BurstElement = resonationBurstElement[resonation.Attributes[1]];
+                    resonation.BurstElements = resonationBurstElements[resonation.Attributes[1]];
                     resonation.BurstStart = now;
 
                 elseif weaponskillMessageIds[action.Message] then
@@ -662,13 +664,13 @@ function M.IsWindowOpen()
 end
 
 -- Active magic burst window, newest chain wins when several mobs are chained.
--- Returns element name, seconds remaining, total window length -- or nil.
+-- Returns element name list, seconds remaining, total window length -- or nil.
 function M.GetActiveBurst()
     local now = os.clock();
     local newest, newestStart = nil, -1;
 
     for _, state in pairs(resonationMap) do
-        if state.BurstElement and state.BurstStart and now < state.WindowClose
+        if state.BurstElements and state.BurstStart and now < state.WindowClose
             and state.BurstStart > newestStart then
             newest, newestStart = state, state.BurstStart;
         end
@@ -678,7 +680,7 @@ function M.GetActiveBurst()
         return nil;
     end
 
-    return newest.BurstElement, newest.WindowClose - now, newest.WindowClose - newest.BurstStart;
+    return newest.BurstElements, newest.WindowClose - now, newest.WindowClose - newest.BurstStart;
 end
 
 -- Animation helper for marching ants effect

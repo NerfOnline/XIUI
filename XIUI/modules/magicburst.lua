@@ -23,8 +23,14 @@ local PULSE_HZ = 3.5;
 local PULSE_MAX_FADE = 0.55;
 local PULSE_MAX_GROW = 0.10;
 
+-- Two-element chains split one full-size icon down the middle. Stacked translucent
+-- bands give the seam a soft glow instead of a hard one-pixel edge.
+local SPLIT_GLOW = { { 5.0, 0.10 }, { 2.6, 0.28 }, { 1.0, 0.85 } };
+
 local PREVIEW_ELEMENTS = {
-    'fire', 'ice', 'wind', 'earth', 'lightning', 'water', 'light', 'dark',
+    { 'fire' }, { 'ice' }, { 'wind' }, { 'earth' },
+    { 'lightning' }, { 'water' }, { 'light' }, { 'dark' },
+    { 'water', 'ice' }, { 'light', 'fire' }, { 'dark', 'earth' }, { 'wind', 'lightning' },
 };
 local PREVIEW_LENGTH = 9.0;
 
@@ -34,6 +40,36 @@ local previewStart = 0;
 
 -- Reused so the per-frame tint costs no allocation.
 local tintRGBA = { 1.0, 1.0, 1.0, 1.0 };
+local splitRGBA = { 0.0, 0.0, 0.0, 1.0 };
+
+local function GetElementTexture(element)
+    local texture = element and TextureManager.getFileTexture('magicburst/' .. element);
+    return texture and TextureManager.getTexturePtr(texture);
+end
+
+local function DrawSplitSeam(drawList, centerX, top, bottom, side, alpha)
+    local core = math.max(2.0, side * 0.012);
+    for _, layer in ipairs(SPLIT_GLOW) do
+        local halfWidth = core * layer[1] * 0.5;
+        splitRGBA[4] = alpha * layer[2];
+        drawList:AddRectFilled(
+            { centerX - halfWidth, top },
+            { centerX + halfWidth, bottom },
+            imgui.GetColorU32(splitRGBA)
+        );
+    end
+end
+
+local function DrawOrb(drawList, texturePtr, centerX, centerY, side, color)
+    local half = side * 0.5;
+    drawList:AddImage(
+        texturePtr,
+        { centerX - half, centerY - half },
+        { centerX + half, centerY + half },
+        { 0, 0 }, { 1, 1 },
+        color
+    );
+end
 
 local function GetBurstState()
     -- A real burst window only lasts seconds, so cycle the elements while the
@@ -80,16 +116,16 @@ magicburst.DrawWindow = function(settings)
         return;
     end
 
-    local element, remaining, total = GetBurstState();
-    if not element or not remaining or remaining <= 0 or not total or total <= 0 then
+    local elements, remaining, total = GetBurstState();
+    if not elements or not remaining or remaining <= 0 or not total or total <= 0 then
         return;
     end
 
-    local texture = TextureManager.getFileTexture('magicburst/' .. element);
-    local texturePtr = texture and TextureManager.getTexturePtr(texture);
-    if not texturePtr then
+    local primaryPtr = GetElementTexture(elements[1]);
+    if not primaryPtr then
         return;
     end
+    local secondaryPtr = GetElementTexture(elements[2]);
 
     local size = settings.imageSize;
     local alpha, pulseScale = GetPulse(remaining, total);
@@ -112,13 +148,24 @@ magicburst.DrawWindow = function(settings)
         local x, y = originX + inset, originY + inset;
 
         tintRGBA[4] = alpha;
-        drawList:AddImage(
-            texturePtr,
-            { x, y },
-            { x + drawSize, y + drawSize },
-            { 0, 0 }, { 1, 1 },
-            imgui.GetColorU32(tintRGBA)
-        );
+        local color = imgui.GetColorU32(tintRGBA);
+        local centerX, centerY = x + (drawSize * 0.5), y + (drawSize * 0.5);
+
+        if secondaryPtr then
+            local bottom = y + drawSize;
+
+            drawList:PushClipRect({ x, y }, { centerX, bottom }, true);
+            DrawOrb(drawList, primaryPtr, centerX, centerY, drawSize, color);
+            drawList:PopClipRect();
+
+            drawList:PushClipRect({ centerX, y }, { x + drawSize, bottom }, true);
+            DrawOrb(drawList, secondaryPtr, centerX, centerY, drawSize, color);
+            drawList:PopClipRect();
+
+            DrawSplitSeam(drawList, centerX, y, bottom, drawSize, alpha);
+        else
+            DrawOrb(drawList, primaryPtr, centerX, centerY, drawSize, color);
+        end
 
         if settings.showTimer then
             imtext.SetConfigFromSettings(settings.font_settings);
