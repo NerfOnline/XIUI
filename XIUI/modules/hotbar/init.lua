@@ -165,17 +165,21 @@ function M.Initialize(settings)
         -- user toggled petAware off mid-pet. Always run it.
         data.InvalidateStorageKeyCache();
 
+        -- Availability (HasAbility for BPs/maneuvers/etc.) flips with pet state
+        -- even when no bar uses petAware palette swapping. Always invalidate
+        -- so summon→release does not leave stale "available" dims.
+        slotrenderer.ClearAvailabilityCache();
+        macropalette.ClearPetCommandsCache();
+
         if not AnyBarIsPetAware() then return; end
 
-        -- Clear ALL caches when pet changes to force full refresh
+        -- Clear remaining caches when pet-aware bars may swap slot content
         slotrenderer.ClearAllCache();
         display.ClearIconCache();
         actions.ClearNoIconCache();
         if crossbarInitialized then
             crossbar.ClearIconCache();
         end
-        -- Clear macro palette's pet commands cache (for BST ready moves)
-        macropalette.ClearPetCommandsCache();
     end);
 
     -- Register palette change callback to clear caches
@@ -445,6 +449,10 @@ function M.HandleZonePacket()
 end
 
 function M.HandleJobChangePacket(e)
+    -- Persist pending edits before storage keys rematerialize for the new job
+    macropalette.FlushPendingSave();
+    palette.FlushPendingSave();
+
     local function TrySetJob(attempt)
         attempt = attempt or 1;
         local maxAttempts = 20;

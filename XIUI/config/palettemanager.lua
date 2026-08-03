@@ -40,8 +40,7 @@ local modalState = {
 
 -- Get job name from ID (uses libs/jobs.lua)
 local function GetJobName(jobId)
-    if jobId == 0 then return 'Shared'; end
-    return jobs[jobId] or ('Job ' .. jobId);
+    return jobs.GetDisplayName(jobId);
 end
 
 -- Check if using fallback (shared) palettes for the selected type
@@ -59,8 +58,8 @@ end
 function M.Open()
     windowState.isOpen = true;
 
-    -- Always open on the player's CURRENT job, not the last-used selection.
-    windowState.selectedJobId = data.jobId or 1;
+    -- Always open on the player's CURRENT job category (Other for unknown jobs).
+    windowState.selectedJobId = jobs.ResolveJobCategory(data.jobId);
 
     -- Default the subjob selector to the current subjob only if it has its own
     -- palettes; otherwise show the Shared library (subjob 0). This mirrors what's
@@ -114,7 +113,7 @@ local function DrawJobSelector()
     imgui.SameLine();
     imgui.PushItemWidth(80);
     if imgui.BeginCombo('##jobSelector', currentLabel) then
-        for jobId = 1, 22 do
+        for jobId = 1, jobs.STANDARD_MAX do
             local isSelected = (jobId == windowState.selectedJobId);
             if imgui.Selectable(GetJobName(jobId), isSelected) then
                 if jobId ~= windowState.selectedJobId then
@@ -128,6 +127,22 @@ local function DrawJobSelector()
                 imgui.SetItemDefaultFocus();
             end
         end
+
+        imgui.Separator();
+        local otherId = jobs.OTHER_JOB_ID;
+        local otherSelected = (windowState.selectedJobId == otherId);
+        if imgui.Selectable(jobs.OTHER_LABEL, otherSelected) then
+            if windowState.selectedJobId ~= otherId then
+                windowState.selectedJobId = otherId;
+                windowState.selectedSubjobId = 0;
+                windowState.selectedPaletteName = nil;
+                changed = true;
+            end
+        end
+        if otherSelected then
+            imgui.SetItemDefaultFocus();
+        end
+
         imgui.EndCombo();
     end
     imgui.PopItemWidth();
@@ -500,7 +515,7 @@ local function DrawCopyModal()
         imgui.SameLine();
         imgui.PushItemWidth(100);
         if imgui.BeginCombo('##copyJobSelector', GetJobName(modalState.copyTargetJobId)) then
-            for jobId = 1, 22 do
+            for jobId = 1, jobs.STANDARD_MAX do
                 local isSelected = (jobId == modalState.copyTargetJobId);
                 if imgui.Selectable(GetJobName(jobId), isSelected) then
                     modalState.copyTargetJobId = jobId;
@@ -508,6 +523,15 @@ local function DrawCopyModal()
                 if isSelected then
                     imgui.SetItemDefaultFocus();
                 end
+            end
+            imgui.Separator();
+            local otherId = jobs.OTHER_JOB_ID;
+            local otherSelected = (modalState.copyTargetJobId == otherId);
+            if imgui.Selectable(jobs.OTHER_LABEL, otherSelected) then
+                modalState.copyTargetJobId = otherId;
+            end
+            if otherSelected then
+                imgui.SetItemDefaultFocus();
             end
             imgui.EndCombo();
         end

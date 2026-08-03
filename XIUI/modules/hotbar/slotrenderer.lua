@@ -12,6 +12,7 @@ local imgui = require('imgui');
 local recast = require('modules.hotbar.recast');
 local actions = require('modules.hotbar.actions');
 local playerdata = require('modules.hotbar.playerdata');
+local petpalette = require('modules.hotbar.petpalette');
 local dragdrop = require('libs.dragdrop');
 local textures = require('modules.hotbar.textures');
 local skillchain = require('modules.hotbar.skillchain');
@@ -40,11 +41,11 @@ local DIM_UNAVAILABLE_ALPHA = 0.7;
 
 ---@return number colorMult
 ---@return boolean applyGreyTint
-local function GetSlotColorMult(isUnavailable, isOnCooldown, notEnoughMp, notEnoughTp)
+local function GetSlotColorMult(isUnavailable, isOnCooldown, notEnoughCost)
     if isUnavailable then
         return DIM_UNAVAILABLE, true;
     end
-    if isOnCooldown or notEnoughMp or notEnoughTp then
+    if isOnCooldown or notEnoughCost then
         return DIM_RESTRICTED, false;
     end
     return 1.0, false;
@@ -54,9 +55,6 @@ local ACTION_TYPE_LABELS = {
     ma = 'Spell (ma)', ja = 'Ability (ja)', ws = 'Weaponskill (ws)',
     item = 'Item', equip = 'Equip', macro = 'Macro', pet = 'Pet Command',
 };
-
--- Cache for MP cost lookups (keyed by action key string)
-local mpCostCache = {};
 
 -- Cache for action availability checks (keyed by action key string)
 -- Structure: { isAvailable = bool, reason = string|nil }
@@ -393,7 +391,6 @@ end
 function M.ClearAllCache()
     availabilityCache = {};
     availabilityStateMemo = {};
-    mpCostCache = {};
     equipmentCheckCache = {};
     ninjutsuCache = {};
     itemQuantityCache = {};
@@ -403,8 +400,7 @@ function M.ClearAllCache()
 end
 
 -- Clear slot texture pointer cache
--- Does NOT clear availability, MP cost, or item quantity caches
--- OPTIMIZED: Use this for palette changes to avoid unnecessary recalculation cascade
+-- Does NOT clear availability or item quantity caches
 function M.ClearSlotRenderingCache()
     texturePtrCache = {};
 end
@@ -413,13 +409,6 @@ end
 function M.ClearAvailabilityCache()
     availabilityCache = {};
     availabilityStateMemo = {};
-end
-
--- Clear MP cost cache (call when a slot's action/spell may have changed, e.g. macro edits).
--- Without this, edited macros keep showing the old action's MP cost / no-MP indicator
--- until the addon reloads.
-function M.ClearMPCostCache()
-    mpCostCache = {};
 end
 
 -- Clear item quantity cache (call on inventory changes)
@@ -459,7 +448,9 @@ local function BuildAvailabilityCacheKey(bind, bindKey)
     local player = AshitaCore:GetMemoryManager():GetPlayer();
     local jobId = player and player:GetMainJob() or 0;
     local subjobId = player and player:GetSubJob() or 0;
-    return key .. ':' .. jobId .. ':' .. subjobId .. ':' .. playerdata.GetEquipmentSignature();
+    -- Pet presence affects HasAbility for BPs, maneuvers, ready moves, etc.
+    local petKey = petpalette.GetCurrentPetKey() or 'none';
+    return key .. ':' .. jobId .. ':' .. subjobId .. ':' .. petKey .. ':' .. playerdata.GetEquipmentSignature();
 end
 
 local function GetAvailabilityState(bind, bindKey)
@@ -767,27 +758,15 @@ function M.DrawSlot(params)
     local isOnCooldown = cooldown.isOnCooldown;
     local recastText = cooldown.recastText;
 
-    -- Check if player has enough MP for spells (also includes macros whose
-    -- recast source is a spell — they show the source spell's MP cost).
-    local notEnoughMp = false;
+    -- Check resource cost (MP / TP / charges / finishing moves).
+    -- Not cached across frames: charges/TP/buffs change continuously.
+    local notEnoughCost = false;
+    local costInfo = nil;
     local bindKey = bind and ((bind.actionType or '') .. ':' .. (bind.action or '')) or '';
-    local hasMpCost = bind and (
-        bind.actionType == 'ma'
-        or bind.actionType == 'ja'
-        or (bind.actionType == 'macro'
-            and (bind.recastSourceType == 'ma' or bind.recastSourceType == 'ja')
-            and bind.recastSourceAction)
-    );
-    if hasMpCost then
-        local mpCost = mpCostCache[bindKey];
-        if mpCost == nil then
-            mpCost = actions.GetMPCost(bind) or false;
-            mpCostCache[bindKey] = mpCost;
-        end
-        if mpCost and mpCost ~= false then
-            local party = AshitaCore:GetMemoryManager():GetParty();
-            local playerMp = party and party:GetMemberMP(0) or 0;
-            notEnoughMp = playerMp < mpCost;
+    if bind then
+        costInfo = actions.GetActionCostInfo(bind);
+        if costInfo and costInfo.kind ~= 'none' then
+            notEnoughCost = costInfo.met == false;
         end
     end
 
@@ -795,12 +774,6 @@ function M.DrawSlot(params)
     local isUnavailable = false;
     if bind then
         isUnavailable = select(1, GetAvailabilityState(bind, bindKey));
-    end
-
-    -- Weaponskills (and WS recast-source macros) dim when TP is below the WS cost
-    local notEnoughTp = false;
-    if bind and actions.NeedsTpCheck(bind) and not isUnavailable then
-        notEnoughTp = not actions.HasEnoughTpForBind(bind);
     end
 
     -- ========================================
@@ -825,7 +798,7 @@ function M.DrawSlot(params)
 
             -- Calculate color: unavailable/cooldown/noMP darkening + dim factor + animation opacity
             local colorMult, applyGreyTint = GetSlotColorMult(
-                isUnavailable, isOnCooldown, notEnoughMp, notEnoughTp
+                isUnavailable, isOnCooldown, notEnoughCost
             );
             colorMult = colorMult * dimFactor;
 
@@ -893,7 +866,7 @@ function M.DrawSlot(params)
             abbrW = imtext.Measure(abbr, 12);
         end
 
-        local colorMult = select(1, GetSlotColorMult(isUnavailable, isOnCooldown, notEnoughMp, notEnoughTp));
+        local colorMult = select(1, GetSlotColorMult(isUnavailable, isOnCooldown, notEnoughCost));
         colorMult = colorMult * dimFactor;
         -- Gold base: R=244, G=218, B=151 (0xF4DA97)
         local r = math.floor(244 * colorMult);
@@ -949,12 +922,12 @@ function M.DrawSlot(params)
     if params.showLabel and params.labelText and params.labelText ~= '' and animOpacity > 0.5 and drawList then
         local lblFontSize = params.labelFontSize or 10;
         local labelColor = params.labelFontColor or 0xFFFFFFFF;
-        -- Priority: Unavailable (grey) > Cooldown (grey) > Not enough MP/TP (red) > Normal
+        -- Priority: Unavailable (grey) > Cooldown (grey) > Not enough cost (red) > Normal
         if isUnavailable then
             labelColor = 0xFF888888;
         elseif isOnCooldown then
             labelColor = params.labelCooldownColor or 0xFF888888;
-        elseif notEnoughMp or notEnoughTp then
+        elseif notEnoughCost then
             labelColor = params.labelNoMpColor or 0xFFFF4444;
         end
         local lblW = imtext.Measure(params.labelText, lblFontSize);
@@ -964,8 +937,8 @@ function M.DrawSlot(params)
     end
 
     -- ========================================
-    -- 10. MP Cost Text (anchored position)
-    -- Shows "X" when action is unavailable, otherwise shows MP cost
+    -- 10. Cost Text (MP / TP / charges / finishing moves)
+    -- Shows "X" when action is unavailable, otherwise shows cost amount
     -- ========================================
     do
         local showMpCost = params.showMpCost ~= false;
@@ -984,15 +957,19 @@ function M.DrawSlot(params)
                 end
                 imtext.Draw(drawList, xText, mpX, mpY, xColor, mpFontSize);
             else
-                local mpCost = mpCostCache[bindKey];
-                if mpCost == nil then
-                    mpCost = actions.GetMPCost(bind) or false;
-                    mpCostCache[bindKey] = mpCost;
+                local info = costInfo;
+                if info == nil then
+                    info = actions.GetActionCostInfo(bind);
                 end
-                if mpCost and mpCost ~= false then
-                    local mpText = tostring(mpCost);
+                if info and info.kind ~= 'none' and info.label then
+                    local mpText = info.label;
                     local mpCostColor = params.mpCostFontColor or 0xFFD4FF97;
-                    if notEnoughMp then
+                    if info.kind == 'tp' then
+                        mpCostColor = params.mpCostFontColor or 0xFF97D4FF;
+                    elseif info.kind == 'charges' or info.kind == 'fm' then
+                        mpCostColor = params.mpCostFontColor or 0xFFFFE097;
+                    end
+                    if notEnoughCost then
                         mpCostColor = params.mpCostNoMpColor or 0xFFFF4444;
                     end
                     if mpAnchor == 'topRight' or mpAnchor == 'bottomRight' then

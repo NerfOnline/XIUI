@@ -142,12 +142,6 @@ local function ClearAllIconCaches()
     if slotrenderer and slotrenderer.ClearSlotRenderingCache then
         slotrenderer.ClearSlotRenderingCache();
     end
-    -- Edits that change a macro's action leave the old actionType:action entry
-    -- orphaned in mpCostCache / availabilityCache. Functionally fine (the new key
-    -- naturally misses), but bounds memory across many edits.
-    if slotrenderer and slotrenderer.ClearMPCostCache then
-        slotrenderer.ClearMPCostCache();
-    end
     if slotrenderer and slotrenderer.ClearAvailabilityCache then
         slotrenderer.ClearAvailabilityCache();
     end
@@ -829,6 +823,7 @@ local function InvalidateBrowsingIconCache()
 end
 
 -- Build/return pet commands for the macro editor dropdown.
+-- Only includes commands the player currently knows (pet must be out for pet-specific bits).
 local function GetEditorPetCommands()
     if not cachedPetCommands then
         local viewedJobId = selectedPaletteType;
@@ -856,7 +851,17 @@ local function GetEditorPetCommands()
             activePetName = petpalette.GetCurrentPetEntityName();
         end
 
-        cachedPetCommands = GetPetCommandsForJob(viewedJobId, avatarName, activePetName);
+        local allCommands = GetPetCommandsForJob(viewedJobId, avatarName, activePetName);
+        local actiondb = require('modules.hotbar.actiondb');
+        local player = AshitaCore:GetMemoryManager():GetPlayer();
+        local filtered = {};
+        for _, cmd in ipairs(allCommands) do
+            local abilityId = actiondb.GetAbilityId(cmd.name);
+            if not abilityId or (player and player:HasAbility(abilityId)) then
+                filtered[#filtered + 1] = cmd;
+            end
+        end
+        cachedPetCommands = filtered;
     end
 
     return cachedPetCommands or {};
@@ -1386,16 +1391,16 @@ end
 -- ============================================
 
 -- Get current effective type for the palette (selected type or player's current job)
--- Returns GLOBAL_MACRO_KEY for global macros, a job ID, or a composite key like "15:avatar:ifrit"
+-- Returns GLOBAL_MACRO_KEY for global macros, a job ID, 'other', or a composite key like "15:avatar:ifrit"
 local function GetEffectivePaletteType()
     if selectedPaletteType then
-        -- If Global is selected, return the global key
         if selectedPaletteType == GLOBAL_MACRO_KEY then
             return GLOBAL_MACRO_KEY;
         end
-        -- If a valid job ID is selected
+        if selectedPaletteType == jobs.OTHER_MACRO_KEY or selectedPaletteType == jobs.OTHER_JOB_ID then
+            return jobs.OTHER_MACRO_KEY;
+        end
         if type(selectedPaletteType) == 'number' and selectedPaletteType > 0 then
-            -- Check for SMN avatar-specific palette
             if selectedPaletteType == petregistry.JOB_SMN and selectedAvatarPalette then
                 local avatarKey = petregistry.avatars[selectedAvatarPalette];
                 if avatarKey then
@@ -1405,8 +1410,7 @@ local function GetEffectivePaletteType()
             return selectedPaletteType;
         end
     end
-    -- Default to current player job
-    return data.jobId or 1;
+    return jobs.ResolveMacroPaletteKey(data.jobId);
 end
 
 -- Get display name for a palette type key
@@ -1414,14 +1418,15 @@ local function GetPaletteDisplayName(typeKey)
     if typeKey == GLOBAL_MACRO_KEY then
         return 'Global';
     end
-    if type(typeKey) == 'number' then
-        return jobs[typeKey] or 'Unknown';
+    if typeKey == jobs.OTHER_MACRO_KEY or typeKey == jobs.OTHER_JOB_ID then
+        return jobs.OTHER_LABEL;
     end
-    -- Composite key like "15:avatar:ifrit"
+    if type(typeKey) == 'number' then
+        return jobs.GetDisplayName(typeKey);
+    end
     if type(typeKey) == 'string' then
         local jobId, petType, petId = typeKey:match('^(%d+):([^:]+):(.+)$');
         if jobId and petType == 'avatar' and petId then
-            -- Find avatar display name
             for name, key in pairs(petregistry.avatars) do
                 if key == petId then
                     return string.format('%s (%s)', jobs[tonumber(jobId)] or 'SMN', name);
@@ -1434,29 +1439,50 @@ end
 
 -- Sync palette to current player job (call on job change)
 function M.SyncToCurrentJob()
-    -- Only sync if not viewing Global - preserve Global selection across job changes
     if selectedPaletteType ~= GLOBAL_MACRO_KEY then
-        selectedPaletteType = data.jobId or 1;
+        selectedPaletteType = jobs.ResolveMacroPaletteKey(data.jobId);
     end
-    -- Clear spell/ability/item caches so they rebuild for new job
     playerdata.ClearCache();
     InvalidateBrowsingIconCache();
     cachedPetCommands = nil;
     petAvatarFilter = 1;
     selectedAvatarPalette = nil;
-    -- Close editor window if open (spells/abilities are job-specific)
     if editingMacro then
         editingMacro = nil;
         isCreatingNew = false;
         searchFilter[1] = '';
         iconPickerOpen = false;
     end
-    -- Clear macro selection (macros are per-type)
     selectedMacroIndex = nil;
-    -- If palette is open, immediately refresh the caches
     if paletteOpen then
         RefreshCachedLists();
     end
+end
+
+--- Allocate a macro id unique across the entire macroDB
+---@return number
+local function AllocateUniqueMacroId()
+    if not gConfig then
+        return 1;
+    end
+    local nextId = (gConfig.macroIdSeq or 0) + 1;
+    if gConfig.macroDB then
+        local used = {};
+        for _, macros in pairs(gConfig.macroDB) do
+            if type(macros) == 'table' then
+                for _, macro in ipairs(macros) do
+                    if macro and macro.id then
+                        used[macro.id] = true;
+                    end
+                end
+            end
+        end
+        while used[nextId] do
+            nextId = nextId + 1;
+        end
+    end
+    gConfig.macroIdSeq = nextId;
+    return nextId;
 end
 
 -- Clear pet commands cache (call on pet change for BST)
@@ -1483,15 +1509,7 @@ end
 function M.AddMacro(macroData)
     local db, _ = M.GetMacroDatabase();
 
-    -- Generate unique ID
-    local maxId = 0;
-    for _, macro in ipairs(db) do
-        if macro.id and macro.id > maxId then
-            maxId = macro.id;
-        end
-    end
-
-    macroData.id = maxId + 1;
+    macroData.id = AllocateUniqueMacroId();
     table.insert(db, macroData);
     MarkHotbarDirty();
     data.MarkMacroLookupDirty();
@@ -1531,15 +1549,8 @@ local function AddMacroToTypeKey(typeKey, macroData)
     end
 
     local db = gConfig.macroDB[typeKey];
-    local maxId = 0;
-    for _, macro in ipairs(db) do
-        if macro.id and macro.id > maxId then
-            maxId = macro.id;
-        end
-    end
-
     local copy = deep_copy_table(macroData);
-    copy.id = maxId + 1;
+    copy.id = AllocateUniqueMacroId();
     table.insert(db, copy);
     SaveSettingsToDisk();
     data.MarkMacroLookupDirty();
@@ -1815,7 +1826,7 @@ function M.OpenPalette()
 
     -- Sync to current player job when opening (unless Global was selected)
     if selectedPaletteType ~= GLOBAL_MACRO_KEY then
-        selectedPaletteType = data.jobId or 1;
+        selectedPaletteType = jobs.ResolveMacroPaletteKey(data.jobId);
     end
 
     -- Refresh spell/ability/weaponskill caches
@@ -1956,13 +1967,16 @@ end
 local PushWindowStyle = components.PushWindowStyle;
 local PopWindowStyle = components.PopWindowStyle;
 
--- Build job list for dropdown
+-- Build job list for dropdown (standard jobs + Other catch-all)
 local JOB_LIST = {};
 local JOB_ID_MAP = {};
 for jobId, jobName in pairs(jobs) do
-    table.insert(JOB_LIST, { id = jobId, name = jobName });
+    if type(jobId) == 'number' then
+        table.insert(JOB_LIST, { id = jobId, name = jobName });
+    end
 end
 table.sort(JOB_LIST, function(a, b) return a.id < b.id; end);
+table.insert(JOB_LIST, { id = jobs.OTHER_MACRO_KEY, name = jobs.OTHER_LABEL });
 for i, job in ipairs(JOB_LIST) do
     JOB_ID_MAP[job.id] = i;
 end
@@ -2077,16 +2091,22 @@ function M.DrawPalette()
 
     -- Initialize selectedPaletteType to current job if not set
     if not selectedPaletteType then
-        selectedPaletteType = data.jobId or 1;
+        selectedPaletteType = jobs.ResolveMacroPaletteKey(data.jobId);
     end
 
     local db, typeKey = M.GetMacroDatabase();
     local isGlobal = (typeKey == GLOBAL_MACRO_KEY);
+    local isOther = (typeKey == jobs.OTHER_MACRO_KEY);
     local typeName = GetPaletteDisplayName(typeKey);
     local currentPlayerJob = data.jobId or 1;
+    local currentMacroKey = jobs.ResolveMacroPaletteKey(currentPlayerJob);
     -- For SMN with avatar selected, check base job ID
     local baseJobId = type(typeKey) == 'number' and typeKey or tonumber(tostring(typeKey):match('^(%d+)'));
-    local isViewingCurrentJob = (not isGlobal and baseJobId == currentPlayerJob);
+    local isViewingCurrentJob = (not isGlobal) and (
+        (isOther and currentMacroKey == jobs.OTHER_MACRO_KEY)
+        or (baseJobId ~= nil and baseJobId == currentPlayerJob)
+        or (typeKey == currentMacroKey)
+    );
 
     -- Calculate pagination
     local totalMacros = #db;
@@ -2186,7 +2206,10 @@ function M.DrawPalette()
 
             -- Job options
             for i, job in ipairs(JOB_LIST) do
-                local isSelected = (not isGlobal and job.id == typeKey);
+                local isSelected = (not isGlobal and (
+                    job.id == typeKey
+                    or (job.id == jobs.OTHER_MACRO_KEY and typeKey == jobs.OTHER_MACRO_KEY)
+                ));
                 local jobMacroCount = getMacroCount(job.id);
 
                 -- Build label with indicators
@@ -2198,12 +2221,12 @@ function M.DrawPalette()
                 end
 
                 -- Add main job indicator
-                if job.id == currentPlayerJob then
+                if job.id == currentMacroKey or (job.id == currentPlayerJob) then
                     label = label .. '  *';
                 end
 
-                -- Add subjob indicator
-                if job.id == data.subjobId then
+                -- Add subjob indicator (standard jobs only)
+                if type(job.id) == 'number' and job.id == data.subjobId then
                     label = label .. '  /sub';
                 end
 
