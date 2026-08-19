@@ -1406,7 +1406,7 @@ local function GetEffectivePaletteType()
         end
     end
     -- Default to current player job
-    return data.jobId or 1;
+    return jobs.ResolveJobCategory(data.jobId);
 end
 
 -- Get display name for a palette type key
@@ -1415,7 +1415,7 @@ local function GetPaletteDisplayName(typeKey)
         return 'Global';
     end
     if type(typeKey) == 'number' then
-        return jobs[typeKey] or 'Unknown';
+        return jobs.GetDisplayName(typeKey);
     end
     -- Composite key like "15:avatar:ifrit"
     if type(typeKey) == 'string' then
@@ -1436,7 +1436,7 @@ end
 function M.SyncToCurrentJob()
     -- Only sync if not viewing Global - preserve Global selection across job changes
     if selectedPaletteType ~= GLOBAL_MACRO_KEY then
-        selectedPaletteType = data.jobId or 1;
+        selectedPaletteType = jobs.ResolveJobCategory(data.jobId);
     end
     -- Clear spell/ability/item caches so they rebuild for new job
     playerdata.ClearCache();
@@ -1815,7 +1815,7 @@ function M.OpenPalette()
 
     -- Sync to current player job when opening (unless Global was selected)
     if selectedPaletteType ~= GLOBAL_MACRO_KEY then
-        selectedPaletteType = data.jobId or 1;
+        selectedPaletteType = jobs.ResolveJobCategory(data.jobId);
     end
 
     -- Refresh spell/ability/weaponskill caches
@@ -1956,36 +1956,27 @@ end
 local PushWindowStyle = components.PushWindowStyle;
 local PopWindowStyle = components.PopWindowStyle;
 
--- Build job list for dropdown
-local JOB_LIST = {};
-local JOB_ID_MAP = {};
-for jobId, jobName in pairs(jobs) do
-    table.insert(JOB_LIST, { id = jobId, name = jobName });
-end
-table.sort(JOB_LIST, function(a, b) return a.id < b.id; end);
-for i, job in ipairs(JOB_LIST) do
-    JOB_ID_MAP[job.id] = i;
-end
-
--- Build destination options for the copy macro dialog
-local copyTargetOptions = nil;
-local function GetCopyTargetOptions()
-    if copyTargetOptions then
-        return copyTargetOptions;
+local function GetJobDropdownEntries()
+    local entries = {};
+    local ids = jobs.GetUnlockedJobIds(data.jobId, data.subjobId);
+    for _, jobId in ipairs(ids) do
+        entries[#entries + 1] = { id = jobId, name = jobs.GetDisplayName(jobId) };
     end
+    entries[#entries + 1] = { id = jobs.OTHER_JOB_ID, name = jobs.GetDisplayName(jobs.OTHER_JOB_ID) };
+    return entries;
+end
 
-    copyTargetOptions = {
+local function GetCopyTargetOptions()
+    local options = {
         { key = GLOBAL_MACRO_KEY, label = 'Global' },
     };
-
-    for _, job in ipairs(JOB_LIST) do
-        copyTargetOptions[#copyTargetOptions + 1] = {
+    for _, job in ipairs(GetJobDropdownEntries()) do
+        options[#options + 1] = {
             key = job.id,
             label = job.name,
         };
     end
-
-    return copyTargetOptions;
+    return options;
 end
 
 local function DrawCopyMacroDialog()
@@ -2077,13 +2068,13 @@ function M.DrawPalette()
 
     -- Initialize selectedPaletteType to current job if not set
     if not selectedPaletteType then
-        selectedPaletteType = data.jobId or 1;
+        selectedPaletteType = jobs.ResolveJobCategory(data.jobId);
     end
 
     local db, typeKey = M.GetMacroDatabase();
     local isGlobal = (typeKey == GLOBAL_MACRO_KEY);
     local typeName = GetPaletteDisplayName(typeKey);
-    local currentPlayerJob = data.jobId or 1;
+    local currentPlayerJob = data.jobId;
     -- For SMN with avatar selected, check base job ID
     local baseJobId = type(typeKey) == 'number' and typeKey or tonumber(tostring(typeKey):match('^(%d+)'));
     local isViewingCurrentJob = (not isGlobal and baseJobId == currentPlayerJob);
@@ -2184,8 +2175,8 @@ function M.DrawPalette()
             -- Separator between Global and jobs
             imgui.Separator();
 
-            -- Job options
-            for i, job in ipairs(JOB_LIST) do
+            -- Unlocked jobs (plus Other when the current job is non-standard)
+            for _, job in ipairs(GetJobDropdownEntries()) do
                 local isSelected = (not isGlobal and job.id == typeKey);
                 local jobMacroCount = getMacroCount(job.id);
 

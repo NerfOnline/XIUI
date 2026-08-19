@@ -1093,16 +1093,25 @@ function M.SetPlayerJob()
     if currentJobId == 0 then
         return false;
     end
-    local currentSubjobId = player:GetSubJob();
+    return M.ApplyJobFromPacket(currentJobId, player:GetSubJob());
+end
 
-    -- Invalidate caches if job changed
-    if M.jobId ~= currentJobId or M.subjobId ~= currentSubjobId then
+-- Set job from an incoming packet. Does not wait for memory or login flags.
+-- Returns applied, changed.
+function M.ApplyJobFromPacket(mainJob, subJob)
+    if not mainJob or mainJob == 0 then
+        return false, false;
+    end
+    subJob = subJob or 0;
+
+    local changed = (M.jobId ~= mainJob or M.subjobId ~= subJob);
+    if changed then
         M.InvalidateStorageKeyCache();
     end
 
-    M.jobId = currentJobId;
-    M.subjobId = currentSubjobId;
-    return true;
+    M.jobId = mainJob;
+    M.subjobId = subJob;
+    return true, changed;
 end
 
 -- Clear all state (call on zone change)
