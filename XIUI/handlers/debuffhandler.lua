@@ -27,6 +27,7 @@ local BUFF_STYMIE = 494;
 local BUFF_DARK_ARTS = 359;
 local JOB_BLM = 4;
 local JOB_RDM = 5;
+local JOB_BRD = 10;
 local JOB_SCH = 20;
 -- Client merit IDs from 0x08C (DSP/LSB group-2 offsets). Packet stores upgrade count.
 local MERIT_ENFEEBLING_MAGIC_DURATION = 0x090C;
@@ -34,7 +35,10 @@ local MERIT_ELEMENTAL_DEBUFF_DURATION = 0x08D2;
 -- tHotBar 0x08D category index is 0-based (menu order; 0x2/0x1 swapped in LSB).
 local JP_RDM_STYMIE_EFFECT = 2;
 local JP_RDM_ENFEEBLE_DURATION = 7;
+local JP_BRD_LULLABY_DURATION = 7;
 local JP_SCH_DARK_ARTS_EFFECT = 3;
+local BRD_SONG_DURATION_GIFT_JP = 1200;
+local BRD_SONG_DURATION_GIFT_PCT = 5;
 
 local meritCounts = {};
 local jobPointCategories = {};
@@ -134,6 +138,12 @@ local function GetJobPointCount(job, categoryIndex)
     return jobTable[categoryIndex + 1] or 0;
 end
 
+local function GetJobPointsSpent(job)
+    local player = AshitaCore:GetMemoryManager():GetPlayer();
+    if not player or not player.GetJobPointsSpent then return 0; end
+    return player:GetJobPointsSpent(job) or 0;
+end
+
 local function GetLocalPetServerId()
     local mem = AshitaCore:GetMemoryManager();
     if not mem then return nil; end
@@ -169,7 +179,16 @@ local function ResolveDuration(spellData, actorId)
         if gConfig then
             plus = ClampSongPlus(gConfig[spellData.songFamily]);
         end
-        return math.floor(duration * (1 + plus / 10));
+        -- Virelai skips song-duration gifts (LSB calculateSongDuration).
+        local giftPct = 0;
+        if spellData.songFamily ~= 'songPlusVirelai' and GetMainJob() == JOB_BRD and GetJobPointsSpent(JOB_BRD) >= BRD_SONG_DURATION_GIFT_JP then
+            giftPct = BRD_SONG_DURATION_GIFT_PCT;
+        end
+        duration = math.floor(duration * (1 + plus / 10 + giftPct / 100));
+        if spellData.songFamily == 'songPlusLullaby' and GetMainJob() == JOB_BRD then
+            duration = duration + GetJobPointCount(JOB_BRD, JP_BRD_LULLABY_DURATION);
+        end
+        return duration;
     end
 
     if spellData.kind == 'enfeeble' then
