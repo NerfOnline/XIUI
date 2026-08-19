@@ -76,25 +76,26 @@ local nameToResonation = {
     Umbra = Resonation.Umbra,
 };
 
-local resonationBurstElement = {
-    [Resonation.Transfixion]   = 'light',
-    [Resonation.Compression]   = 'dark',
-    [Resonation.Liquefaction]  = 'fire',
-    [Resonation.Scission]      = 'earth',
-    [Resonation.Reverberation] = 'water',
-    [Resonation.Detonation]    = 'wind',
-    [Resonation.Induration]    = 'ice',
-    [Resonation.Impaction]     = 'lightning',
-    [Resonation.Gravitation]   = 'dark',
-    [Resonation.Distortion]    = 'water',
-    [Resonation.Fusion]        = 'light',
-    [Resonation.Fragmentation] = 'wind',
-    [Resonation.Light]         = 'light',
-    [Resonation.Light2]        = 'light',
-    [Resonation.Darkness]      = 'dark',
-    [Resonation.Darkness2]     = 'dark',
-    [Resonation.Radiance]      = 'light',
-    [Resonation.Umbra]         = 'dark',
+-- Elements each burst can hit. Light and Darkness use a single orb.
+local resonationBurstElements = {
+    [Resonation.Transfixion]   = { 'light' },
+    [Resonation.Compression]   = { 'dark' },
+    [Resonation.Liquefaction]  = { 'fire' },
+    [Resonation.Scission]      = { 'earth' },
+    [Resonation.Reverberation] = { 'water' },
+    [Resonation.Detonation]    = { 'wind' },
+    [Resonation.Induration]    = { 'ice' },
+    [Resonation.Impaction]     = { 'lightning' },
+    [Resonation.Gravitation]   = { 'dark', 'earth' },
+    [Resonation.Distortion]    = { 'water', 'ice' },
+    [Resonation.Fusion]        = { 'light', 'fire' },
+    [Resonation.Fragmentation] = { 'wind', 'lightning' },
+    [Resonation.Light]         = { 'light' },
+    [Resonation.Light2]        = { 'light' },
+    [Resonation.Darkness]      = { 'dark' },
+    [Resonation.Darkness2]     = { 'dark' },
+    [Resonation.Radiance]      = { 'light' },
+    [Resonation.Umbra]         = { 'dark' },
 };
 
 local possibleSkillchains = {
@@ -705,7 +706,7 @@ function M.HandleActionPacket(actionPacket)
                         resonationMap[targetIndex] = resonation;
                     end
 
-                    resonation.BurstElement = resonationBurstElement[resonation.Attributes[1]];
+                    resonation.BurstElements = resonationBurstElements[resonation.Attributes[1]];
                     resonation.BurstStart = now;
 
                 elseif attributes and (hitMessageIds[action.Message] or action.Message == 529) then

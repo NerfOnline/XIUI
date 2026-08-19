@@ -457,7 +457,10 @@ function M.HandleProfileChange()
     if not M.initialized then return; end
     data.InvalidateStorageKeyCache();
     data.MarkMacroLookupDirty();
-    RebindWhenJobReady(1);
+    data.SetPlayerJob();
+    if data.jobId and data.jobId ~= 0 then
+        RefreshJobPalettes();
+    end
 end
 
 -- Reapply the current job's palettes to the live bars without an addon reload.

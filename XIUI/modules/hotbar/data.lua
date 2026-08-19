@@ -1115,13 +1115,12 @@ function M.SetPlayerJob()
         return false;
     end
 
-    local jobs = require('libs.jobs');
     local player = AshitaCore:GetMemoryManager():GetPlayer()
     local rawJobId = player:GetMainJob();
     if rawJobId == 0 then
         return false;
     end
-    return M.ApplyJobFromPacket(currentJobId, player:GetSubJob());
+    return M.ApplyJobFromPacket(rawJobId, player:GetSubJob());
 end
 
 -- Set job from an incoming packet. Does not wait for memory or login flags.

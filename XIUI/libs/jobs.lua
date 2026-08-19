@@ -14,30 +14,75 @@ local STANDARD_JOBS = {
     [13] = 'NIN', [14] = 'DRG', [15] = 'SMN', [16] = 'BLU',
     [17] = 'COR', [18] = 'PUP', [19] = 'DNC', [20] = 'SCH',
     [21] = 'GEO', [22] = 'RUN',
-    [23] = 'Other',
 };
 
-jobs.OTHER_JOB_ID = 23;
+local OTHER_JOB_ID = 23;
+local OTHER_MACRO_KEY = 'other';
+local OTHER_LABEL = 'Other';
 
--- 1-22 stay themselves. Unknown numeric ids (Monstrosity, etc.) map to Other.
+local api = {};
+
+api.OTHER_JOB_ID = OTHER_JOB_ID;
+api.OTHER_MACRO_KEY = OTHER_MACRO_KEY;
+api.OTHER_LABEL = OTHER_LABEL;
+api.STANDARD_MAX = 22;
+
+function api.IsStandardJob(jobId)
+    jobId = tonumber(jobId);
+    return jobId ~= nil and STANDARD_JOBS[jobId] ~= nil;
+end
+
+-- 1-22 stay themselves. Unknown numeric ids map to Other.
 -- nil/0 are not jobs and are returned unchanged.
-function jobs.ResolveJobCategory(jobId)
+function api.ResolveJobCategory(jobId)
     if type(jobId) ~= 'number' or jobId < 1 then
         return jobId;
     end
-    if jobId <= 22 then
+    if api.IsStandardJob(jobId) then
         return jobId;
     end
-    return jobs.OTHER_JOB_ID;
+    return OTHER_JOB_ID;
 end
 
-function jobs.GetDisplayName(jobId)
-    if jobId == 0 then return 'Shared'; end
-    return jobs[jobId] or (jobId and 'Other') or nil;
+function api.ResolveMacroPaletteKey(jobId)
+    if jobId == 'global' or jobId == OTHER_MACRO_KEY then
+        return jobId;
+    end
+    local numeric = tonumber(jobId);
+    if numeric and api.IsStandardJob(numeric) then
+        return numeric;
+    end
+    if type(jobId) == 'string' then
+        local base = tonumber(jobId:match('^(%d+)'));
+        if base and api.IsStandardJob(base) then
+            return jobId;
+        end
+        if jobId:match('^other') then
+            return jobId;
+        end
+    end
+    return OTHER_MACRO_KEY;
+end
+
+function api.GetDisplayName(jobId)
+    if jobId == 0 or jobId == '0' then
+        return 'Shared';
+    end
+    if jobId == OTHER_JOB_ID or jobId == OTHER_MACRO_KEY or jobId == OTHER_LABEL then
+        return OTHER_LABEL;
+    end
+    local numeric = tonumber(jobId);
+    if numeric and STANDARD_JOBS[numeric] then
+        return STANDARD_JOBS[numeric];
+    end
+    if type(jobId) == 'string' and jobId ~= '' then
+        return jobId;
+    end
+    return OTHER_LABEL;
 end
 
 -- Jobs 1-22 with level > 0, plus current main/sub when those are 1-22.
-function jobs.GetUnlockedJobIds(currentMain, currentSub)
+function api.GetUnlockedJobIds(currentMain, currentSub)
     local memory = AshitaCore and AshitaCore:GetMemoryManager();
     local player = memory and memory:GetPlayer();
     local ids = {};
@@ -53,4 +98,10 @@ function jobs.GetUnlockedJobIds(currentMain, currentSub)
     return ids;
 end
 
-return jobs;
+local jobs = {};
+for id, name in pairs(STANDARD_JOBS) do
+    jobs[id] = name;
+end
+jobs[OTHER_JOB_ID] = OTHER_LABEL;
+
+return setmetatable(jobs, { __index = api });

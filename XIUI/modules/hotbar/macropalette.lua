@@ -2050,9 +2050,10 @@ function M.DrawPalette()
 
     local db, typeKey = M.GetMacroDatabase();
     local isGlobal = (typeKey == GLOBAL_MACRO_KEY);
-    local isOther = (typeKey == jobs.OTHER_MACRO_KEY);
+    local isOther = (typeKey == jobs.OTHER_MACRO_KEY or typeKey == jobs.OTHER_JOB_ID);
     local typeName = GetPaletteDisplayName(typeKey);
     local currentPlayerJob = data.jobId;
+    local currentMacroKey = jobs.ResolveMacroPaletteKey(data.jobId);
     -- For SMN with avatar selected, check base job ID
     local baseJobId = type(typeKey) == 'number' and typeKey or tonumber(tostring(typeKey):match('^(%d+)'));
     local isViewingCurrentJob = (not isGlobal) and (
