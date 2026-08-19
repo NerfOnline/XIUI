@@ -119,6 +119,104 @@ function M.GetAbilityRecast(abilityId)
     return abilityRecastCache[abilityId] or 0;
 end
 
+-- Shared timer-id lookup (PUP maneuvers, etc. share one RecastTimerId)
+---@param timerId number
+---@return number remainingSeconds
+function M.GetRecastByTimerId(timerId)
+    if not timerId then return 0; end
+    return abilityRecast.GetAbilityRecastSeconds(timerId) or 0;
+end
+
+-- Charge-based ability pools keyed by RecastTimerId
+local CHARGE_TIMER = {
+    READY = 102,
+    QUICK_DRAW = 195,
+    STRATAGEM = 231,
+};
+
+local function RecastRawToDisplaySeconds(raw)
+    if not raw or raw <= 0 then return 0; end
+    return raw / 60;
+end
+
+-- Every slot sharing a pool (all stratagems, all ready moves) asks for the same
+-- timer, so cache at 20 Hz like the other recasts instead of rescanning per slot.
+local chargeCount = {};            -- timerId -> remaining charges
+local chargeNext = {};             -- timerId -> seconds until the next charge
+local chargeExpiry = {};           -- timerId -> os.clock() expiry
+
+local function ComputeChargePool(timerId, maxCharges, baseSeconds)
+    if maxCharges <= 0 then
+        return 0, 0;
+    end
+    local data = abilityRecast.GetAbilityTimerDataByTimerId(timerId);
+    if not data or not data.Recast or data.Recast == 0 then
+        return maxCharges, 0;
+    end
+    local baseRecast = 60 * (baseSeconds + (data.Modifier or 0));
+    if baseRecast <= 0 then
+        return 0, RecastRawToDisplaySeconds(data.Recast);
+    end
+    local chargeValue = baseRecast / maxCharges;
+    local remainingCharges = math.floor((baseRecast - data.Recast) / chargeValue);
+    local timeUntilNext = math.fmod(data.Recast, chargeValue);
+    if remainingCharges < 0 then remainingCharges = 0; end
+    if remainingCharges > maxCharges then remainingCharges = maxCharges; end
+    return remainingCharges, RecastRawToDisplaySeconds(timeUntilNext);
+end
+
+--- Remaining charges + seconds until next charge for a charge pool
+---@param timerId number
+---@param maxCharges number
+---@param baseSeconds number Base full-pool recast in seconds (before modifier)
+---@return number charges
+---@return number nextChargeSeconds
+local function GetChargePool(timerId, maxCharges, baseSeconds)
+    local now = os.clock();
+    local exp = chargeExpiry[timerId];
+    if exp and now < exp then
+        return chargeCount[timerId], chargeNext[timerId];
+    end
+
+    local charges, nextCharge = ComputeChargePool(timerId, maxCharges, baseSeconds);
+    chargeCount[timerId], chargeNext[timerId] = charges, nextCharge;
+    chargeExpiry[timerId] = now + ACTION_RECAST_TTL;
+    return charges, nextCharge;
+end
+
+function M.GetReadyCharges()
+    return GetChargePool(CHARGE_TIMER.READY, 3, 90);
+end
+
+function M.GetQuickDrawCharges()
+    return GetChargePool(CHARGE_TIMER.QUICK_DRAW, 2, 120);
+end
+
+--- SCH stratagem charges (level-scaled max)
+---@return number charges
+---@return number nextChargeSeconds
+---@return number maxCharges
+function M.GetStratagemCharges()
+    local player = AshitaCore:GetMemoryManager():GetPlayer();
+    if not player then return 0, 0, 0; end
+
+    local lvl = 0;
+    if player:GetMainJob() == 20 then
+        lvl = player:GetMainJobLevel();
+    elseif player:GetSubJob() == 20 then
+        lvl = player:GetSubJobLevel();
+    else
+        return 0, 0, 0;
+    end
+
+    local maxCharges = math.floor((lvl - 10) / 20) + 1;
+    if maxCharges < 1 then maxCharges = 0; end
+    local charges, nextCharge = GetChargePool(CHARGE_TIMER.STRATAGEM, maxCharges, 240);
+    return charges, nextCharge, maxCharges;
+end
+
+M.CHARGE_TIMER = CHARGE_TIMER;
+
 -- Get item/equipment recast by item ID
 -- Uses itemrecast.lua which reads from item.Extra data
 -- Returns: remaining seconds, or 0 if ready

@@ -138,17 +138,21 @@ function M.Initialize(settings)
         -- user toggled petAware off mid-pet. Always run it.
         data.InvalidateStorageKeyCache();
 
+        -- Availability (HasAbility for BPs/maneuvers/etc.) flips with pet state
+        -- even when no bar uses petAware palette swapping. Always invalidate
+        -- so summon→release does not leave stale "available" dims.
+        slotrenderer.ClearAvailabilityCache();
+        macropalette.ClearPetCommandsCache();
+
         if not AnyBarIsPetAware() then return; end
 
-        -- Clear ALL caches when pet changes to force full refresh
+        -- Clear remaining caches when pet-aware bars may swap slot content
         slotrenderer.ClearAllCache();
         display.ClearIconCache();
         actions.ClearNoIconCache();
         if crossbarInitialized then
             crossbar.ClearIconCache();
         end
-        -- Clear macro palette's pet commands cache (for BST ready moves)
-        macropalette.ClearPetCommandsCache();
     end);
 
     -- Register palette change callback to clear caches
@@ -444,6 +448,16 @@ function M.ApplyJobAndRefresh(mainJob, subJob)
         RefreshJobPalettes();
     end
     return true;
+end
+
+-- A profile swap replaces gConfig wholesale, so palette selection and macro
+-- state still point at the old profile until the bars are rebound. The job
+-- itself is unchanged, so SetPlayerJob will not invalidate these on its own.
+function M.HandleProfileChange()
+    if not M.initialized then return; end
+    data.InvalidateStorageKeyCache();
+    data.MarkMacroLookupDirty();
+    RebindWhenJobReady(1);
 end
 
 -- Reapply the current job's palettes to the live bars without an addon reload.

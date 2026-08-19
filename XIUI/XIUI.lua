@@ -699,6 +699,7 @@ function ChangeProfile(name)
 
     settingsMigration.RunStructureMigrations(gConfig, defaultUserSettings);
     UpdateSettings();
+    hotbar.HandleProfileChange();
     return true;
 end
 
@@ -1024,6 +1025,10 @@ settings.register('settings', 'settings_update', function (s)
 
         -- Update visuals
         UpdateSettings();
+
+        -- Character login swaps gConfig under the hotbar; rebind it to the
+        -- new profile or the bars stay blank until a job change or reload.
+        hotbar.HandleProfileChange();
 
         print(chat.header(addon.name):append(chat.message('Loaded profile: ')):append(chat.success(currentProfileName)));
     end

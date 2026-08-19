@@ -19,11 +19,80 @@ local cachedItems = nil;
 local cacheJobId = nil;
 local cacheSubJobId = nil;
 
-local MAX_JOB_LEVEL = 99;
+local JOB_CAP = 99;
 
 -- ============================================
--- Container Definitions
+-- Spell / ability access rules (Ashita APIs)
 -- ============================================
+
+-- GetJobPointsSpent is missing on older Ashita builds; probe once rather than
+-- paying for a pcall on every spell we evaluate.
+local jobPointsApi = nil;
+
+local function GetSpentJobPoints(player, jobId)
+    if not player or not jobId or jobId <= 0 then return 0; end
+
+    if jobPointsApi == nil then
+        jobPointsApi = pcall(function()
+            return player:GetJobPointsSpent(jobId);
+        end);
+    end
+    if not jobPointsApi then return 0; end
+
+    local spent = player:GetJobPointsSpent(jobId);
+    return type(spent) == 'number' and spent or 0;
+end
+
+--- Whether the player can cast a spell on main or sub (HasSpell + level/JP gates)
+---@param spell table Resource spell
+---@param player table|nil Optional player; fetched if nil
+---@return boolean ok
+---@return string|nil source 'main'|'sub'
+---@return number|nil requirement
+function M.EvaluateSpellAccess(spell, player)
+    if not spell or not spell.Index then
+        return false, nil, nil;
+    end
+
+    player = player or AshitaCore:GetMemoryManager():GetPlayer();
+    if not player then return false, nil, nil; end
+
+    if not player:HasSpell(spell.Index) then
+        return false, nil, nil;
+    end
+
+    local levels = spell.LevelRequired;
+    if not levels then
+        return true, 'main', 0;
+    end
+
+    local mainJob = player:GetMainJob() or 0;
+    local mainLevel = player:GetMainJobLevel() or 0;
+    local subJob = player:GetSubJob() or 0;
+    local subLevel = player:GetSubJobLevel() or 0;
+    local jpMask = spell.JobPointMask or 0;
+
+    local mainReq = levels[mainJob + 1];
+    if mainReq and mainReq ~= -1 then
+        local jpGated = bit.band(bit.rshift(jpMask, mainJob), 1) == 1;
+        if jpGated then
+            if mainLevel >= JOB_CAP and GetSpentJobPoints(player, mainJob) >= mainReq then
+                return true, 'main', mainReq;
+            end
+        elseif mainReq > 0 and mainReq < 255 and mainLevel >= mainReq then
+            return true, 'main', mainReq;
+        end
+    end
+
+    if subJob > 0 and bit.band(bit.rshift(jpMask, subJob), 1) == 0 then
+        local subReq = levels[subJob + 1];
+        if subReq and subReq ~= -1 and subReq > 0 and subReq < 255 and subLevel >= subReq then
+            return true, 'sub', subReq;
+        end
+    end
+
+    return false, nil, mainReq;
+end
 
 local CONTAINERS = {
     { id = 0, name = 'Inventory' },
@@ -168,56 +237,32 @@ end
 -- ============================================
 
 --- Get player's known spells for current job (excludes trusts and garbage entries)
---- Supports both main job and subjob spell access
+--- Supports both main job and subjob spell access, including JP-gated spells.
 ---@return table Array of {id, name, level, source} where source is 'main' or 'sub'
 function M.GetPlayerSpells()
     local player = AshitaCore:GetMemoryManager():GetPlayer();
     if not player then return {}; end
 
-    local mainJobId = player:GetMainJob();
-    local mainJobLevel = player:GetMainJobLevel();
-    local subJobId = player:GetSubJob();
-    local subJobLevel = player:GetSubJobLevel();
     local resMgr = AshitaCore:GetResourceManager();
+    if not resMgr then return {}; end
 
     local spells = {};
-    local addedSpells = {};  -- Track by spell ID to avoid duplicates
+    local addedSpells = {};
 
-    for spellId = 1, 1024 do
+    for spellId = 1, 0x400 do
         if player:HasSpell(spellId) then
             local spell = resMgr:GetSpellById(spellId);
-            -- Skip trusts by magic type, not ID range (the old ID-896 cutoff also
-            -- hid real spells above it, e.g. Death = 904).
             if spell and spell.Name and spell.Name[1] and spell.Name[1] ~= ''
                 and (spell.Type or 0) ~= MAGIC_TYPE_TRUST then
                 local spellName = spell.Name[1];
-
-                -- Skip garbage/test spell names
                 if not IsGarbageSpellName(spellName) then
-                    -- LevelRequired array uses jobId + 1 offset
-                    -- WHM (jobId=3) -> LevelRequired[4], BLM (jobId=4) -> LevelRequired[5]
-                    local mainReqLevel = spell.LevelRequired[mainJobId + 1] or 0;
-                    local subReqLevel = subJobId > 0 and (spell.LevelRequired[subJobId + 1] or 0) or 0;
-
-                    -- Filter invalid level values (0 = can't learn, 255 = can't learn)
-                    local validMainReq = mainReqLevel > 0 and mainReqLevel < 255;
-                    local validSubReq = subReqLevel > 0 and subReqLevel < 255;
-
-                    -- Check if castable by main job (Job Point spells report level > 99)
-                    local canCastMain = validMainReq and (mainReqLevel <= mainJobLevel or mainReqLevel > MAX_JOB_LEVEL);
-                    -- Check if castable by sub job
-                    local canCastSub = validSubReq and subReqLevel <= subJobLevel;
-
-                    if (canCastMain or canCastSub) and not addedSpells[spellId] then
-                        -- Use main job level if castable, otherwise sub job level
-                        local displayLevel = canCastMain and mainReqLevel or subReqLevel;
-                        local source = canCastMain and 'main' or 'sub';
-
+                    local canCast, source, reqLevel = M.EvaluateSpellAccess(spell, player);
+                    if canCast and not addedSpells[spellId] then
                         table.insert(spells, {
                             id = spellId,
                             name = spellName,
-                            level = displayLevel,
-                            source = source,
+                            level = reqLevel or 0,
+                            source = source or 'main',
                         });
                         addedSpells[spellId] = true;
                     end
@@ -263,6 +308,27 @@ local ABILITY_TYPE = {
     RuneEffusion      = 23,
 };
 
+-- Menu subcategory headers (not executable actions)
+local CATEGORY_STUB_IDS = {
+    [567] = true, -- Pet Commands
+    [603] = true, -- Blood Pact: Rage
+    [609] = true, -- Phantom Roll
+    [636] = true, -- Quick Draw
+    [684] = true, -- Blood Pact: Ward
+    [694] = true, -- Sambas
+    [695] = true, -- Waltzes
+    [710] = true, -- Jigs
+    [711] = true, -- Steps
+    [712] = true, -- Flourishes I
+    [725] = true, -- Flourishes II
+    [735] = true, -- Stratagems
+    [763] = true, -- Ready
+    [775] = true, -- Flourishes III
+    [869] = true, -- Rune Enchantment
+    [891] = true, -- Ward
+    [892] = true, -- Effusion
+};
+
 -- Pet commands to filter out from ability list (these belong in Pet Command section)
 local PET_COMMAND_NAMES = {
     ['Assault'] = true,
@@ -274,90 +340,63 @@ local PET_COMMAND_NAMES = {
     ['Fight'] = true,
     ['Sic'] = true,
     ['Ready'] = true,
-    -- SMN commands
     ['Avatar\'s Favor'] = true,
-    -- DRG commands
     ['Steady Wing'] = true,
-    -- PUP commands
     ['Deploy'] = true,
     ['Retrieve'] = true,
     ['Activate'] = true,
     ['Deactivate'] = true,
 };
 
--- FFXI macro-maker subcategory headers ("Sambas", "Waltzes", etc.) are present
--- as ability entries in the resource manager and HasAbility() returns true for
--- them, but they aren't executable. Filter them out of the JA dropdown.
-local CATEGORY_PLACEHOLDER_NAMES = {
-    ['Sambas']         = true,
-    ['Waltzes']        = true,
-    ['Steps']          = true,
-    ['Jigs']           = true,
-    ['Flourishes I']   = true,
-    ['Flourishes II']  = true,
-    ['Flourishes III'] = true,
-};
-
 --- Get player's available job abilities (includes both main job and subjob abilities)
---- Filters out weapon skills (Type 3) and pet commands
+--- Filters out weapon skills (Type 3), traits, pet commands, and menu stubs
 ---@return table Array of {id, name, source} where source is 'main' or 'sub'
 function M.GetPlayerAbilities()
     local player = AshitaCore:GetMemoryManager():GetPlayer();
     if not player then return {}; end
 
-    local mainJobId = player:GetMainJob();
-    local mainJobLevel = player:GetMainJobLevel();
-    local subJobId = player:GetSubJob();
-    local subJobLevel = player:GetSubJobLevel();
     local resMgr = AshitaCore:GetResourceManager();
+    if not resMgr then return {}; end
+
+    local mainJobId = player:GetMainJob() or 0;
+    local mainJobLevel = player:GetMainJobLevel() or 0;
+    local subJobId = player:GetSubJob() or 0;
+    local subJobLevel = player:GetSubJobLevel() or 0;
 
     local abilities = {};
-    local addedAbilities = {};  -- Track by ability ID to avoid duplicates
+    local addedAbilities = {};
 
-    -- Scan ability IDs 1-1024 (job abilities can be in higher ranges like 500+)
-    for abilityId = 1, 1024 do
-        if player:HasAbility(abilityId) then
+    -- Job ability resource ids live in 0x200..0x600
+    for abilityId = 0x200, 0x600 do
+        if not CATEGORY_STUB_IDS[abilityId] and player:HasAbility(abilityId) then
             local ability = resMgr:GetAbilityById(abilityId);
             if ability and ability.Name and ability.Name[1] and ability.Name[1] ~= '' then
                 local abilityType = ability.Type or 0;
                 local abilityName = ability.Name[1];
-
-                -- Exclude: weapon skills (separate dropdown), passive traits (not
-                -- macroable), pet commands (separate section), and subcategory
-                -- header placeholders ("Sambas", "Waltzes", etc.).
                 local isWeaponSkill = abilityType == ABILITY_TYPE.WeaponSkill;
-                local isTrait       = abilityType == ABILITY_TYPE.Trait;
+                local isTrait = abilityType == ABILITY_TYPE.Trait;
                 if not isWeaponSkill
                     and not isTrait
                     and not PET_COMMAND_NAMES[abilityName]
-                    and not CATEGORY_PLACEHOLDER_NAMES[abilityName]
+                    and not addedAbilities[abilityId]
                 then
-
-                    if not addedAbilities[abilityId] then
-                        local source = 'main';
-
-                        if ability.Level then
-                            local mainReqLevel = ability.Level[mainJobId + 1] or 0;
-                            local subReqLevel = subJobId > 0 and (ability.Level[subJobId + 1] or 0) or 0;
-
-                            local validMainReq = mainReqLevel > 0 and mainReqLevel < 255;
-                            local validSubReq = subReqLevel > 0 and subReqLevel < 255;
-
-                            local canUseMain = validMainReq and mainReqLevel <= mainJobLevel;
-                            local canUseSub = validSubReq and subReqLevel <= subJobLevel;
-
-                            if canUseSub and not canUseMain then
-                                source = 'sub';
-                            end
+                    local source = 'main';
+                    if ability.Level then
+                        local mainReqLevel = ability.Level[mainJobId + 1] or 0;
+                        local subReqLevel = subJobId > 0 and (ability.Level[subJobId + 1] or 0) or 0;
+                        local canUseMain = mainReqLevel > 0 and mainReqLevel < 255 and mainReqLevel <= mainJobLevel;
+                        local canUseSub = subReqLevel > 0 and subReqLevel < 255 and subReqLevel <= subJobLevel;
+                        if canUseSub and not canUseMain then
+                            source = 'sub';
                         end
-
-                        table.insert(abilities, {
-                            id = abilityId,
-                            name = abilityName,
-                            source = source,
-                        });
-                        addedAbilities[abilityId] = true;
                     end
+
+                    table.insert(abilities, {
+                        id = abilityId,
+                        name = abilityName,
+                        source = source,
+                    });
+                    addedAbilities[abilityId] = true;
                 end
             end
         end
@@ -371,18 +410,18 @@ function M.GetPlayerAbilities()
 end
 
 --- Get player's available weaponskills
---- Uses HasAbility and filters by Type 3 (weapon skills)
 ---@return table Array of {id, name}
 function M.GetPlayerWeaponskills()
     local player = AshitaCore:GetMemoryManager():GetPlayer();
     if not player then return {}; end
 
     local resMgr = AshitaCore:GetResourceManager();
-    local weaponskills = {};
-    local addedWeaponskills = {};  -- Track by name to avoid duplicates
+    if not resMgr then return {}; end
 
-    -- Scan HasAbility and filter by Type == WeaponSkill (3)
-    for abilityId = 1, 1024 do
+    local weaponskills = {};
+    local addedWeaponskills = {};
+
+    for abilityId = 1, 0x200 do
         if player:HasAbility(abilityId) then
             local ability = resMgr:GetAbilityById(abilityId);
             if ability and ability.Name and ability.Name[1] and ability.Name[1] ~= '' then
@@ -736,22 +775,29 @@ function M.IsPetCommandAvailable(commandName)
     local player = AshitaCore:GetMemoryManager():GetPlayer();
     if not player then return true; end
 
+    local actiondb = require('modules.hotbar.actiondb');
+    local abilityId = actiondb.GetAbilityId(commandName);
+
+    -- HasAbility is the authoritative source: pet-specific bits appear after summon
+    if abilityId then
+        return player:HasAbility(abilityId) == true;
+    end
+
+    -- Unresolved name: fall back to the static command list for the pet job
     local petregistry = require('modules.hotbar.petregistry');
     local petpalette = require('modules.hotbar.petpalette');
 
-    -- Resolve the pet job from main OR subjob (e.g. WAR/BST grants Fight/Sic/etc.).
     local jobId = petregistry.ResolvePetJob(player:GetMainJob(), player:GetSubJob());
     if not jobId then
         return false;
     end
 
-    local avatarName = nil;
     local activePetName = nil;
     if jobId == petregistry.JOB_BST then
         activePetName = petpalette.GetCurrentPetEntityName();
     end
 
-    local commands = petregistry.GetPetCommandsForJob(jobId, avatarName, activePetName);
+    local commands = petregistry.GetPetCommandsForJob(jobId, nil, activePetName);
     for _, cmd in ipairs(commands) do
         if cmd.name == commandName then
             return true;

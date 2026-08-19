@@ -767,12 +767,14 @@ function M.IsWindowOpen()
     return false;
 end
 
+-- Active magic burst window, newest chain wins when several mobs are chained.
+-- Returns element name list, seconds remaining, total window length -- or nil.
 function M.GetActiveBurst()
     local now = os.clock();
     local newest, newestStart = nil, -1;
 
     for _, state in pairs(resonationMap) do
-        if state.BurstElement and state.BurstStart and now < state.WindowClose
+        if state.BurstElements and state.BurstStart and now < state.WindowClose
             and state.BurstStart > newestStart then
             newest, newestStart = state, state.BurstStart;
         end
@@ -782,7 +784,7 @@ function M.GetActiveBurst()
         return nil;
     end
 
-    return newest.BurstElement, newest.WindowClose - now, newest.WindowClose - newest.BurstStart;
+    return newest.BurstElements, newest.WindowClose - now, newest.WindowClose - newest.BurstStart;
 end
 
 local lastClockRead = 0;

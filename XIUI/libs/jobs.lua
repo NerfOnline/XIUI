@@ -1,4 +1,13 @@
-local jobs = {
+--[[
+* XIUI job id helpers
+* Standard adventurer jobs are 1..22. Anything else (Monstrosity monipulators,
+* future unknowns) collapses into the shared "Other" category for macro/palette UI.
+*
+* The returned table keeps numeric keys only so existing `pairs(jobs)` / `jobs[id]`
+* call sites keep working. Helpers live on the metatable.
+]]--
+
+local STANDARD_JOBS = {
     [1]  = 'WAR', [2]  = 'MNK', [3]  = 'WHM', [4]  = 'BLM',
     [5]  = 'RDM', [6]  = 'THF', [7]  = 'PLD', [8]  = 'DRK',
     [9]  = 'BST', [10] = 'BRD', [11] = 'RNG', [12] = 'SAM',

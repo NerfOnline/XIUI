@@ -46,6 +46,7 @@ end
 -- With 197 macros and 72 slots, this reduces from ~14,184 iterations/frame to 72 lookups
 
 local macroIdLookup = {};  -- macroIdLookup[paletteKey][macroId] = macro
+local macroIdGlobalLookup = {}; -- macroId -> macro (unique across all palettes after migration)
 local macroIdLookupDirty = true;
 -- Identity reference of the macroDB the lookup was built against. If gConfig
 -- gets reassigned (profile switch / character swap), this will no longer
@@ -57,6 +58,7 @@ local macroIdLookupSource = nil;
 
 local function RebuildMacroLookup()
     macroIdLookup = {};
+    macroIdGlobalLookup = {};
     macroIdLookupSource = (gConfig and gConfig.macroDB) or nil;
     if gConfig and gConfig.macroDB then
         for paletteKey, macros in pairs(gConfig.macroDB) do
@@ -65,6 +67,8 @@ local function RebuildMacroLookup()
                 for _, macro in ipairs(macros) do
                     if macro.id then
                         macroIdLookup[paletteKey][macro.id] = macro;
+                        -- Last write wins on legacy collisions; migration removes them
+                        macroIdGlobalLookup[macro.id] = macro;
                     end
                 end
             end
@@ -79,11 +83,38 @@ local function GetMacroFromLookup(macroId, paletteKey)
     if macroIdLookupDirty or macroIdLookupSource ~= (gConfig and gConfig.macroDB) then
         RebuildMacroLookup();
     end
-    local paletteLookup = macroIdLookup[paletteKey];
-    if paletteLookup then
-        return paletteLookup[macroId];
+    if paletteKey ~= nil and macroIdLookup[paletteKey] then
+        local macro = macroIdLookup[paletteKey][macroId];
+        if macro then return macro; end
     end
     return nil;
+end
+
+--- Allocate a macro id unique across every palette. All writers must use this;
+--- per-palette numbering leaves slots pointing at the wrong macro.
+---@return number
+function M.AllocateUniqueMacroId()
+    if not gConfig then return 1; end
+
+    local nextId = (gConfig.macroIdSeq or 0) + 1;
+    if gConfig.macroDB then
+        local used = {};
+        for _, macros in pairs(gConfig.macroDB) do
+            if type(macros) == 'table' then
+                for _, macro in ipairs(macros) do
+                    if macro and macro.id then
+                        used[macro.id] = true;
+                    end
+                end
+            end
+        end
+        while used[nextId] do
+            nextId = nextId + 1;
+        end
+    end
+
+    gConfig.macroIdSeq = nextId;
+    return nextId;
 end
 
 -- ============================================
@@ -118,6 +149,7 @@ M.ROW_GAP = 6;
 -- ============================================
 
 M.jobId = nil;
+M.rawJobId = nil;
 M.subjobId = nil;
 
 -- ============================================
@@ -163,7 +195,7 @@ local function getSlotActionsForJob(slotActions, storageKey)
         return result;
     end
     -- Fallback: try base job key (jobId:0) for imported data without subjob
-    -- This handles tHotBar imports which don't track subjobs
+    -- Fallback for imported bindings that omit subjob in the storage key
     local jobId, subjobId, suffix = storageKey:match('^(%d+):(%d+)(.*)$');
     if jobId and subjobId ~= '0' then
         -- Build fallback key with subjob=0, preserving any suffix (palette, avatar, etc.)
@@ -672,7 +704,7 @@ end
 -- Helper to look up a macro from macroDB by id
 -- paletteKey can be a job ID (number) or composite key (string like "15:avatar:ifrit")
 -- OPTIMIZED: Uses O(1) lookup map instead of linear search
--- Falls back to scanning all palettes for legacy slots that don't have macroPaletteKey set
+-- Falls back to global unique-id map, then scanning all palettes for legacy slots
 local function GetMacroById(macroId, paletteKey)
     if not gConfig or not gConfig.macroDB then return nil; end
 
@@ -692,24 +724,19 @@ local function GetMacroById(macroId, paletteKey)
                     return macro;
                 end
             end
-        end
-    end
-
-    -- Fallback for legacy slots missing macroPaletteKey: scan all palettes
-    -- (rebuild lookup if dirty OR if gConfig.macroDB was swapped under us)
-    if macroIdLookupDirty or macroIdLookupSource ~= (gConfig and gConfig.macroDB) then
-        RebuildMacroLookup();
-    end
-    for key, paletteLookup in pairs(macroIdLookup) do
-        if key ~= paletteKey then
-            local macro = paletteLookup[macroId];
-            if macro then
-                return macro;
+            if paletteKey:match('^other') then
+                macro = GetMacroFromLookup(macroId, 'other');
+                if macro then return macro; end
             end
         end
     end
 
-    return nil;
+    -- Covers legacy slots with no macroPaletteKey. Holds every id in macroDB, so
+    -- a miss here means the macro is gone; no per-palette scan can beat it.
+    if macroIdLookupDirty or macroIdLookupSource ~= (gConfig and gConfig.macroDB) then
+        RebuildMacroLookup();
+    end
+    return macroIdGlobalLookup[macroId];
 end
 
 -- Get action assignment for a specific bar and slot
@@ -1088,9 +1115,10 @@ function M.SetPlayerJob()
         return false;
     end
 
+    local jobs = require('libs.jobs');
     local player = AshitaCore:GetMemoryManager():GetPlayer()
-    local currentJobId = player:GetMainJob();
-    if currentJobId == 0 then
+    local rawJobId = player:GetMainJob();
+    if rawJobId == 0 then
         return false;
     end
     return M.ApplyJobFromPacket(currentJobId, player:GetSubJob());
