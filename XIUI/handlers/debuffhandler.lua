@@ -22,125 +22,221 @@ local spellDamageMes = {[2]=true, [252]=true, [264]=true, [265]=true};
 local additionalEffectJobAbilities = {[22]=true, [45]=true, [46]=true, [77]=true, [170]=true}; --energy drain, mug, shield bash, weapon bash, angon
 local additionalEffectMes = {[160]=true, [164]=true};
 
--- Spell duration lookup table for O(1) performance
--- Maps spell IDs to duration (in seconds) and optionally buff ID overrides
-local SPELL_DURATIONS = {
-    -- Weapon skills with debuffs
-    [181] = {duration = 180, buffId = 149}, -- Shell Crusher - Defense Down
-    [83] = {duration = 180, buffId = 149},  -- Armor Break - Defense Down
-    [87] = {duration = 180, buffIds = {149, 147}}, -- Full Break - Defense Down & Attack Down
-    [155] = {duration = 180, buffId = 149}, -- Tachi: Ageha - Defense Down
-    [187] = {duration = 180, buffId = 149}, -- Garland of Bliss - Defense Down
-    [89] = {duration = 180, buffId = 149},  -- Metatron Torment - Defense Down
-    [85] = {duration = 180, buffId = 147},  -- Weapon Break - Attack Down
-    [185] = {duration = 180, buffId = 147}, -- Gate of Tartarus - Attack Down
-    [107] = {duration = 180, buffId = 147}, -- Infernal Scythe - Attack Down
-    [16] = {duration = 90, buffId = 3},     -- Wasp Sting - Poison
-    [17] = {duration = 90, buffId = 3},     -- Viper Bite - Poison
-    [18] = {duration = 30, buffId = 11},    -- Shadowstitch - Bind
-    [35] = {duration = 5, buffId = 10},     -- Flat Blade - Stun
-    [115] = {duration = 5, buffId = 10},    -- Leg Sweep - Stun
-    [2] = {duration = 5, buffId = 10},      -- Shoulder Tackle - Stun
-    [65] = {duration = 5, buffId = 10},     -- Smash Axe - Stun
-    [162] = {duration = 5, buffId = 10},    -- Brainshaker - Stun
-    [145] = {duration = 5, buffId = 10},    -- Tachi: Hobaku - Stun
-    [80] = {duration = 180, buffId = 148},  -- Shield Break - Evasion Down
+local BUFF_SABOTEUR = 454;
+local BUFF_STYMIE = 494;
+local BUFF_DARK_ARTS = 359;
+local JOB_BLM = 4;
+local JOB_RDM = 5;
+local JOB_SCH = 20;
+-- Client merit IDs from 0x08C (DSP/LSB group-2 offsets). Packet stores upgrade count.
+local MERIT_ENFEEBLING_MAGIC_DURATION = 0x090C;
+local MERIT_ELEMENTAL_DEBUFF_DURATION = 0x08D2;
+-- tHotBar 0x08D category index is 0-based (menu order; 0x2/0x1 swapped in LSB).
+local JP_RDM_STYMIE_EFFECT = 2;
+local JP_RDM_ENFEEBLE_DURATION = 7;
+local JP_SCH_DARK_ARTS_EFFECT = 3;
 
-    -- Dia/Bio spells
-    [23] = {duration = 60},   -- Dia
-    [33] = {duration = 60},   -- Diaga
-    [230] = {duration = 60},  -- Bio
-    [24] = {duration = 120},  -- Dia II
-    [231] = {duration = 120}, -- Bio II
-    [25] = {duration = 150},  -- Dia III
-    [232] = {duration = 150}, -- Bio III
+local meritCounts = {};
+local jobPointCategories = {};
 
-    -- Helix spells (278-285 and 885-892)
-    [278] = {duration = 90, buffId = 186}, [279] = {duration = 90, buffId = 186},
-    [280] = {duration = 90, buffId = 186}, [281] = {duration = 90, buffId = 186},
-    [282] = {duration = 90, buffId = 186}, [283] = {duration = 90, buffId = 186},
-    [284] = {duration = 90, buffId = 186}, [285] = {duration = 90, buffId = 186},
-    [885] = {duration = 90, buffId = 186}, [886] = {duration = 90, buffId = 186},
-    [887] = {duration = 90, buffId = 186}, [888] = {duration = 90, buffId = 186},
-    [889] = {duration = 90, buffId = 186}, [890] = {duration = 90, buffId = 186},
-    [891] = {duration = 90, buffId = 186}, [892] = {duration = 90, buffId = 186},
+local function CopyDurationTables(src)
+    local dst = {};
+    for cat, entries in pairs(src) do
+        if type(entries) == 'table' then
+            local copy = {};
+            for id, data in pairs(entries) do
+                copy[id] = data;
+            end
+            dst[cat] = copy;
+        else
+            dst[cat] = entries;
+        end
+    end
+    return dst;
+end
 
-    -- Regular debuff spells
-    [58] = {duration = 120},  -- Paralyze
-    [80] = {duration = 120},  -- Paralyze II
-    [56] = {duration = 180},  -- Slow
-    [79] = {duration = 180},  -- Slow II
-    [216] = {duration = 120}, -- Gravity
-    [254] = {duration = 180}, -- Blind
-    [276] = {duration = 180}, -- Blind II
-    [112] = {duration = 12},  -- Flash
-    [59] = {duration = 120},  -- Silence
-    [359] = {duration = 120}, -- Silencega
-    [253] = {duration = 60},  -- Sleep
-    [273] = {duration = 60},  -- Sleepga
-    [363] = {duration = 60},  -- Sleepga II
-    [259] = {duration = 90, buffId = 19, clearsBuffs = {2, 193}}, -- Sleep II
-    [274] = {duration = 90, buffId = 19, clearsBuffs = {2, 193}}, -- Sleepga II
-    [364] = {duration = 90, buffId = 19, clearsBuffs = {2, 193}}, -- Sleepga III
-    [258] = {duration = 60},  -- Bind
-    [362] = {duration = 60},  -- Bindga
-    [252] = {duration = 5},   -- Stun
-    [220] = {duration = 90},  -- Poison
-    [221] = {duration = 120}, -- Poison II
+local function CloneDurationEntry(entry)
+    local copy = {};
+    for k, v in pairs(entry) do
+        copy[k] = v;
+    end
+    return copy;
+end
 
-    -- Ninjutsu debuffs
-    [341] = { duration = 180 }, -- Jubaku: Ichi
-    [342] = { duration = 300 }, -- Jubaku: Ni
-    [344] = { duration = 180 }, -- Hojo: Ichi
-    [345] = { duration = 300 }, -- Hojo: Ni
-    [347] = { duration = 180 }, -- Kurayami: Ichi
-    [348] = { duration = 300 }, -- Kurayami: Ni
-    [350] = { duration = 60 },  -- Dokumori: Ichi
+local function ApplyHorizonOverlay(base, overlay)
+    for cat, entries in pairs(overlay) do
+        if type(entries) == 'table' then
+            if base[cat] == nil then
+                base[cat] = {};
+            end
+            for id, patch in pairs(entries) do
+                if patch == false then
+                    base[cat][id] = nil;
+                elseif type(patch) == 'table' and type(base[cat][id]) == 'table' then
+                    local merged = CloneDurationEntry(base[cat][id]);
+                    for k, v in pairs(patch) do
+                        merged[k] = v;
+                    end
+                    base[cat][id] = merged;
+                else
+                    base[cat][id] = patch;
+                end
+            end
+        end
+    end
+    return base;
+end
 
-    -- Elemental debuffs (Burn, Frost, Choke, Rasp, Shock, Drown)
-    [235] = {duration = 120}, [236] = {duration = 120},
-    [237] = {duration = 120}, [238] = {duration = 120},
-    [239] = {duration = 120}, [240] = {duration = 120},
+local durations = CopyDurationTables(require('handlers.database.debuff_retail'));
+if HzLimitedMode then
+    durations = ApplyHorizonOverlay(durations, require('handlers.database.debuff_horizon'));
+end
 
-    -- Threnodies (454-461)
-    [454] = {duration = 78}, [455] = {duration = 78},
-    [456] = {duration = 78}, [457] = {duration = 78},
-    [458] = {duration = 78}, [459] = {duration = 78},
-    [460] = {duration = 78}, [461] = {duration = 78},
+local SPELL_DURATIONS = durations.spells;
+local JA_PHYSICAL_DURATIONS = durations.jaPhysical;
+local JA_DURATIONS = durations.ja;
+local PET_DURATIONS = durations.pet;
+local ADDITIONAL_EFFECT_DURATIONS = durations.additionalEffect;
 
-    -- Elegies
-    [422] = {duration = 216}, -- Carnage Elegy
-    [421] = {duration = 216}, -- Battlefield Elegy
+local function ClampSongPlus(value)
+    value = tonumber(value) or 0;
+    if value < 0 then return 0; end
+    if value > 9 then return 9; end
+    return math.floor(value);
+end
 
-    -- Bard songs
-    [376] = {duration = 30}, -- Foe Lullaby
-    [463] = {duration = 30}, -- Horde Lullaby
-    [321] = {duration = 60}, -- Bully
+local function PlayerHasBuff(buffId)
+    local player = AshitaCore:GetMemoryManager():GetPlayer();
+    if not player or not player.GetBuffs then return false; end
+    local buffs = player:GetBuffs();
+    if not buffs then return false; end
+    for i = 0, 63 do
+        if buffs[i] == buffId then
+            return true;
+        end
+    end
+    return false;
+end
 
-    -- 2-Hour abilities
-    [688] = {duration = 45}, -- Mighty Strikes
-    [690] = {duration = 45}, -- Hundred Fists
-    [691] = {duration = 60}, -- Manafont
-    [692] = {duration = 60}, -- Chainspell
-    [693] = {duration = 30}, -- Perfect Dodge
-    [694] = {duration = 30}, -- Invincible
-    [695] = {duration = 30}, -- Blood Weapon
+local function GetMainJob()
+    local player = AshitaCore:GetMemoryManager():GetPlayer();
+    if not player then return 0; end
+    return player:GetMainJob() or 0;
+end
 
-    -- Job abilities with debuffs
-    [22] = {duration = 120, buffId = 13},  -- Energy Drain - Max HP Down
-    [45] = {duration = 30, buffId = 448},  -- Mug - ???
-    [46] = {duration = 6, buffId = 10},    -- Shield Bash - Stun
-    [77] = {duration = 6, buffId = 10},    -- Weapon Bash - Stun
-    [170] = {duration = 30, buffId = 149}, -- Angon - Defense Down
+local function GetMeritCount(meritId)
+    return meritCounts[meritId] or 0;
+end
 
-    -- Additional effect debuffs
-    [2] = {duration = 25, additionalEffect = true},   -- Sleep Bolt
-    [149] = {duration = 60, additionalEffect = true}, -- Defense Down/Acid Bolt
-    [12] = {duration = 30, additionalEffect = true},  -- Gravity/Mandau
+local function GetJobPointCount(job, categoryIndex)
+    local jobTable = jobPointCategories[job];
+    if not jobTable then return 0; end
+    return jobTable[categoryIndex + 1] or 0;
+end
 
-    -- Special cases
-    [1908] = {duration = 60, buffId = 2, type = 13}, -- Nightmare (pet ability)
-};
+local function GetLocalPetServerId()
+    local mem = AshitaCore:GetMemoryManager();
+    if not mem then return nil; end
+    local party = mem:GetParty();
+    local entity = mem:GetEntity();
+    if not party or not entity then return nil; end
+    local playerIndex = party:GetMemberTargetIndex(0);
+    if not playerIndex or playerIndex == 0 then return nil; end
+    local petIndex = entity:GetPetTargetIndex(playerIndex);
+    if not petIndex or petIndex == 0 then return nil; end
+    return entity:GetServerId(petIndex);
+end
+
+local function IsOwnActor(actorId)
+    if actorId == nil then return false; end
+    local mem = AshitaCore:GetMemoryManager();
+    if not mem then return false; end
+    local party = mem:GetParty();
+    if party and party:GetMemberServerId(0) == actorId then
+        return true;
+    end
+    return GetLocalPetServerId() == actorId;
+end
+
+local function ResolveDuration(spellData, actorId)
+    local duration = spellData.duration or 0;
+    if not IsOwnActor(actorId) then
+        return duration;
+    end
+
+    if spellData.songFamily then
+        local plus = 0;
+        if gConfig then
+            plus = ClampSongPlus(gConfig[spellData.songFamily]);
+        end
+        return math.floor(duration * (1 + plus / 10));
+    end
+
+    if spellData.kind == 'enfeeble' then
+        if PlayerHasBuff(BUFF_SABOTEUR) then
+            duration = math.floor(duration * 2);
+        end
+        if GetMainJob() == JOB_RDM then
+            duration = duration + (GetMeritCount(MERIT_ENFEEBLING_MAGIC_DURATION) * 6);
+            duration = duration + GetJobPointCount(JOB_RDM, JP_RDM_ENFEEBLE_DURATION);
+            if PlayerHasBuff(BUFF_STYMIE) then
+                duration = duration + GetJobPointCount(JOB_RDM, JP_RDM_STYMIE_EFFECT);
+            end
+        end
+        return duration;
+    end
+
+    if spellData.kind == 'elemental' then
+        if GetMainJob() == JOB_BLM then
+            duration = duration + (GetMeritCount(MERIT_ELEMENTAL_DEBUFF_DURATION) * 12);
+        end
+        return duration;
+    end
+
+    if spellData.kind == 'helix' then
+        if PlayerHasBuff(BUFF_DARK_ARTS) then
+            duration = duration + (3 * GetJobPointCount(JOB_SCH, JP_SCH_DARK_ARTS_EFFECT));
+        end
+        return duration;
+    end
+
+    return duration;
+end
+
+local function ApplyBuffExpiry(targetDebuffs, buffId, expiry)
+    if buffId == nil then return; end
+    targetDebuffs[buffId] = expiry;
+end
+
+local function GetDurationData(actionType, id)
+    if actionType == 4 then
+        return SPELL_DURATIONS[id];
+    elseif actionType == 3 then
+        return SPELL_DURATIONS[id] or JA_PHYSICAL_DURATIONS[id];
+    elseif actionType == 6 or actionType == 14 then
+        return JA_DURATIONS[id];
+    elseif actionType == 13 then
+        return PET_DURATIONS[id];
+    end
+    return SPELL_DURATIONS[id];
+end
+
+local function ApplySpellData(targetDebuffs, spellData, actorId, now, packetBuffId)
+    local expiry = now + ResolveDuration(spellData, actorId);
+    if spellData.clearsBuffs then
+        for _, clearBuffId in ipairs(spellData.clearsBuffs) do
+            targetDebuffs[clearBuffId] = nil;
+        end
+    end
+    if spellData.buffIds then
+        for _, buffId in ipairs(spellData.buffIds) do
+            ApplyBuffExpiry(targetDebuffs, buffId, expiry);
+        end
+        return;
+    end
+    local buffId = spellData.buffId or packetBuffId;
+    ApplyBuffExpiry(targetDebuffs, buffId, expiry);
+end
 
 local function ApplyMessage(debuffs, action)
 
@@ -149,6 +245,7 @@ local function ApplyMessage(debuffs, action)
     end
 
     local now = os.time()
+    local actorId = action.UserId;
 
     for _, target in pairs(action.Targets) do
         for _, ability in pairs(target.Actions) do
@@ -166,92 +263,69 @@ local function ApplyMessage(debuffs, action)
                 debuffs[target.Id] = T{};
             end
 
+            local targetDebuffs = debuffs[target.Id];
+            local spellData = GetDurationData(action.Type, spell);
+
             -- Handle pet abilities (Type 13)
-            if action.Type == 13 and spell == 1908 then
-                -- Nightmare
-                debuffs[target.Id][2] = now + 60
-            -- Handle weapon skills (Type 3 with damage message)
+            if action.Type == 13 then
+                if spellData then
+                    ApplySpellData(targetDebuffs, spellData, actorId, now, 2);
+                end
+            -- Handle weapon skills and physical job abilities (Type 3 with damage message)
             elseif action.Type == 3 and message == 185 then
-                local spellData = SPELL_DURATIONS[spell];
                 if spellData then
-                    if spellData.buffId then
-                        debuffs[target.Id][spellData.buffId] = now + spellData.duration;
-                    end
-                    if spellData.buffIds then
-                        for _, buffId in ipairs(spellData.buffIds) do
-                            debuffs[target.Id][buffId] = now + spellData.duration;
-                        end
-                    end
+                    ApplySpellData(targetDebuffs, spellData, actorId, now);
                 end
-            -- Handle dia/bio/helix spells (Type 4 with damage message)
+            -- Handle dia/bio/helix and physical additional-effect spells (Type 4 damage)
             elseif action.Type == 4 and spellDamageMes[message] then
-                local spellData = SPELL_DURATIONS[spell];
                 if spellData then
-                    local expiry = now + spellData.duration;
+                    local expiry = now + ResolveDuration(spellData, actorId);
                     if spell == 23 or spell == 24 or spell == 25 or spell == 33 then
-                        -- Dia spells - set dia, clear bio
-                        debuffs[target.Id][134] = expiry;
-                        debuffs[target.Id][135] = nil;
+                        targetDebuffs[134] = expiry;
+                        targetDebuffs[135] = nil;
                     elseif spell == 230 or spell == 231 or spell == 232 then
-                        -- Bio spells - set bio, clear dia
-                        debuffs[target.Id][134] = nil;
-                        debuffs[target.Id][135] = expiry;
+                        targetDebuffs[134] = nil;
+                        targetDebuffs[135] = expiry;
                     elseif (spell >= 278 and spell <= 285) or (spell >= 885 and spell <= 892) then
-                        -- Helix spells only (don't match weaponskill IDs that share numbers with damage spells)
-                        debuffs[target.Id][spellData.buffId] = expiry;
+                        ApplyBuffExpiry(targetDebuffs, spellData.buffId, expiry);
+                    elseif spellData.onDamage then
+                        ApplySpellData(targetDebuffs, spellData, actorId, now, buffTable.GetBuffIdBySpellId(spell));
                     end
                 end
-            -- Handle regular status effect spells
+            -- Handle regular status effect spells and magical BLU
             elseif statusOnMes[message] then
                 local buffId = ability.Param or (action.Type == 4 and buffTable.GetBuffIdBySpellId(spell) or nil);
-                if (buffId == nil) then
-                    return
-                end
-
-                local spellData = SPELL_DURATIONS[spell];
                 if spellData then
-                    -- Handle special clear buffs (Sleep II clears Sleep I)
-                    if spellData.clearsBuffs then
-                        for _, clearBuffId in ipairs(spellData.clearsBuffs) do
-                            debuffs[target.Id][clearBuffId] = nil;
-                        end
-                    end
-                    -- Apply the debuff
-                    local finalBuffId = spellData.buffId or buffId;
-                    debuffs[target.Id][finalBuffId] = now + spellData.duration;
-                else
-                    -- Unknown status effect - default to 5 minutes
-                    debuffs[target.Id][buffId] = now + 300;
+                    ApplySpellData(targetDebuffs, spellData, actorId, now, buffId);
+                elseif buffId ~= nil then
+                    targetDebuffs[buffId] = now + 300;
                 end
             -- Handle dispel effects
             elseif statusOffMes[message] then
-                if (ability.Param == nil) then
-                    return
-                else
-                    debuffs[target.Id][ability.Param] = nil
+                if ability.Param ~= nil then
+                    targetDebuffs[ability.Param] = nil
                 end
             -- Handle job abilities with additional effects
             elseif action.Type == 3 and additionalEffectJobAbilities[spell] then
-                local spellData = SPELL_DURATIONS[spell];
-                if spellData and spellData.buffId and (message == 185 or spell ~= 22) then
-                    -- Only apply if not already present or expired
-                    if (debuffs[target.Id][spellData.buffId] == nil or debuffs[target.Id][spellData.buffId] < now) then
-                        debuffs[target.Id][spellData.buffId] = now + spellData.duration;
+                local jaData = JA_PHYSICAL_DURATIONS[spell];
+                if jaData and jaData.buffId and (message == 185 or spell ~= 22) then
+                    if (targetDebuffs[jaData.buffId] == nil or targetDebuffs[jaData.buffId] < now) then
+                        targetDebuffs[jaData.buffId] = now + ResolveDuration(jaData, actorId);
                     end
                 end
+            -- Type 6 / 14 job abilities (Shadowbind, Tomahawk, Sepulcher, steps, etc.)
+            elseif (action.Type == 6 or action.Type == 14) and spellData then
+                ApplySpellData(targetDebuffs, spellData, actorId, now, ability.Param);
             -- Handle additional effects (weapon procs, etc.)
             elseif additionalEffect ~= nil and additionalEffectMes[additionalEffect] then
                 local buffId = ability.AdditionalEffect.Param;
-                if (buffId == nil) then
-                    return
-                end
-
-                local spellData = SPELL_DURATIONS[buffId];
-                if spellData and spellData.additionalEffect then
-                    debuffs[target.Id][buffId] = now + spellData.duration;
-                else
-                    -- Default duration for unknown additional effects
-                    debuffs[target.Id][buffId] = now + 30;
+                if buffId ~= nil then
+                    local aeData = ADDITIONAL_EFFECT_DURATIONS[buffId];
+                    if aeData then
+                        targetDebuffs[buffId] = now + aeData.duration;
+                    else
+                        targetDebuffs[buffId] = now + 30;
+                    end
                 end
             end
         end
@@ -281,6 +355,31 @@ local function ClearMessage(debuffs, basic)
                 debuffs[basic.target][19] = nil
             else
                 debuffs[basic.target][basic.param] = nil
+            end
+        end
+    end
+end
+
+debuffHandler.HandleIncomingPacket = function(e)
+    if (e.id == 0x08C) then
+        local meritNum = struct.unpack('B', e.data, 0x04 + 1);
+        for i = 1, meritNum, 1 do
+            local meritId = struct.unpack('H', e.data, 0x04 + (4 * i) + 1);
+            local meritCount = struct.unpack('B', e.data, 0x04 + (4 * i) + 0x03 + 1);
+            meritCounts[meritId] = meritCount;
+        end
+    elseif (e.id == 0x08D) then
+        local jobPointCount = (e.size / 4) - 1;
+        for i = 1, jobPointCount, 1 do
+            local offset = i * 4;
+            local index = ashita.bits.unpack_be(e.data_raw, offset, 0, 5);
+            local job = ashita.bits.unpack_be(e.data_raw, offset, 5, 11);
+            local count = ashita.bits.unpack_be(e.data_raw, offset + 3, 2, 6);
+            if job ~= 0 then
+                if jobPointCategories[job] == nil then
+                    jobPointCategories[job] = {};
+                end
+                jobPointCategories[job][index + 1] = count;
             end
         end
     end

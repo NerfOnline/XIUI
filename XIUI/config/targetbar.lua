@@ -127,6 +127,17 @@ local function DrawTargetBarSettingsContent()
         imgui.ShowHelp('Vertical offset for buffs/debuffs below the HP bar (in pixels).');
         components.DrawSlider('Icon Scale', 'targetBarIconScale', 0.1, 3.0, '%.1f');
         components.DrawSlider('Icon Text Size', 'targetBarIconFontSize', 8, 36);
+
+        imgui.Text('Song+ (own casts)');
+        imgui.ShowHelp('Song+ and All Songs+ combined (0-9). Applied only when you or your pet land the song.');
+        components.Indent();
+        components.DrawSlider('Lullaby+', 'songPlusLullaby', 0, 9);
+        components.DrawSlider('Requiem+', 'songPlusRequiem', 0, 9);
+        components.DrawSlider('Elegy+', 'songPlusElegy', 0, 9);
+        components.DrawSlider('Threnody+', 'songPlusThrenody', 0, 9);
+        components.DrawSlider('Nocturne+', 'songPlusNocturne', 0, 9);
+        components.DrawSlider('Virelai+', 'songPlusVirelai', 0, 9);
+        components.Unindent();
     end
 
     -- Target of Target Bar settings (only show when split is enabled)

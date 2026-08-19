@@ -203,11 +203,91 @@ local chainBuffs = {};
 local attrCache = {};
 local nameIndex = {};
 
-local skills;
+local function CopySkillTables(src)
+    local dst = {};
+    for cat, entries in pairs(src) do
+        if type(entries) == 'table' then
+            local copy = {};
+            for id, skill in pairs(entries) do
+                copy[id] = skill;
+            end
+            dst[cat] = copy;
+        else
+            dst[cat] = entries;
+        end
+    end
+    return dst;
+end
+
+local function CloneSkill(skill)
+    if type(skill) ~= 'table' then
+        return skill;
+    end
+    local copy = {};
+    for k, v in pairs(skill) do
+        copy[k] = v;
+    end
+    return copy;
+end
+
+local function ResolveSkillRef(base, skill, depth)
+    if type(skill) ~= 'table' then
+        return skill;
+    end
+    if skill.ref == nil or skill.id == nil then
+        return skill;
+    end
+    if depth > 8 then
+        return nil;
+    end
+    local cat = base[skill.ref];
+    local target = cat and cat[skill.id];
+    return ResolveSkillRef(base, target, depth + 1);
+end
+
+local function ApplyHorizonOverlay(base, overlay)
+    for cat, entries in pairs(overlay) do
+        if type(entries) == 'table' then
+            if base[cat] == nil then
+                base[cat] = {};
+            end
+            for id, skill in pairs(entries) do
+                if skill == false then
+                    base[cat][id] = nil;
+                elseif type(skill) == 'table' and skill.ref ~= nil then
+                    base[cat][id] = skill;
+                elseif type(skill) == 'table' and skill.skillchain ~= nil and skill.en == nil then
+                    local existing = base[cat][id];
+                    if type(existing) == 'table' then
+                        local merged = CloneSkill(existing);
+                        merged.skillchain = skill.skillchain;
+                        base[cat][id] = merged;
+                    else
+                        base[cat][id] = CloneSkill(skill);
+                    end
+                else
+                    base[cat][id] = skill;
+                end
+            end
+        end
+    end
+
+    for _, entries in pairs(base) do
+        if type(entries) == 'table' then
+            for id, skill in pairs(entries) do
+                if type(skill) == 'table' and skill.ref ~= nil then
+                    local resolved = ResolveSkillRef(base, skill, 0);
+                    entries[id] = resolved and CloneSkill(resolved) or nil;
+                end
+            end
+        end
+    end
+    return base;
+end
+
+local skills = CopySkillTables(require('modules.hotbar.database.skillchain_retail'));
 if HzLimitedMode then
-    skills = require('modules.hotbar.database.skillchain_horizon');
-else
-    skills = require('modules.hotbar.database.skillchain_retail');
+    skills = ApplyHorizonOverlay(skills, require('modules.hotbar.database.skillchain_horizon'));
 end
 
 local function NormalizeName(name)

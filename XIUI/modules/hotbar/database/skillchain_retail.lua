@@ -1,6 +1,7 @@
--- Retail skillchain properties ported from LandSandBoat SQL
--- (weapon_skills, blue_spell_list, pet_skills). SCH/immanence/JA/PUP
--- use the same element and chainbound tables as Chains-Horizon.
+-- Retail skillchain properties (shared base). Horizon loads this table, then
+-- applies modules/hotbar/database/skillchain_horizon.lua for property diffs,
+-- missing 70-cap Blood Pacts, extra BLU, and NPC weaponskills.
+-- WS/BLU/pet data ported from LandSandBoat SQL; SCH/immanence/JA/PUP match Chains-Horizon.
 local skills = {};
 
 skills[3] = {

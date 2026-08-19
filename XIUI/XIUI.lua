@@ -1818,6 +1818,7 @@ ashita.events.register('packet_in', 'packet_in_cb', function (e)
     end
 
     expBar.HandlePacket(e)
+    debuffHandler.HandleIncomingPacket(e);
 
     -- Pet bar packet handling (0x0028 Action, 0x0068 Pet Sync)
     if gConfig.showPetBar then
