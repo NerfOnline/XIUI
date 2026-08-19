@@ -634,8 +634,11 @@ local function DrawBarWindow(barIndex, settings, drawContext)
                         -- Empty slot: skip rendering
                     else
                         local slotSkillchainName = nil;
-                        if skillchainEnabled and bind and bind.actionType == 'ws' and bind.action then
-                            slotSkillchainName = skillchain.GetSkillchainForSlot(targetServerId, bind.action);
+                        if skillchainEnabled and bind and bind.action then
+                            local at = bind.actionType;
+                            if at == 'ws' or at == 'ma' or at == 'pet' or at == 'ja' then
+                                slotSkillchainName = skillchain.GetSkillchainForSlot(targetServerId, at, bind.action);
+                            end
                         end
                         DrawSlot(barIndex, slotIndex, slotX, slotY, buttonSize, bind, barSettings, animOpacity, slotSkillchainName);
                     end

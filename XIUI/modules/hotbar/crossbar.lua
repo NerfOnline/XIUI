@@ -1013,8 +1013,11 @@ local function DrawLeftSide(mode, groupX, groupY, slotSize, settings, isActive, 
         local slotSkillchainName = nil;
         if skillchainEnabled then
             local slotData = data.GetCrossbarSlotData(mode, slotIndex);
-            if slotData and slotData.actionType == 'ws' and slotData.action then
-                slotSkillchainName = skillchain.GetSkillchainForSlot(targetServerId, slotData.action);
+            if slotData and slotData.action then
+                local at = slotData.actionType;
+                if at == 'ws' or at == 'ma' or at == 'pet' or at == 'ja' then
+                    slotSkillchainName = skillchain.GetSkillchainForSlot(targetServerId, at, slotData.action);
+                end
             end
         end
         DrawSlot(mode, slotIndex, slotX, slotY, slotSize, settings, isActive, isPressed, animOpacity, yOffset, slotSkillchainName);
@@ -1041,8 +1044,11 @@ local function DrawRightSide(mode, groupX, groupY, slotSize, settings, isActive,
         local slotSkillchainName = nil;
         if skillchainEnabled then
             local slotData = data.GetCrossbarSlotData(mode, slotIndex);
-            if slotData and slotData.actionType == 'ws' and slotData.action then
-                slotSkillchainName = skillchain.GetSkillchainForSlot(targetServerId, slotData.action);
+            if slotData and slotData.action then
+                local at = slotData.actionType;
+                if at == 'ws' or at == 'ma' or at == 'pet' or at == 'ja' then
+                    slotSkillchainName = skillchain.GetSkillchainForSlot(targetServerId, at, slotData.action);
+                end
             end
         end
         DrawSlot(mode, slotIndex, slotX, slotY, slotSize, settings, isActive, isPressed, animOpacity, yOffset, slotSkillchainName);

@@ -353,11 +353,13 @@ function M.createHotbarGlobalDefaults()
         hotbarNumberOffsetY = 0,
 
         -- Skillchain highlight settings
-        skillchainHighlightEnabled = true,      -- Show skillchain highlight on WS slots
+        skillchainHighlightEnabled = true,      -- Show skillchain highlight on closer slots
         skillchainHighlightColor = 0xFFD4AA44,  -- Gold color for highlight border (ARGB)
         skillchainIconScale = 1.0,              -- Scale multiplier for icon (0.5-2.0)
         skillchainIconOffsetX = 0,              -- X offset in pixels
         skillchainIconOffsetY = 0,              -- Y offset in pixels
+        skillchainRequireAbility = false,       -- BLU/SCH spells need CA, AL, or Immanence
+        skillchainHighlightAllBloodPacts = false, -- Off: only the summoned avatar's blood pacts
     
         -- Cooldown timer settings
         recastTimerFontSize = 11,               -- Font size for cooldown timer display

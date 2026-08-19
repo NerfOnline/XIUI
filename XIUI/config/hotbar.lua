@@ -2747,25 +2747,48 @@ function M.DrawSettings(state)
         gConfig.hotbarGlobal.skillchainHighlightEnabled = skillchainHighlight[1];
         SaveSettingsOnly();
     end
-    imgui.ShowHelp('Show animated border and skillchain icon on weapon skill slots when a skillchain window is open.');
+    imgui.ShowHelp('Show an animated border and skillchain icon on slots that can close the current window (weapon skills, spells, blood pacts, and BST Ready). Icons only appear while a window is open.');
 
     if gConfig.hotbarGlobal.skillchainHighlightEnabled ~= false then
+        imgui.Indent(20);
+
+        local requireAbility = { gConfig.hotbarGlobal.skillchainRequireAbility == true };
+        if imgui.Checkbox('Require Chain Affinity / Azure Lore / Immanence', requireAbility) then
+            gConfig.hotbarGlobal.skillchainRequireAbility = requireAbility[1];
+            SaveSettingsOnly();
+        end
+        imgui.ShowHelp('When enabled, Blue Mage and Scholar spell slots only highlight if Chain Affinity, Azure Lore, or Immanence is active.');
+
+        local highlightAllPacts = gConfig.hotbarGlobal.skillchainHighlightAllBloodPacts == true
+            or (gConfig.hotbarGlobal.skillchainHighlightAllBloodPacts == nil and gConfig.hotbarGlobal.skillchainRequireSummonedAvatar == false);
+        local highlightAllPactsBox = { highlightAllPacts };
+        if imgui.Checkbox('Highlight All Blood Pacts', highlightAllPactsBox) then
+            gConfig.hotbarGlobal.skillchainHighlightAllBloodPacts = highlightAllPactsBox[1];
+            gConfig.hotbarGlobal.skillchainRequireSummonedAvatar = nil;
+            SaveSettingsOnly();
+        end
+        imgui.ShowHelp('When enabled, every blood pact that would close the window is highlighted, even if that avatar is not summoned. When disabled, only blood pacts for the avatar you currently have out are highlighted.');
+
+        imgui.Unindent(20);
+
         components.DrawPartySlider(gConfig.hotbarGlobal, 'Icon Scale##skillchain', 'skillchainIconScale', 0.5, 2.0, '%.1f', nil, 1.0);
         imgui.ShowHelp('Scale of the skillchain icon (default 1.0).');
         components.DrawPartySliderInt(gConfig.hotbarGlobal, 'Icon Offset X##skillchain', 'skillchainIconOffsetX', -50, 50, '%d', nil, 0);
         imgui.ShowHelp('Horizontal offset for skillchain icon position.');
         components.DrawPartySliderInt(gConfig.hotbarGlobal, 'Icon Offset Y##skillchain', 'skillchainIconOffsetY', -50, 50, '%d', nil, 0);
         imgui.ShowHelp('Vertical offset for skillchain icon position.');
-    end
 
-    components.DrawCheckbox('Magic Burst Notification', 'magicBurstEnabled');
-    imgui.ShowHelp('Show a large elemental image with a countdown while a skillchain\'s magic burst window is open.');
+        components.DrawCheckbox('Magic Burst Notification', 'magicBurstEnabled');
+        imgui.ShowHelp('Show a large elemental image with a countdown while a skillchain\'s magic burst window is open.');
 
-    if gConfig.magicBurstEnabled then
-        components.DrawSlider('Size##magicburst', 'magicBurstScale', 0.2, 3.0, '%.1f', UpdateUserSettings);
-        imgui.ShowHelp('Size of the elemental image (default 1.0).');
-        components.DrawCheckbox('Show Countdown##magicburst', 'magicBurstShowTimer', UpdateUserSettings);
-        imgui.ShowHelp('Show the seconds remaining in the center of the image.');
+        if gConfig.magicBurstEnabled then
+            imgui.Indent(20);
+            components.DrawCheckbox('Show Countdown##magicburst', 'magicBurstShowTimer', UpdateUserSettings);
+            imgui.ShowHelp('Show the seconds remaining in the center of the image.');
+            imgui.Unindent(20);
+            components.DrawSlider('Size##magicburst', 'magicBurstScale', 0.2, 3.0, '%.1f', UpdateUserSettings);
+            imgui.ShowHelp('Size of the elemental image (default 1.0).');
+        end
     end
 
     imgui.Spacing();
