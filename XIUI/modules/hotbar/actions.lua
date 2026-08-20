@@ -536,11 +536,13 @@ local function BuildCostDescriptor(actionType, actionName)
     end
 
     if actionType == 'ja' or actionType == 'pet' then
-        local abilityId = actiondb.GetAbilityId(actionName);
+        local abilityId = (actionType == 'pet')
+            and actiondb.GetPetAbilityId(actionName)
+            or actiondb.GetAbilityId(actionName);
         local ability = abilityId and AshitaCore:GetResourceManager():GetAbilityById(abilityId);
         if not ability then return NO_COST; end
 
-        local timerId = ability.RecastTimerId;
+        local timerId = ability.RecastTimerId or ability.TimerId;
         if timerId == recast.CHARGE_TIMER.STRATAGEM
             or timerId == recast.CHARGE_TIMER.READY
             or timerId == recast.CHARGE_TIMER.QUICK_DRAW then
@@ -806,11 +808,7 @@ function M.IsActionAvailable(bind)
         end
 
     elseif bind.actionType == 'pet' then
-        -- Pet bits are volatile across summon/release; never permanently cache.
-        local abilityId = actiondb.GetAbilityId(bind.action);
-        if abilityId and player:HasAbility(abilityId) then
-            return true, nil, false;
-        end
+        -- Pet bits flip on summon/release; never permanently cache availability.
         if not playerdata.IsPetCommandAvailable(bind.action) then
             return false, "N/A", false;
         end
@@ -1835,7 +1833,7 @@ local function FindMatchingKeybind(keyCode, ctrl, alt, shift)
     end
 
     -- Search through all bars for a matching keybind
-    for barIndex = 1, 6 do
+    for barIndex = 1, data.NUM_BARS do
         local configKey = 'hotbarBar' .. barIndex;
         local barSettings = gConfig[configKey];
         -- Validate barSettings and keyBindings are tables before iterating
@@ -2042,7 +2040,7 @@ function M.HandleKey(event)
    end
 end
 
--- Get currently pressed hotbar index (1-6) or nil
+-- Get currently pressed hotbar index or nil
 function M.GetPressedHotbar()
     return currentPressedHotbar;
 end

@@ -769,6 +769,8 @@ local function DrawSlot(comboMode, slotIndex, x, y, slotSize, settings, isActive
     p.labelOffsetX = (settings.actionLabelOffsetX or 0) * gs;
     p.labelOffsetY = ((settings.actionLabelOffsetY or 0) + 2) * gs;
     p.labelFontSize = (settings.labelFontSize or 10) * gs;
+    p.labelWordWrap = settings.actionLabelWordWrap ~= false;
+    p.labelSlotSpacing = (settings.slotGapH or 0) * gs;
     p.recastTimerFontSize = (settings.recastTimerFontSize or 11) * gs;
     p.recastTimerFontColor = settings.recastTimerFontColor or 0xFFFFFFFF;
     p.flashCooldownUnder5 = settings.flashCooldownUnder5 or false;

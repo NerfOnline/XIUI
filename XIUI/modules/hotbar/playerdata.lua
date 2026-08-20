@@ -14,6 +14,7 @@ local M = {};
 
 local cachedSpells = nil;
 local cachedAbilities = nil;
+local cachedPetCommands = nil;
 local cachedWeaponskills = nil;
 local cachedItems = nil;
 local cacheJobId = nil;
@@ -308,7 +309,15 @@ local ABILITY_TYPE = {
     RuneEffusion      = 23,
 };
 
--- Menu subcategory headers (not executable actions)
+-- Types that belong in the Pet Command editor list (/pet actions).
+local PET_MENU_TYPES = {
+    [ABILITY_TYPE.PetCommand] = true,
+    [ABILITY_TYPE.BloodPactRage] = true,
+    [ABILITY_TYPE.BloodPactWard] = true,
+    [ABILITY_TYPE.BeastmasterSic] = true,
+};
+
+-- Menu subcategory headers (not executable actions).
 local CATEGORY_STUB_IDS = {
     [567] = true, -- Pet Commands
     [603] = true, -- Blood Pact: Rage
@@ -329,29 +338,49 @@ local CATEGORY_STUB_IDS = {
     [892] = true, -- Effusion
 };
 
--- Pet commands to filter out from ability list (these belong in Pet Command section)
-local PET_COMMAND_NAMES = {
-    ['Assault'] = true,
-    ['Retreat'] = true,
-    ['Stay'] = true,
-    ['Heel'] = true,
-    ['Release'] = true,
-    ['Leave'] = true,
-    ['Fight'] = true,
-    ['Sic'] = true,
-    ['Ready'] = true,
-    ['Avatar\'s Favor'] = true,
-    ['Steady Wing'] = true,
-    ['Deploy'] = true,
-    ['Retrieve'] = true,
-    ['Activate'] = true,
-    ['Deactivate'] = true,
-};
+-- Job ability / pet command resource id range used by HasAbility scans.
+local ABILITY_SCAN_MIN = 0x200;
+local ABILITY_SCAN_MAX = 0x600;
 
---- Get player's available job abilities (includes both main job and subjob abilities)
---- Filters out weapon skills (Type 3), traits, pet commands, and menu stubs
----@return table Array of {id, name, source} where source is 'main' or 'sub'
-function M.GetPlayerAbilities()
+--- Live pet check (jug / charm / avatar / automaton / wyvern).
+---@return boolean
+local function PlayerHasActivePet()
+    local memMgr = AshitaCore:GetMemoryManager();
+    if not memMgr then return false; end
+
+    local party = memMgr:GetParty();
+    local playerIndex = party and party:GetMemberTargetIndex(0);
+    if not playerIndex or playerIndex == 0 then
+        return false;
+    end
+
+    local playerEntity = GetEntity(playerIndex);
+    if not playerEntity or not playerEntity.PetTargetIndex or playerEntity.PetTargetIndex == 0 then
+        return false;
+    end
+
+    local petEntity = GetEntity(playerEntity.PetTargetIndex);
+    return petEntity ~= nil and petEntity.Name ~= nil and petEntity.Name ~= '';
+end
+
+--- Whether the player currently knows an ability resource (HasAbility / HasPetCommand).
+local function PlayerKnowsAbility(player, ability)
+    if not player or not ability or not ability.Id then
+        return false;
+    end
+    if player:HasAbility(ability.Id) then
+        return true;
+    end
+    if player.HasPetCommand and player:HasPetCommand(ability.Id) then
+        return true;
+    end
+    return false;
+end
+
+--- Scan known abilities: resource ids 0x200..0x600 + HasAbility.
+---@param includePetTypes boolean If true, only pet /pet types; if false, exclude them
+---@return table Array of {id, name, type, source}
+local function ScanKnownAbilities(includePetTypes)
     local player = AshitaCore:GetMemoryManager():GetPlayer();
     if not player then return {}; end
 
@@ -363,23 +392,30 @@ function M.GetPlayerAbilities()
     local subJobId = player:GetSubJob() or 0;
     local subJobLevel = player:GetSubJobLevel() or 0;
 
-    local abilities = {};
-    local addedAbilities = {};
+    local results = {};
+    local added = {};
 
-    -- Job ability resource ids live in 0x200..0x600
-    for abilityId = 0x200, 0x600 do
-        if not CATEGORY_STUB_IDS[abilityId] and player:HasAbility(abilityId) then
-            local ability = resMgr:GetAbilityById(abilityId);
-            if ability and ability.Name and ability.Name[1] and ability.Name[1] ~= '' then
+    for index = ABILITY_SCAN_MIN, ABILITY_SCAN_MAX do
+        if not CATEGORY_STUB_IDS[index] then
+            local ability = resMgr:GetAbilityById(index);
+            if ability and ability.Name and ability.Name[1] and ability.Name[1] ~= ''
+                and PlayerKnowsAbility(player, ability)
+                and not added[ability.Id]
+            then
                 local abilityType = ability.Type or 0;
-                local abilityName = ability.Name[1];
+                local isPetType = PET_MENU_TYPES[abilityType] == true;
                 local isWeaponSkill = abilityType == ABILITY_TYPE.WeaponSkill;
                 local isTrait = abilityType == ABILITY_TYPE.Trait;
-                if not isWeaponSkill
-                    and not isTrait
-                    and not PET_COMMAND_NAMES[abilityName]
-                    and not addedAbilities[abilityId]
-                then
+                local isMonsterSkill = abilityType == ABILITY_TYPE.MonsterSkill;
+
+                local include = false;
+                if includePetTypes then
+                    include = isPetType;
+                else
+                    include = not isPetType and not isWeaponSkill and not isTrait and not isMonsterSkill;
+                end
+
+                if include then
                     local source = 'main';
                     if ability.Level then
                         local mainReqLevel = ability.Level[mainJobId + 1] or 0;
@@ -391,22 +427,41 @@ function M.GetPlayerAbilities()
                         end
                     end
 
-                    table.insert(abilities, {
-                        id = abilityId,
-                        name = abilityName,
+                    table.insert(results, {
+                        id = ability.Id,
+                        name = ability.Name[1],
+                        type = abilityType,
                         source = source,
                     });
-                    addedAbilities[abilityId] = true;
+                    added[ability.Id] = true;
                 end
             end
         end
     end
 
-    table.sort(abilities, function(a, b)
+    table.sort(results, function(a, b)
         return a.name < b.name;
     end);
 
-    return abilities;
+    return results;
+end
+
+--- Get player's available job abilities (main + sub).
+--- HasAbility on 0x200..0x600, excluding pet-typed resources.
+---@return table Array of {id, name, source}
+function M.GetPlayerAbilities()
+    return ScanKnownAbilities(false);
+end
+
+--- Get player's available pet commands (/pet), blood pacts, and Ready moves.
+--- HasAbility scan filtered to pet types. Also requires an active pet:
+--- some BST abilities (Spur, Run Wild) stay known in the bitfield with no pet.
+---@return table Array of {id, name, type, source}
+function M.GetPlayerPetCommands()
+    if not PlayerHasActivePet() then
+        return {};
+    end
+    return ScanKnownAbilities(true);
 end
 
 --- Get player's available weaponskills
@@ -532,6 +587,7 @@ function M.RefreshCachedLists(dataModule)
     if jobChanged or pendingChange or not cachedSpells then
         cachedSpells = M.GetPlayerSpells();
         cachedAbilities = M.GetPlayerAbilities();
+        cachedPetCommands = M.GetPlayerPetCommands();
         cachedWeaponskills = M.GetPlayerWeaponskills();
         cachedItems = nil;  -- Clear items cache to refresh on next access
         cacheJobId = currentJobId;
@@ -572,6 +628,7 @@ end
 function M.ClearCache()
     cachedSpells = nil;
     cachedAbilities = nil;
+    cachedPetCommands = nil;
     cachedWeaponskills = nil;
     cachedItems = nil;
     cacheJobId = nil;
@@ -588,6 +645,12 @@ function M.ForceRefreshAbilities()
     cachedAbilities = M.GetPlayerAbilities();
 end
 
+--- Force rebuild pet-command cache (HasAbility bits change on summon/release)
+function M.ForceRefreshPetCommands()
+    cachedPetCommands = M.GetPlayerPetCommands();
+    return cachedPetCommands;
+end
+
 --- Force rebuild weaponskill cache (call when macro editor dropdown opens)
 function M.ForceRefreshWeaponskills()
     cachedWeaponskills = M.GetPlayerWeaponskills();
@@ -596,6 +659,12 @@ end
 --- Force rebuild item cache (call when macro editor dropdown opens)
 function M.ForceRefreshItems()
     cachedItems = M.GetPlayerItems();
+end
+
+--- Get cached pet commands (call RefreshCachedLists / ForceRefreshPetCommands first)
+---@return table|nil
+function M.GetCachedPetCommands()
+    return cachedPetCommands;
 end
 
 --- Get current cache job ID
@@ -764,7 +833,8 @@ function M.IsEquipActionAvailable(equipSlot, itemName, itemId)
     return true;
 end
 
---- Check if a pet command is available for the current job/pet context
+--- Check if a pet command is currently known (HasAbility on the pet resource Id).
+--- Requires an active pet — Spur/Run Wild bits can stay set with no pet out.
 ---@param commandName string
 ---@return boolean
 function M.IsPetCommandAvailable(commandName)
@@ -772,38 +842,25 @@ function M.IsPetCommandAvailable(commandName)
         return false;
     end
 
+    if not PlayerHasActivePet() then
+        return false;
+    end
+
     local player = AshitaCore:GetMemoryManager():GetPlayer();
     if not player then return true; end
 
     local actiondb = require('modules.hotbar.actiondb');
-    local abilityId = actiondb.GetAbilityId(commandName);
-
-    -- HasAbility is the authoritative source: pet-specific bits appear after summon
-    if abilityId then
-        return player:HasAbility(abilityId) == true;
-    end
-
-    -- Unresolved name: fall back to the static command list for the pet job
-    local petregistry = require('modules.hotbar.petregistry');
-    local petpalette = require('modules.hotbar.petpalette');
-
-    local jobId = petregistry.ResolvePetJob(player:GetMainJob(), player:GetSubJob());
-    if not jobId then
+    local abilityId = actiondb.GetPetAbilityId(commandName);
+    if not abilityId then
         return false;
     end
 
-    local activePetName = nil;
-    if jobId == petregistry.JOB_BST then
-        activePetName = petpalette.GetCurrentPetEntityName();
+    if player:HasAbility(abilityId) then
+        return true;
     end
-
-    local commands = petregistry.GetPetCommandsForJob(jobId, nil, activePetName);
-    for _, cmd in ipairs(commands) do
-        if cmd.name == commandName then
-            return true;
-        end
+    if player.HasPetCommand and player:HasPetCommand(abilityId) then
+        return true;
     end
-
     return false;
 end
 

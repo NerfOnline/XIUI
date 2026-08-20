@@ -1,6 +1,6 @@
 --[[
 * XIUI Hotbar Module
-* Main entry point - manages lifecycle for 6 independent hotbar windows
+* Main entry point - manages lifecycle for independent hotbar windows
 ]]--
 
 -- This module copies concepts and content from the Windower XIVHotbar addon, https://github.com/Technyze/XIVHotbar2
@@ -480,6 +480,9 @@ function M.HandlePetSyncPacket()
     -- Use delayed check to ensure entity is available
     ashita.tasks.once(0.3, function()
         petpalette.CheckPetState();
+        -- Pet ability bits change on summon/release; refresh HasAbility lists.
+        local playerdata = require('modules.hotbar.playerdata');
+        playerdata.ForceRefreshPetCommands();
     end);
 end
 

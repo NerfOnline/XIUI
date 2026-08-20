@@ -361,7 +361,7 @@ local paletteCreateState = {
 };
 
 -- Initialize palette input buffers
-for i = 1, 6 do
+for i = 1, data.NUM_BARS do
     paletteCreateState.inputBuffer[i] = { '' };
 end
 
@@ -858,7 +858,7 @@ local function ApplyKeybind(keyCode, ctrl, alt, shift)
     local altVal = alt or false;
     local shiftVal = shift or false;
 
-    for barNum = 1, 6 do
+    for barNum = 1, data.NUM_BARS do
         local checkConfigKey = 'hotbarBar' .. barNum;
         local checkBarSettings = gConfig[checkConfigKey];
         if checkBarSettings and checkBarSettings.keyBindings then
@@ -976,7 +976,45 @@ local BAR_TYPES = {
     { key = 'Bar4', configKey = 'hotbarBar4', label = 'Bar 4' },
     { key = 'Bar5', configKey = 'hotbarBar5', label = 'Bar 5' },
     { key = 'Bar6', configKey = 'hotbarBar6', label = 'Bar 6' },
+    { key = 'Bar7', configKey = 'hotbarBar7', label = 'Bar 7' },
+    { key = 'Bar8', configKey = 'hotbarBar8', label = 'Bar 8' },
+    { key = 'Bar9', configKey = 'hotbarBar9', label = 'Bar 9' },
+    { key = 'Bar10', configKey = 'hotbarBar10', label = 'Bar 10' },
 };
+
+-- Draw Global + Bar tabs on two rows: Global & Bars 1-5, then Bars 6-10
+local function DrawHotbarBarTabs(idPrefix, selectedBarTab)
+    local newSelected = selectedBarTab;
+
+    local function DrawTabRange(fromIdx, toIdx)
+        for i = fromIdx, toIdx do
+            local barType = BAR_TYPES[i];
+            if barType then
+                local clicked = components.DrawStyledTab(
+                    barType.label,
+                    idPrefix .. i,
+                    newSelected == i,
+                    nil,
+                    components.TAB_STYLE.smallHeight,
+                    components.TAB_STYLE.smallPadding
+                );
+                if clicked then
+                    newSelected = i;
+                end
+                if i < toIdx then
+                    imgui.SameLine();
+                end
+            end
+        end
+    end
+
+    -- Row 1: Global + Bar 1-5 (indices 1-6)
+    DrawTabRange(1, 6);
+    -- Row 2: Bar 6-10 (indices 7-11)
+    DrawTabRange(7, #BAR_TYPES);
+
+    return newSelected;
+end
 
 -- Crossbar bar type definitions (each combo mode is a separate bar)
 local CROSSBAR_TYPES = {
@@ -1234,7 +1272,7 @@ function M.DrawKeybindModal()
 
     if imgui.Begin(modalTitle, isOpen, windowFlags) then
         -- Bar selector using styled tabs (like the bar tabs in hotbar settings)
-        for i = 1, 6 do
+        for i = 1, data.NUM_BARS do
             local clicked, _ = components.DrawStyledTab(
                 'Bar ' .. i,
                 'keybindBar' .. i,
@@ -1249,7 +1287,7 @@ function M.DrawKeybindModal()
                 keybindModal.selectedSlot = nil;
                 keybindModal.waitingForKey = false;
             end
-            if i < 6 then
+            if i < data.NUM_BARS then
                 imgui.SameLine();
             end
         end
@@ -1551,20 +1589,28 @@ local function DrawHotbarPositionSettings(configKey)
     imgui.TextColored({0.75, 0.75, 0.75, 1.0}, 'Bars to anchor (stacked bottom-up):');
 
     local columnStartX = imgui.GetCursorPosX();
-    for row = 1, 3 do
+    -- Left column: Bars 1-5, right column: Bars 6-10
+    for row = 1, 5 do
         imgui.SetCursorPosX(columnStartX);
         DrawAnchoredBarCheckbox(gConfig['hotbarBar' .. row], row, 'hotbarBar' .. row);
 
         imgui.SameLine();
         imgui.SetCursorPosX(columnStartX + ANCHORED_CHECKBOX_COLUMN_WIDTH);
-        local rightBar = row + 3;
+        local rightBar = row + 5;
         DrawAnchoredBarCheckbox(gConfig['hotbarBar' .. rightBar], rightBar, 'hotbarBar' .. rightBar);
     end
 
     imgui.Spacing();
-    components.DrawPartySliderInt(globalSettings, 'Hotbar Spacing##' .. configKey, 'hotbarSpacing', 0, 32, '%d', DeferredUpdateVisuals, 0);
-    imgui.ShowHelp('Vertical gap between hotbars when anchored.');
-    imgui.Spacing();
+end
+
+local function DrawHotbarSpacingSlider(configKey)
+    if configKey ~= 'hotbarGlobal' then
+        return;
+    end
+
+    local globalSettings = gConfig.hotbarGlobal;
+    components.DrawPartySliderInt(globalSettings, 'Hotbar/Row Spacing##' .. configKey, 'hotbarSpacing', 0, 32, '%d', DeferredUpdateVisuals, 0);
+    imgui.ShowHelp('Vertical gap between stacked hotbars and between rows in a multi-row bar. 0 = flush.');
 end
 
 local function DrawVisualSettingsContent(settings, configKey)
@@ -1595,17 +1641,13 @@ local function DrawVisualSettingsContent(settings, configKey)
     if components.CollapsingSection('Slot Settings##' .. configKey, false) then
         DrawHotbarPositionSettings(configKey);
 
+        DrawHotbarSpacingSlider(configKey);
+
         components.DrawPartySliderInt(settings, 'Slot Size (px)##' .. configKey, 'slotSize', 16, 64, '%d', nil, 48);
         imgui.ShowHelp('Size of each slot in pixels.');
 
-        components.DrawPartySliderInt(settings, 'Slot X Padding##' .. configKey, 'slotXPadding', 0, 32, '%d', nil, 8);
-        imgui.ShowHelp('Horizontal gap between slots.');
-
-        -- Slot Y Padding slider removed: each hotbar is now positioned
-        -- independently, so bar-to-bar spacing is handled by drag-positioning.
-        -- The setting still exists on the data side and controls the row gap
-        -- inside multi-row bars; we keep the saved value but hide the slider
-        -- to avoid misleading users.
+        components.DrawPartySliderInt(settings, 'Slot Spacing##' .. configKey, 'slotXPadding', 0, 32, '%d', nil, 8);
+        imgui.ShowHelp('Horizontal gap between slots. 0 = flush.');
 
         -- Show Hotbar Number with inline offsets
         components.DrawPartyCheckbox(settings, 'Show Hotbar Number##' .. configKey, 'showHotbarNumber');
@@ -1613,7 +1655,7 @@ local function DrawVisualSettingsContent(settings, configKey)
             imgui.SameLine();
             components.DrawInlineOffsets(settings, configKey .. 'hbn', 'hotbarNumberOffsetX', 'hotbarNumberOffsetY', 35);
         end
-        imgui.ShowHelp('Show the bar number (1-6) on the left side of the hotbar. X/Y offsets adjust position.');
+        imgui.ShowHelp('Show the bar number (1-10) on the left side of the hotbar. X/Y offsets adjust position.');
 
         -- Show Keybinds with anchor and offsets
         components.DrawPartyCheckbox(settings, 'Show Keybinds##' .. configKey, 'showKeybinds');
@@ -1656,6 +1698,15 @@ local function DrawVisualSettingsContent(settings, configKey)
             components.DrawInlineOffsets(settings, configKey .. 'lbl', 'actionLabelOffsetX', 'actionLabelOffsetY', 35);
         end
         imgui.ShowHelp('Show spell/ability names below slots. X/Y offsets adjust position.');
+        if settings.showActionLabels then
+            imgui.Indent(20);
+            if settings.actionLabelWordWrap == nil then
+                settings.actionLabelWordWrap = true;
+            end
+            components.DrawPartyCheckbox(settings, 'Word Wrap##' .. configKey, 'actionLabelWordWrap');
+            imgui.ShowHelp('Wrap labels onto up to 2 lines within the slot width.');
+            imgui.Unindent(20);
+        end
 
         components.DrawPartyCheckbox(settings, 'Show Slot Frame##' .. configKey, 'showSlotFrame');
         
@@ -1873,7 +1924,7 @@ local function DrawBarVisualSettings(configKey, barLabel)
             SaveSettingsToDisk();
             DeferredUpdateVisuals();
         end
-        imgui.ShowHelp('Number of rows (1-12).');
+        imgui.ShowHelp('Max row capacity (1-12). Visible rows are only added when columns force buttons to wrap (max 12 buttons per bar).');
 
         -- Columns slider
         local columns = { barSettings.columns or 12 };
@@ -1886,7 +1937,7 @@ local function DrawBarVisualSettings(configKey, barLabel)
             SaveSettingsToDisk();
             DeferredUpdateVisuals();
         end
-        imgui.ShowHelp('Number of columns (1-12).');
+        imgui.ShowHelp('Buttons per row (1-12). Buttons that do not fit in rows×columns are hidden (cap 12).');
     end
 
     -- Visual settings: Show message if using global, otherwise show per-bar settings
@@ -2366,6 +2417,15 @@ local function DrawCrossbarSettings(selectedCrossbarTab)
                     components.DrawInlineOffsets(crossbarSettings, 'crossbarlbl', 'actionLabelOffsetX', 'actionLabelOffsetY', 35);
                 end
                 imgui.ShowHelp('Show spell/ability names below slots. X/Y offsets adjust position.');
+                if crossbarSettings.showActionLabels then
+                    imgui.Indent(20);
+                    if crossbarSettings.actionLabelWordWrap == nil then
+                        crossbarSettings.actionLabelWordWrap = true;
+                    end
+                    components.DrawPartyCheckbox(crossbarSettings, 'Word Wrap##crossbar', 'actionLabelWordWrap');
+                    imgui.ShowHelp('Wrap labels onto up to 2 lines within the slot width.');
+                    imgui.Unindent(20);
+                end
             end
 
             -- Background section
@@ -2610,7 +2670,7 @@ function M.DrawSettings(state)
     components.DrawCheckbox('Lock Movement', 'hotbarLockMovement', function()
         -- Only reset anchors when lock is being ENABLED
         if gConfig.hotbarLockMovement then
-            for i = 1, 6 do
+            for i = 1, data.NUM_BARS do
                 drawing.ResetAnchorState('Hotbar' .. tostring(i));
             end
             drawing.ResetAnchorState('Crossbar');
@@ -2861,7 +2921,7 @@ function M.DrawSettings(state)
         end
         imgui.EndCombo();
     end
-    imgui.ShowHelp('Hotbar: Standard keyboard hotbars (Bars 1-6)\nCrossbar: Controller layout with L2/R2 triggers\nBoth: Show both hotbar and crossbar');
+    imgui.ShowHelp('Hotbar: Standard keyboard hotbars (Bars 1-10)\nCrossbar: Controller layout with L2/R2 triggers\nBoth: Show both hotbar and crossbar');
 
     -- Conditional: KB Palette Cycle (show if mode is hotbar or both)
     if currentMode == 'hotbar' or currentMode == 'both' then
@@ -3098,23 +3158,8 @@ function M.DrawSettings(state)
     imgui.ShowHelp('Configure each hotbar independently. Each bar can have its own layout, theme, and button settings.');
     imgui.Spacing();
 
-    -- Draw Bar 1-6 tabs
-    for i, barType in ipairs(BAR_TYPES) do
-        local clicked, tabWidth = components.DrawStyledTab(
-            barType.label,
-            'hotbarBarTab' .. i,
-            selectedBarTab == i,
-            nil,
-            components.TAB_STYLE.smallHeight,
-            components.TAB_STYLE.smallPadding
-        );
-        if clicked then
-            selectedBarTab = i;
-        end
-        if i < #BAR_TYPES then
-            imgui.SameLine();
-        end
-    end
+    -- Draw Bar tabs (two rows: Global+1-5, then 6-10)
+    selectedBarTab = DrawHotbarBarTabs('hotbarBarTab', selectedBarTab);
 
     imgui.Spacing();
     imgui.Separator();
@@ -3338,23 +3383,8 @@ function M.DrawColorSettings(state)
     imgui.TextColored(components.TAB_STYLE.gold, 'Per-Bar Color Settings');
     imgui.Spacing();
 
-    -- Draw Bar 1-6 tabs (same as visual settings)
-    for i, barType in ipairs(BAR_TYPES) do
-        local clicked, tabWidth = components.DrawStyledTab(
-            barType.label,
-            'hotbarColorTab' .. i,
-            selectedBarTab == i,
-            nil,
-            components.TAB_STYLE.smallHeight,
-            components.TAB_STYLE.smallPadding
-        );
-        if clicked then
-            selectedBarTab = i;
-        end
-        if i < #BAR_TYPES then
-            imgui.SameLine();
-        end
-    end
+    -- Draw Bar tabs (two rows: Global+1-5, then 6-10)
+    selectedBarTab = DrawHotbarBarTabs('hotbarColorTab', selectedBarTab);
 
     imgui.Spacing();
     imgui.Separator();

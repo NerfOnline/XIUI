@@ -134,7 +134,7 @@ local storageKeyCacheSource = nil;
 -- Constants
 -- ============================================
 
-M.NUM_BARS = 6;                    -- Total number of hotbars
+M.NUM_BARS = 10;                   -- Total number of hotbars
 M.SLOTS_PER_BAR = 12;              -- Default slots per hotbar
 M.MAX_SLOTS_PER_BAR = 12;          -- Maximum slots per hotbar
 
@@ -581,6 +581,7 @@ function M.GetBarSettings(barIndex)
             showActionLabels = false,
             actionLabelOffsetX = 0,
             actionLabelOffsetY = 0,
+            actionLabelWordWrap = true,
             slotXPadding = 8,
             slotYPadding = 6,
             slotBackgroundColor = 0x55000000,
@@ -622,21 +623,23 @@ function M.GetBarSettings(barIndex)
 end
 
 -- Get bar layout info (reads from per-bar settings)
+-- Configured rows×columns is a capacity grid, capped at MAX_SLOTS_PER_BAR (12).
+-- Visible rows are derived from how many slots actually fit — e.g. 3×12 still
+-- shows one row of 12; 3×5 shows three rows (5+5+2). Extra capacity beyond
+-- the slot cap is never drawn.
 function M.GetBarLayout(barIndex)
     local barSettings = M.GetBarSettings(barIndex);
-    local rows = barSettings.rows or 1;
-    local columns = barSettings.columns or 12;
+    local configuredRows = math.max(1, barSettings.rows or 1);
+    local columns = math.max(1, math.min(M.MAX_SLOTS_PER_BAR, barSettings.columns or 12));
 
-    -- Always calculate slots from rows * columns (ignore stored slots value)
-    local slots = rows * columns;
-
-    -- Ensure slots doesn't exceed max
-    slots = math.min(slots, M.MAX_SLOTS_PER_BAR);
+    local slots = math.min(configuredRows * columns, M.MAX_SLOTS_PER_BAR);
+    local visibleRows = math.max(1, math.ceil(slots / columns));
 
     return {
-        isVertical = rows > 1,
+        isVertical = visibleRows > 1,
         columns = columns,
-        rows = rows,
+        rows = visibleRows,
+        configuredRows = configuredRows,
         slots = slots,
     };
 end

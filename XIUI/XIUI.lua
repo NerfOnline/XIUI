@@ -1389,7 +1389,7 @@ ashita.events.register('command', 'command_cb', function (e)
                 print('  /xiui palette first [crossbar]           - Switch to first palette');
                 print('');
                 print('Target: omit for hotbars + crossbar, "crossbar"/"cb"/"xb" for crossbar only,');
-                print('or a bar number 1-6 to target a single hotbar.');
+                print('or a bar number 1-10 to target a single hotbar.');
                 print('Keybinds: Ctrl+Up/Down (configure in Hotbar > Palette Cycling)');
                 print('Controller: RB + Dpad Up/Down cycles palettes');
                 return;
@@ -1462,7 +1462,7 @@ ashita.events.register('command', 'command_cb', function (e)
                 if not affectCrossbar then
                     local palettes = paletteModule.GetAvailablePalettes(1, jobId, subjobId);
                     if #palettes > 0 then
-                        for i = 1, 6 do
+                        for i = 1, 10 do
                             paletteModule.SetActivePalette(i, palettes[1]);
                         end
                         table.insert(firstNames, 'Hotbar: ' .. palettes[1]);
@@ -1532,7 +1532,7 @@ ashita.events.register('command', 'command_cb', function (e)
                 elseif targetIsAll then
                     -- Apply across all hotbars and the crossbar
                     local anyFound = false;
-                    for i = 1, 6 do
+                    for i = 1, 10 do
                         if paletteModule.PaletteExists(i, paletteName, jobId, subjobId) then
                             paletteModule.SetActivePalette(i, paletteName);
                             anyFound = true;

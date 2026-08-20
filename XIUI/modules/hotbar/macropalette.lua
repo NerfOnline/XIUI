@@ -325,7 +325,6 @@ local selectedAvatarPalette = nil;  -- For SMN: nil = base, or avatar name like 
 
 -- Cached pet commands (managed locally, not in shared module)
 local cachedPetCommands = nil;
-local petAvatarFilter = 1;  -- 1 = All, 2+ = specific avatar index
 
 -- Search filter for dropdowns
 local searchFilter = { '' };
@@ -555,11 +554,6 @@ end
 
 local function GetCachedItems()
     return playerdata.GetCachedItems();
-end
-
--- Get pet commands for the current job
-local function GetPetCommandsForJob(jobId, avatarName, activePetName)
-    return petregistry.GetPetCommandsForJob(jobId, avatarName, activePetName);
 end
 
 -- Spell type sort order lookup for grouping
@@ -822,43 +816,14 @@ local function InvalidateBrowsingIconCache()
     browsingIconCache.generation = browsingIconCache.generation + 1;
 end
 
--- Build/return pet commands for the macro editor dropdown.
--- Lists what the palette's job can learn, not what is usable right now: the
--- editor must work off-job and with no pet out. Slot dimming handles usability.
+-- Pet command dropdown: known pet-typed abilities (HasAbility, 0x200..0x600).
 local function GetEditorPetCommands()
     if not cachedPetCommands then
-        local viewedJobId = selectedPaletteType;
-        if type(viewedJobId) ~= 'number' then
-            viewedJobId = playerdata.GetCacheJobId() or 0;
-        end
-
-        -- Fall back to a pet subjob (e.g. WAR/BST) so its commands still populate.
-        if not petregistry.IsPetJob(viewedJobId) then
-            local player = AshitaCore:GetMemoryManager():GetPlayer();
-            viewedJobId = petregistry.ResolvePetJob(viewedJobId, player and player:GetSubJob()) or viewedJobId;
-        end
-
-        local avatarName = nil;
-        local activePetName = nil;
-        local avatarList = petregistry.GetAvatarList();
-
-        if viewedJobId == petregistry.JOB_SMN then
-            if selectedAvatarPalette then
-                avatarName = selectedAvatarPalette;
-            elseif petAvatarFilter > 1 then
-                avatarName = avatarList[petAvatarFilter - 1];
-            end
-        elseif viewedJobId == petregistry.JOB_BST then
-            activePetName = petpalette.GetCurrentPetEntityName();
-        end
-
-        cachedPetCommands = GetPetCommandsForJob(viewedJobId, avatarName, activePetName);
+        cachedPetCommands = playerdata.ForceRefreshPetCommands() or {};
     end
-
-    return cachedPetCommands or {};
+    return cachedPetCommands;
 end
 
--- Eagerly rebuild pet command cache (matches playerdata ForceRefresh* pattern)
 local function ForceRefreshPetCommands()
     cachedPetCommands = nil;
     return GetEditorPetCommands();
@@ -1437,7 +1402,6 @@ function M.SyncToCurrentJob()
     playerdata.ClearCache();
     InvalidateBrowsingIconCache();
     cachedPetCommands = nil;
-    petAvatarFilter = 1;
     selectedAvatarPalette = nil;
     if editingMacro then
         editingMacro = nil;
@@ -1549,8 +1513,8 @@ end
 local function ClearSlotsReferencingMacro(macroId, typeKey)
     local isGlobalMacro = (typeKey == GLOBAL_MACRO_KEY);
 
-    -- Clear from all hotbars (1-6)
-    for barIndex = 1, 6 do
+    -- Clear from all hotbars
+    for barIndex = 1, data.NUM_BARS do
         local configKey = 'hotbarBar' .. barIndex;
         if gConfig[configKey] and gConfig[configKey].slotActions then
             local barSettings = gConfig[configKey];
@@ -2147,7 +2111,6 @@ function M.DrawPalette()
                 playerdata.ClearCache();
                 InvalidateBrowsingIconCache();
                 cachedPetCommands = nil;
-                petAvatarFilter = 1;
             end
             imgui.PopStyleColor();
 
@@ -2199,7 +2162,6 @@ function M.DrawPalette()
                     playerdata.ClearCache();
                     InvalidateBrowsingIconCache();
                     cachedPetCommands = nil;
-                    petAvatarFilter = 1;
                 end
 
                 imgui.PopStyleColor();
@@ -4143,48 +4105,7 @@ function M.DrawMacroEditor()
             end
 
         elseif currentType == 'pet' then
-            -- For SMN, show avatar filter dropdown
-            -- Use the VIEWED palette's job, not necessarily the player's current job
-            local viewedJobId = selectedPaletteType;
-            if type(viewedJobId) ~= 'number' then
-                viewedJobId = playerdata.GetCacheJobId() or 0;
-            end
-            local avatarList = petregistry.GetAvatarList();
-
-            if viewedJobId == petregistry.JOB_SMN then
-                imgui.TextColored(COLORS.goldDim, 'Avatar Filter');
-                PushComboStyle();
-                imgui.SetNextItemWidth(240);
-                local filterLabel = petAvatarFilter == 1 and 'All Avatars' or avatarList[petAvatarFilter - 1];
-                if imgui.BeginCombo('##avatarFilter', filterLabel) then
-                    -- "All" option
-                    local isAllSelected = petAvatarFilter == 1;
-                    if isAllSelected then imgui.PushStyleColor(ImGuiCol_Text, COLORS.gold); end
-                    if imgui.Selectable('All Avatars', isAllSelected) then
-                        petAvatarFilter = 1;
-                        cachedPetCommands = nil;  -- Clear cache to rebuild
-                    end
-                    if isAllSelected then imgui.PopStyleColor(); end
-
-                    imgui.Separator();
-
-                    -- Individual avatars
-                    for i, avatar in ipairs(avatarList) do
-                        local isSelected = petAvatarFilter == i + 1;
-                        if isSelected then imgui.PushStyleColor(ImGuiCol_Text, COLORS.gold); end
-                        if imgui.Selectable(avatar, isSelected) then
-                            petAvatarFilter = i + 1;
-                            cachedPetCommands = nil;  -- Clear cache to rebuild
-                        end
-                        if isSelected then imgui.PopStyleColor(); end
-                    end
-                    imgui.EndCombo();
-                end
-                PopComboStyle();
-                imgui.Spacing();
-            end
-
-            -- Pet command dropdown
+            -- Pet command dropdown (HasAbility scan for currently known /pet actions)
             imgui.TextColored(COLORS.goldDim, 'Pet Command');
             DrawSearchableCombo('##petCommandCombo', GetEditorPetCommands, editingMacro.action or '', function(cmd)
                 editingMacro.action = cmd.name;
@@ -4193,7 +4114,7 @@ function M.DrawMacroEditor()
                     editingMacro.displayName = cmd.name;
                     editorFields.displayName[1] = cmd.name;
                 end
-            end, false, nil, 'pet', 'No pet commands available for this job');
+            end, false, nil, 'pet', 'No pet commands available (need a pet / known abilities)');
 
             -- Manual input fallback
             imgui.Spacing();
