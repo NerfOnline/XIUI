@@ -1521,7 +1521,9 @@ function data.calculateCharmTime(mobLevel)
     -- Set base values
     local player = AshitaCore:GetMemoryManager():GetPlayer();
     local playerLvl = player:GetMainJobLevel();
-    local baseChr   = player:GetStat(6);
+    local baseChr = player:GetStat(6);
+    local bonusChr = (gConfig and gConfig.petBarBonusCharisma) or 0;
+    local modChr = baseChr + bonusChr;
 
     -- calculate level difference between player & pet
     local levelDifference = playerLvl - mobLevel;
@@ -1539,11 +1541,12 @@ function data.calculateCharmTime(mobLevel)
         end
     end
 
-    --Base Charm Duration (seconds) = floor(1.25 × CHR + 150 )
-    local baseCharmDuration = math.floor(1.25 * baseChr + 150);
-    --Pre-Gear Charm Duration = Base Charm Duration × % Change
+    -- Base Charm Duration (seconds) = floor(1.25 × Modified CHR + 150)
+    -- Modified Charisma = Base Charisma + Bonus Charisma
+    local baseCharmDuration = math.floor(1.25 * modChr + 150);
+    -- Pre-Gear Charm Duration = Base Charm Duration × % Change
     local preGearDuration = baseCharmDuration * lvlModifier;
-    --Charm Duration = Pre-gear Charm Duration × ( 1 + 0.05×(Charm+ in gear) )
+    -- Charm Duration = Pre-gear Charm Duration × ( 1 + 0.05×(Charm+ in gear) )
     local charmDuration = preGearDuration * (1 + (0.05 * data.getCharmEquipValue()));
 
     return os.time() + charmDuration;

@@ -744,6 +744,7 @@ function M.createUserSettingsDefaults()
         -- BST Charm indicator settings (absolute positioned relative to window)
         petBarShowCharmIndicator = true,
         petBarShowJugTimer = true,
+        petBarBonusCharisma = 0,
         petBarCharmIconSize = 16,
         petBarCharmTimerFontSize = 12,
         petBarCharmOffsetX = 0,
