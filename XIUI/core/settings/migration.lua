@@ -642,9 +642,15 @@ function M.MigrateHotbarLayoutSettings(gConfig, defaults)
         end
     end
 
-    for barIndex = 1, 6 do
-        local barCfg = gConfig['hotbarBar' .. barIndex];
-        local barDefaults = defaults['hotbarBar' .. barIndex] or {};
+    -- Ensure bars 1-10 exist (adds 7-10 for configs created before the expansion)
+    for barIndex = 1, 10 do
+        local key = 'hotbarBar' .. barIndex;
+        if gConfig[key] == nil and defaults[key] ~= nil then
+            gConfig[key] = deep_copy_table(defaults[key]);
+        end
+
+        local barCfg = gConfig[key];
+        local barDefaults = defaults[key] or {};
         if barCfg then
             if barCfg.anchoredInStack == nil then
                 barCfg.anchoredInStack = barDefaults.anchoredInStack ~= false;
@@ -1070,7 +1076,7 @@ function M.MigrateSlotMacroRefs(gConfig)
     end
 
     -- Hotbar slots: gConfig.hotbarBarN.slotActions[storageKey][slotIndex]
-    for barIndex = 1, 6 do
+    for barIndex = 1, 10 do
         local barCfg = gConfig['hotbarBar' .. barIndex];
         if barCfg and type(barCfg.slotActions) == 'table' then
             for storageKey, slots in pairs(barCfg.slotActions) do
@@ -1211,7 +1217,7 @@ function M.MigrateUniqueMacroIds(gConfig)
     end
 
     local rewrittenSlots = 0;
-    for barIdx = 1, 6 do
+    for barIdx = 1, 10 do
         local bar = gConfig['hotbarBar' .. barIdx];
         if bar and bar.slotActions then
             for storageKey, slots in pairs(bar.slotActions) do

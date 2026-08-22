@@ -129,6 +129,16 @@ local function DrawTargetBarSettingsContent()
         components.DrawSlider('Icon Text Size', 'targetBarIconFontSize', 8, 36);
     end
 
+    if components.CollapsingSection('Bard Song Settings##targetBar') then
+        imgui.Text('Adjust sliders for each +song equipment you have:');
+        components.DrawSlider('Lullaby', 'songPlusLullaby', 0, 9);
+        components.DrawSlider('Requiem', 'songPlusRequiem', 0, 9);
+        components.DrawSlider('Elegy', 'songPlusElegy', 0, 9);
+        components.DrawSlider('Threnody', 'songPlusThrenody', 0, 9);
+        components.DrawSlider('Nocturne', 'songPlusNocturne', 0, 9);
+        components.DrawSlider('Virelai', 'songPlusVirelai', 0, 9);
+    end
+
     -- Target of Target Bar settings (only show when split is enabled)
     if (gConfig.splitTargetOfTarget) then
         if components.CollapsingSection('Target of Target Bar##targetBar') then

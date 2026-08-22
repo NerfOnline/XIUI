@@ -51,6 +51,73 @@ local function GetSlotColorMult(isUnavailable, isOnCooldown, notEnoughCost)
     return 1.0, false;
 end
 
+-- Label width: slot size + even portion of spacing so adjacent labels meet in the gap, not overlap.
+local function GetActionLabelMaxWidth(slotSize, slotSpacing)
+    local spacing = slotSpacing or 0;
+    local evenExtra = math.floor(spacing / 2) * 2;
+    return slotSize + evenExtra;
+end
+
+-- Truncate text to fit maxWidth (no ellipsis).
+local function TruncateLabelToWidth(text, fontSize, maxWidth)
+    if not text or text == '' then return ''; end
+    local w = imtext.Measure(text, fontSize);
+    if w <= maxWidth then return text; end
+    local lo, hi = 0, #text;
+    while lo < hi do
+        local mid = math.floor((lo + hi + 1) / 2);
+        if imtext.Measure(text:sub(1, mid), fontSize) <= maxWidth then
+            lo = mid;
+        else
+            hi = mid - 1;
+        end
+    end
+    if lo <= 0 then return ''; end
+    return text:sub(1, lo);
+end
+
+-- Wrap at whole words into at most 2 lines; oversize words are cut (no ellipsis / no remainder carry).
+local function WrapActionLabel(text, fontSize, maxWidth)
+    local lines = {};
+    if not text or text == '' or maxWidth <= 0 then return lines; end
+
+    local words = {};
+    for word in string.gmatch(text, '%S+') do
+        words[#words + 1] = word;
+    end
+    if #words == 0 then return lines; end
+
+    local current = '';
+    for _, word in ipairs(words) do
+        if #lines >= 2 then break; end
+        local candidate = (current == '') and word or (current .. ' ' .. word);
+        if imtext.Measure(candidate, fontSize) <= maxWidth then
+            current = candidate;
+        elseif current ~= '' then
+            lines[#lines + 1] = current;
+            current = '';
+            if #lines >= 2 then break; end
+            if imtext.Measure(word, fontSize) <= maxWidth then
+                current = word;
+            else
+                local truncated = TruncateLabelToWidth(word, fontSize, maxWidth);
+                if truncated ~= '' then
+                    lines[#lines + 1] = truncated;
+                end
+            end
+        else
+            local truncated = TruncateLabelToWidth(word, fontSize, maxWidth);
+            if truncated ~= '' then
+                lines[#lines + 1] = truncated;
+            end
+        end
+    end
+    if current ~= '' and #lines < 2 then
+        lines[#lines + 1] = current;
+    end
+    return lines;
+end
+
 local ACTION_TYPE_LABELS = {
     ma = 'Spell (ma)', ja = 'Ability (ja)', ws = 'Weaponskill (ws)',
     item = 'Item', equip = 'Equip', macro = 'Macro', pet = 'Pet Command',
@@ -926,10 +993,25 @@ function M.DrawSlot(params)
         elseif notEnoughCost then
             labelColor = params.labelNoMpColor or 0xFFFF4444;
         end
-        local lblW = imtext.Measure(params.labelText, lblFontSize);
-        local labelX = x + (size - lblW) / 2 + (params.labelOffsetX or 0);
+        local labelOffsetX = params.labelOffsetX or 0;
         local labelY = y + size + 2 + (params.labelOffsetY or 0);
-        imtext.Draw(drawList, params.labelText, labelX, labelY, labelColor, lblFontSize);
+        local maxW = GetActionLabelMaxWidth(size, params.labelSlotSpacing or 0);
+        if params.labelWordWrap then
+            local lines = WrapActionLabel(params.labelText, lblFontSize, maxW);
+            for i = 1, #lines do
+                local line = lines[i];
+                local lblW = imtext.Measure(line, lblFontSize);
+                local labelX = x + (size - lblW) / 2 + labelOffsetX;
+                imtext.Draw(drawList, line, labelX, labelY + (i - 1) * lblFontSize, labelColor, lblFontSize);
+            end
+        else
+            local text = TruncateLabelToWidth(params.labelText, lblFontSize, maxW);
+            if text ~= '' then
+                local lblW = imtext.Measure(text, lblFontSize);
+                local labelX = x + (size - lblW) / 2 + labelOffsetX;
+                imtext.Draw(drawList, text, labelX, labelY, labelColor, lblFontSize);
+            end
+        end
     end
 
     -- ========================================

@@ -1,6 +1,6 @@
 --[[
 * XIUI Hotbar Module
-* Main entry point - manages lifecycle for 6 independent hotbar windows
+* Main entry point - manages lifecycle for independent hotbar windows
 ]]--
 
 -- This module copies concepts and content from the Windower XIVHotbar addon, https://github.com/Technyze/XIVHotbar2
@@ -112,39 +112,12 @@ function M.Initialize(settings)
         if gConfig.hotbarEnabled == nil then gConfig.hotbarEnabled = true; end
     end
 
-    -- Initialize data module (sets player job)
+    -- Initialize data module (sets player job from memory if already in-game)
     data.Initialize();
-
-    -- Validate palettes on reload (not just on job change packets)
-    -- Helper function to validate palettes once job is ready
-    local function ValidatePalettesWhenReady(attempt)
-        attempt = attempt or 1;
-        local maxAttempts = 20;
-
-        if data.SetPlayerJob() then
-            palette.ValidatePalettesForJob(data.jobId, data.subjobId);
-            macropalette.SyncToCurrentJob();
-            display.ClearIconCache();
-            slotrenderer.ClearAllCache();
-            actions.ClearNoIconCache();
-            if crossbarInitialized then
-                crossbar.ClearIconCache();
-            end
-        elseif attempt < maxAttempts then
-            local delay = math.min(0.5, 0.2 + (attempt * 0.05));
-            ashita.tasks.once(delay, function()
-                ValidatePalettesWhenReady(attempt + 1);
-            end);
-        end
-    end
 
     if data.jobId then
         palette.ValidatePalettesForJob(data.jobId, data.subjobId);
-    else
-        -- Job not ready yet, start retry loop
-        ashita.tasks.once(0.3, function()
-            ValidatePalettesWhenReady(1);
-        end);
+        macropalette.SyncToCurrentJob();
     end
 
     -- Initialize display layer
@@ -448,59 +421,7 @@ function M.HandleZonePacket()
     slotrenderer.ClearAvailabilityCache();
 end
 
--- Rebind the bars to whatever job the client reports. Job data lags the packet
--- (and login), so poll briefly rather than reading once.
-local function RebindWhenJobReady(attempt)
-    attempt = attempt or 1;
-    local maxAttempts = 20;
-
-    if data.SetPlayerJob() then
-        macropalette.SyncToCurrentJob();
-        palette.ValidatePalettesForJob(data.jobId, data.subjobId);
-        display.ClearIconCache();
-        actions.ClearNoIconCache();
-        if crossbarInitialized then
-            crossbar.ClearIconCache();
-        end
-        slotrenderer.ClearAvailabilityCache();
-        petpalette.CheckPetState();
-    elseif attempt < maxAttempts then
-        local delay = math.min(0.5, 0.2 + (attempt * 0.05));
-        ashita.tasks.once(delay, function()
-            RebindWhenJobReady(attempt + 1);
-        end);
-    end
-end
-
-function M.HandleJobChangePacket(e)
-    -- Persist pending edits before storage keys rematerialize for the new job
-    macropalette.FlushPendingSave();
-    palette.FlushPendingSave();
-
-    -- Initial delay to allow zone transition to complete
-    ashita.tasks.once(0.5, function()
-        RebindWhenJobReady(1);
-    end);
-end
-
--- A profile swap replaces gConfig wholesale, so palette selection and macro
--- state still point at the old profile until the bars are rebound. The job
--- itself is unchanged, so SetPlayerJob will not invalidate these on its own.
-function M.HandleProfileChange()
-    if not M.initialized then return; end
-    data.InvalidateStorageKeyCache();
-    data.MarkMacroLookupDirty();
-    RebindWhenJobReady(1);
-end
-
--- Reapply the current job's palettes to the live bars without an addon reload.
--- Used after palette-library edits (e.g. "Use Shared Library") so the active
--- hotbar/crossbar immediately reflect the new palette set. Synchronous: the job
--- is already known here, so there's no need for the packet retry loop.
-function M.RefreshForCurrentJob()
-    if not data.SetPlayerJob() then
-        return false;
-    end
+local function RefreshJobPalettes()
     macropalette.SyncToCurrentJob();
     palette.ValidatePalettesForJob(data.jobId, data.subjobId);
     display.ClearIconCache();
@@ -510,6 +431,46 @@ function M.RefreshForCurrentJob()
     end
     slotrenderer.ClearAvailabilityCache();
     petpalette.CheckPetState();
+end
+
+-- Apply job/sub from a packet and refresh palettes when the job actually changes
+-- or when this is the first valid job after login.
+function M.ApplyJobAndRefresh(mainJob, subJob)
+    if not mainJob or mainJob == 0 then
+        return false;
+    end
+    local hadJob = data.jobId and data.jobId ~= 0;
+    local applied, changed = data.ApplyJobFromPacket(mainJob, subJob);
+    if not applied then
+        return false;
+    end
+    if changed or not hadJob then
+        RefreshJobPalettes();
+    end
+    return true;
+end
+
+-- A profile swap replaces gConfig wholesale, so palette selection and macro
+-- state still point at the old profile until the bars are rebound. The job
+-- itself is unchanged, so SetPlayerJob will not invalidate these on its own.
+function M.HandleProfileChange()
+    if not M.initialized then return; end
+    data.InvalidateStorageKeyCache();
+    data.MarkMacroLookupDirty();
+    data.SetPlayerJob();
+    if data.jobId and data.jobId ~= 0 then
+        RefreshJobPalettes();
+    end
+end
+
+-- Reapply the current job's palettes to the live bars without an addon reload.
+-- Used after palette-library edits (e.g. "Use Shared Library") so the active
+-- hotbar/crossbar immediately reflect the new palette set.
+function M.RefreshForCurrentJob()
+    if not data.SetPlayerJob() then
+        return false;
+    end
+    RefreshJobPalettes();
     return true;
 end
 
@@ -519,6 +480,9 @@ function M.HandlePetSyncPacket()
     -- Use delayed check to ensure entity is available
     ashita.tasks.once(0.3, function()
         petpalette.CheckPetState();
+        -- Pet ability bits change on summon/release; refresh HasAbility lists.
+        local playerdata = require('modules.hotbar.playerdata');
+        playerdata.ForceRefreshPetCommands();
     end);
 end
 

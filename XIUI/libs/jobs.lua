@@ -16,8 +16,6 @@ local STANDARD_JOBS = {
     [21] = 'GEO', [22] = 'RUN',
 };
 
--- Sentinel for palette / hotbar job:subjob storage when not on a standard job.
--- MacroDB uses the string key OTHER_MACRO_KEY instead.
 local OTHER_JOB_ID = 23;
 local OTHER_MACRO_KEY = 'other';
 local OTHER_LABEL = 'Other';
@@ -29,28 +27,23 @@ api.OTHER_MACRO_KEY = OTHER_MACRO_KEY;
 api.OTHER_LABEL = OTHER_LABEL;
 api.STANDARD_MAX = 22;
 
---- Whether jobId is a normal playable job (WAR..RUN)
----@param jobId number|nil
----@return boolean
 function api.IsStandardJob(jobId)
     jobId = tonumber(jobId);
     return jobId ~= nil and STANDARD_JOBS[jobId] ~= nil;
 end
 
---- Numeric job id used for hotbar/palette storage (maps unknown -> Other sentinel)
----@param jobId number|nil
----@return number
+-- 1-22 stay themselves. Unknown numeric ids map to Other.
+-- nil/0 are not jobs and are returned unchanged.
 function api.ResolveJobCategory(jobId)
-    jobId = tonumber(jobId) or 0;
+    if type(jobId) ~= 'number' or jobId < 1 then
+        return jobId;
+    end
     if api.IsStandardJob(jobId) then
         return jobId;
     end
     return OTHER_JOB_ID;
 end
 
---- macroDB palette key for a main job (number, 'global', or 'other')
----@param jobId number|string|nil
----@return number|string
 function api.ResolveMacroPaletteKey(jobId)
     if jobId == 'global' or jobId == OTHER_MACRO_KEY then
         return jobId;
@@ -71,9 +64,6 @@ function api.ResolveMacroPaletteKey(jobId)
     return OTHER_MACRO_KEY;
 end
 
---- Display name for a job id / Other / Shared
----@param jobId number|string|nil
----@return string
 function api.GetDisplayName(jobId)
     if jobId == 0 or jobId == '0' then
         return 'Shared';
@@ -91,9 +81,27 @@ function api.GetDisplayName(jobId)
     return OTHER_LABEL;
 end
 
+-- Jobs 1-22 with level > 0, plus current main/sub when those are 1-22.
+function api.GetUnlockedJobIds(currentMain, currentSub)
+    local memory = AshitaCore and AshitaCore:GetMemoryManager();
+    local player = memory and memory:GetPlayer();
+    local ids = {};
+    for jobId = 1, 22 do
+        local include = (jobId == currentMain or jobId == currentSub);
+        if not include and player and player.GetJobLevel then
+            include = (player:GetJobLevel(jobId) or 0) > 0;
+        end
+        if include then
+            ids[#ids + 1] = jobId;
+        end
+    end
+    return ids;
+end
+
 local jobs = {};
 for id, name in pairs(STANDARD_JOBS) do
     jobs[id] = name;
 end
+jobs[OTHER_JOB_ID] = OTHER_LABEL;
 
 return setmetatable(jobs, { __index = api });

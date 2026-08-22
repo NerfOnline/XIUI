@@ -1400,7 +1400,7 @@ ashita.events.register('command', 'command_cb', function (e)
                 print('  /xiui palette first [crossbar]           - Switch to first palette');
                 print('');
                 print('Target: omit for hotbars + crossbar, "crossbar"/"cb"/"xb" for crossbar only,');
-                print('or a bar number 1-6 to target a single hotbar.');
+                print('or a bar number 1-10 to target a single hotbar.');
                 print('Keybinds: Ctrl+Up/Down (configure in Hotbar > Palette Cycling)');
                 print('Controller: RB + Dpad Up/Down cycles palettes');
                 return;
@@ -1473,7 +1473,7 @@ ashita.events.register('command', 'command_cb', function (e)
                 if not affectCrossbar then
                     local palettes = paletteModule.GetAvailablePalettes(1, jobId, subjobId);
                     if #palettes > 0 then
-                        for i = 1, 6 do
+                        for i = 1, 10 do
                             paletteModule.SetActivePalette(i, palettes[1]);
                         end
                         table.insert(firstNames, 'Hotbar: ' .. palettes[1]);
@@ -1543,7 +1543,7 @@ ashita.events.register('command', 'command_cb', function (e)
                 elseif targetIsAll then
                     -- Apply across all hotbars and the crossbar
                     local anyFound = false;
-                    for i = 1, 6 do
+                    for i = 1, 10 do
                         if paletteModule.PaletteExists(i, paletteName, jobId, subjobId) then
                             paletteModule.SetActivePalette(i, paletteName);
                             anyFound = true;
@@ -1834,6 +1834,7 @@ ashita.events.register('packet_in', 'packet_in_cb', function (e)
     end
 
     expBar.HandlePacket(e)
+    debuffHandler.HandleIncomingPacket(e);
 
     -- Pet bar packet handling (0x0028 Action, 0x0068 Pet Sync)
     if gConfig.showPetBar then
@@ -1884,9 +1885,11 @@ ashita.events.register('packet_in', 'packet_in_cb', function (e)
         ClearEntityCache();
         ResetD3D8Device();
         bLoggedIn = true;
-        -- Initialize hotbar job on zone-in (handles initial login and job change during zone)
+        -- Job from zone-in packet (login and zoning). Do not poll memory.
         if gConfig.hotbarEnabled then
-            hotbar.HandleJobChangePacket(e);
+            local mainJob = struct.unpack('B', e.data, 0xB4 + 1);
+            local subJob = struct.unpack('B', e.data, 0xB7 + 1);
+            hotbar.ApplyJobAndRefresh(mainJob, subJob);
         end
     elseif (e.id == 0x0029) then
         local messagePacket = ParseMessagePacket(e.data);
@@ -1941,9 +1944,18 @@ ashita.events.register('packet_in', 'packet_in_cb', function (e)
             skillchainModule.ClearState();  -- Clear skillchain tracking on zone
         end
     elseif (e.id == 0x001B) then
-        -- Job change packet - update hotbar to show new job's actions
+        -- Job change packet
         if gConfig.hotbarEnabled then
-            hotbar.HandleJobChangePacket(e);
+            local mainJob = struct.unpack('B', e.data, 0x08 + 1);
+            local subJob = struct.unpack('B', e.data, 0x0B + 1);
+            hotbar.ApplyJobAndRefresh(mainJob, subJob);
+        end
+    elseif (e.id == 0x061) then
+        -- Character stats (covers late job assign after a slow login)
+        if gConfig.hotbarEnabled then
+            local mainJob = struct.unpack('B', e.data, 0x0C + 1);
+            local subJob = struct.unpack('B', e.data, 0x0E + 1);
+            hotbar.ApplyJobAndRefresh(mainJob, subJob);
         end
     elseif (e.id == 0x076) then
         statusHandler.ReadPartyBuffsFromPacket(e);

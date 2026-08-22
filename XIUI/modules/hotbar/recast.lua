@@ -7,7 +7,6 @@
 local abilityRecast = require('libs.abilityrecast');
 local itemRecast = require('libs.itemrecast');
 local actiondb = require('modules.hotbar.actiondb');
-local petregistry = require('modules.hotbar.petregistry');
 
 local M = {};
 
@@ -19,33 +18,7 @@ function M.SetHHMMFormat(enabled)
     useHHMMFormat = enabled or false;
 end
 
--- Blood Pact timer IDs
-local BP_RAGE_TIMER_ID = 173;
-local BP_WARD_TIMER_ID = 174;
-
--- Get Blood Pact timer ID by command name
--- Returns timer ID (173 for Rage, 174 for Ward) or nil if not a blood pact
-local function GetBloodPactTimerId(commandName)
-    if not commandName then return nil; end
-
-    -- Check if it's a Rage pact
-    for _, pact in ipairs(petregistry.bloodPactsRage or {}) do
-        if pact.name == commandName then
-            return BP_RAGE_TIMER_ID;
-        end
-    end
-
-    -- Check if it's a Ward pact
-    for _, pact in ipairs(petregistry.bloodPactsWard or {}) do
-        if pact.name == commandName then
-            return BP_WARD_TIMER_ID;
-        end
-    end
-
-    return nil;
-end
-
--- Get pet command recast by timer ID
+-- Get pet command recast by timer ID (shared pools: BP 173/174, Heel/Stay/Leave 101, etc.)
 -- Returns: remaining seconds, or 0 if ready
 function M.GetPetCommandRecast(timerId)
     if not timerId then return 0; end
@@ -331,17 +304,10 @@ function M.GetCooldownInfo(actionData)
         spellId = actiondb.GetSpellId(actionData.action);
         remaining, recastText = M.GetActionRecast(actionData.actionType, spellId, nil, nil);
     elseif actionData.actionType == 'pet' then
-        -- Pet commands (Blood Pacts, Ready, etc.) - check for known timer IDs
-        local bpTimerId = GetBloodPactTimerId(actionData.action);
-        if bpTimerId then
-            -- Blood Pact - use timer ID directly
-            remaining = M.GetPetCommandRecast(bpTimerId);
-            recastText = M.FormatRecast(remaining);
-        else
-            -- Other pet commands - try ability lookup
-            abilityId = actiondb.GetAbilityId(actionData.action);
-            remaining, recastText = M.GetActionRecast(actionData.actionType, nil, abilityId, nil);
-        end
+        -- Prefer pet-typed resource so shared RecastTimerId pools match
+        -- (Heel/Stay/Leave = 101, BP Rage = 173, BP Ward = 174, Ready = 102).
+        abilityId = actiondb.GetPetAbilityId(actionData.action);
+        remaining, recastText = M.GetActionRecast(actionData.actionType, nil, abilityId, nil);
     elseif actionData.actionType == 'ja' then
         abilityId = actiondb.GetAbilityId(actionData.action);
         remaining, recastText = M.GetActionRecast(actionData.actionType, nil, abilityId, nil);

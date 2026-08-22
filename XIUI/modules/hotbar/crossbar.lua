@@ -769,6 +769,8 @@ local function DrawSlot(comboMode, slotIndex, x, y, slotSize, settings, isActive
     p.labelOffsetX = (settings.actionLabelOffsetX or 0) * gs;
     p.labelOffsetY = ((settings.actionLabelOffsetY or 0) + 2) * gs;
     p.labelFontSize = (settings.labelFontSize or 10) * gs;
+    p.labelWordWrap = settings.actionLabelWordWrap ~= false;
+    p.labelSlotSpacing = (settings.slotGapH or 0) * gs;
     p.recastTimerFontSize = (settings.recastTimerFontSize or 11) * gs;
     p.recastTimerFontColor = settings.recastTimerFontColor or 0xFFFFFFFF;
     p.flashCooldownUnder5 = settings.flashCooldownUnder5 or false;
@@ -1013,8 +1015,11 @@ local function DrawLeftSide(mode, groupX, groupY, slotSize, settings, isActive, 
         local slotSkillchainName = nil;
         if skillchainEnabled then
             local slotData = data.GetCrossbarSlotData(mode, slotIndex);
-            if slotData and slotData.actionType == 'ws' and slotData.action then
-                slotSkillchainName = skillchain.GetSkillchainForSlot(targetServerId, slotData.action);
+            if slotData and slotData.action then
+                local at = slotData.actionType;
+                if at == 'ws' or at == 'ma' or at == 'pet' or at == 'ja' then
+                    slotSkillchainName = skillchain.GetSkillchainForSlot(targetServerId, at, slotData.action);
+                end
             end
         end
         DrawSlot(mode, slotIndex, slotX, slotY, slotSize, settings, isActive, isPressed, animOpacity, yOffset, slotSkillchainName);
@@ -1041,8 +1046,11 @@ local function DrawRightSide(mode, groupX, groupY, slotSize, settings, isActive,
         local slotSkillchainName = nil;
         if skillchainEnabled then
             local slotData = data.GetCrossbarSlotData(mode, slotIndex);
-            if slotData and slotData.actionType == 'ws' and slotData.action then
-                slotSkillchainName = skillchain.GetSkillchainForSlot(targetServerId, slotData.action);
+            if slotData and slotData.action then
+                local at = slotData.actionType;
+                if at == 'ws' or at == 'ma' or at == 'pet' or at == 'ja' then
+                    slotSkillchainName = skillchain.GetSkillchainForSlot(targetServerId, at, slotData.action);
+                end
             end
         end
         DrawSlot(mode, slotIndex, slotX, slotY, slotSize, settings, isActive, isPressed, animOpacity, yOffset, slotSkillchainName);
