@@ -576,6 +576,9 @@ function M.MigrateIndividualSettings(gConfig, defaults)
     if gConfig.mobInfoGroupModifiers == nil then
         gConfig.mobInfoGroupModifiers = defaults.mobInfoGroupModifiers;
     end
+    if gConfig.mobInfoUseHorizonData == nil then
+        gConfig.mobInfoUseHorizonData = defaults.mobInfoUseHorizonData;
+    end
 
     -- Migrate party text position offsets (add to all parties if missing)
     local partyTables = { gConfig.partyA, gConfig.partyB, gConfig.partyC };

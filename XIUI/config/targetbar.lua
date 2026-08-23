@@ -260,6 +260,14 @@ local function DrawMobInfoSettingsContent(githubTexture)
     imgui.ShowHelp('Display all mob info on a single horizontal line with pipe separators.');
 
     if components.CollapsingSection('Display Options##mobInfo') then
+        components.DrawCheckbox('Horizon Mob Data', 'mobInfoUseHorizonData', function()
+            local mobdata = require('modules.mobinfo.data');
+            if mobdata.ReloadCurrentZone then
+                mobdata.ReloadCurrentZone();
+            end
+        end);
+        imgui.ShowHelp('Use HorizonXI Dynamis names and jobs from the Horizon mobdb overlay. On by default in the Horizon build.');
+
         components.DrawCheckbox('Show Job', 'mobInfoShowJob');
         imgui.ShowHelp('Display the mob\'s job type (WAR, MNK, BLM, etc.).');
 
