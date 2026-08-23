@@ -213,7 +213,7 @@ skills[11] = {
  [3435] = {ref=11, id=2280}, -- Iainuki
  [2386] = {en='Cobra Clamp',skillchain={'Fragmentation','Distortion'}},
  [3297] = {ref=11, id=2386}, -- Cobra Clamp
- [2444] = {en='Dancer\\'s Fury',skillchain={'Fragmentation','Scission'}},
+ [2444] = {en='Dancer\'s Fury',skillchain={'Fragmentation','Scission'}},
  [3310] = {ref=11, id=2444}, -- Dancer\'s Fury
  [2445] = {en='Whirling Edge',skillchain={'Distortion','Reverberation'}},
  [3311] = {ref=11, id=2445}, -- Whirling Edge
@@ -228,7 +228,7 @@ skills[11] = {
  [3295] = {ref=11, id=2472}, -- Songbird Swoop
  [2476] = {en='Gyre Strike',skillchain={'Fragmentation'}},
  [3292] = {ref=11, id=2476}, -- Gyre Strike
- [2477] = {en='Stag\\'s Charge',skillchain={'Gravitation','Induration'}},
+ [2477] = {en='Stag\'s Charge',skillchain={'Gravitation','Induration'}},
  [3293] = {ref=11, id=2477}, -- Stag\'s Charge
  [2478] = {en='Orcsbane',skillchain={'Light','Distortion'}},
  [3294] = {ref=11, id=2478}, -- Orcsbane
@@ -328,7 +328,7 @@ skills[11] = {
  [3551] = {ref=11, id=3337}, -- Lunar Bay
  [3381] = {en='Frenzied Thrust',skillchain={'Fragmentation','Transfixion'}},
  [3632] = {ref=11, id=3381}, -- Frenzied Thrust
- [3382] = {en='Sinner\\'s Cross',skillchain={'Gravitation','Scission'}},
+ [3382] = {en='Sinner\'s Cross',skillchain={'Gravitation','Scission'}},
  [3633] = {ref=11, id=3382}, -- Sinner\'s Cross
  [3383] = {en='Open Coffin',skillchain={'Fusion','Compression'}},
  [3634] = {ref=11, id=3383}, -- Open Coffin
@@ -349,10 +349,10 @@ skills[11] = {
  [3489] = {en='Stellar Arrow',skillchain={'Darkness','Gravitation'}},
  [3490] = {en='Lux Arrow',skillchain={'Fragmentation','Distortion'}},
  [3496] = {en='Hollow Smite',skillchain={'Light','Fragmentation'}},
- [3497] = {en='Sarva\\'s Storm',skillchain={'Darkness','Distortion'}},
+ [3497] = {en='Sarva\'s Storm',skillchain={'Darkness','Distortion'}},
  [3498] = {ref=11, id=3497}, -- Sarva\'s Storm
- [3499] = {en='Soturi\\'s Fury',skillchain={'Light','Fragmentation'}},
- [3500] = {en='Celidon\\'s Torment',skillchain={'Light','Fragmentation'}},
+ [3499] = {en='Soturi\'s Fury',skillchain={'Light','Fragmentation'}},
+ [3500] = {en='Celidon\'s Torment',skillchain={'Light','Fragmentation'}},
  [3501] = {en='Tachi: Mudo',skillchain={'Light','Distortion'}},
  [3503] = {en='Justicebreaker',skillchain={'Darkness','Gravitation'},delay=5},
  [3538] = {en='Null Blast',skillchain={'Fusion','Compression'}},
@@ -376,7 +376,7 @@ skills[11] = {
  [3701] = {ref=11, id=3581}, -- Sight Unseen
  [3582] = {en='Darkest Hour',skillchain={'Gravitation','Liquefaction'}},
  [3702] = {ref=11, id=3582}, -- Darkest Hour
- [3585] = {en='Naakual\\'s Vengeance',skillchain={'Light','Fusion'},delay=7},
+ [3585] = {en='Naakual\'s Vengeance',skillchain={'Light','Fusion'},delay=7},
  [3705] = {ref=11, id=3585}, -- Naakual\'s Vengeance
  [3591] = {en='Tartaric Sigil',skillchain={'Compression','Scission'}},
  [3653] = {ref=11, id=3591}, -- Tartaric Sigil
@@ -394,7 +394,7 @@ skills[11] = {
  [3645] = {ref=11, id=3611}, -- Inexorable Strike
  [3691] = {en='Bludgeon',skillchain={'Fusion'}},
  [3740] = {en='Final Exam',skillchain={'Light','Fusion'}},
- [3741] = {en='Doctor\\'s Orders',skillchain={'Darkness','Gravitation'}},
+ [3741] = {en='Doctor\'s Orders',skillchain={'Darkness','Gravitation'}},
  [3742] = {en='Empirical Research',skillchain={'Fragmentation','Transfixion'}},
  [3743] = {en='Lesson in Pain',skillchain={'Distortion','Scission'}},
  [3854] = {ref=11, id=686}, -- Brain Crush
