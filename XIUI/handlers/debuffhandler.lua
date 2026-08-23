@@ -19,8 +19,11 @@ local statusOnMes = {[101]=true, [127]=true, [160]=true, [164]=true, [166]=true,
 local statusOffMes = {[64]=true, [159]=true, [168]=true, [204]=true, [206]=true, [321]=true, [322]=true, [341]=true, [342]=true, [343]=true, [344]=true, [350]=true, [378]=true, [531]=true, [647]=true, [805]=true, [806]=true};
 local deathMes = {[6]=true, [20]=true, [97]=true, [113]=true, [406]=true, [605]=true, [646]=true};
 local spellDamageMes = {[2]=true, [252]=true, [264]=true, [265]=true};
-local additionalEffectJobAbilities = {[22]=true, [45]=true, [46]=true, [77]=true, [170]=true}; --energy drain, mug, shield bash, weapon bash, angon
+-- Physical/ability hits (110 = bash/jump, 185 = WS). Not a per-ability list.
+local physicalHitMes = {[103]=true, [110]=true, [185]=true, [187]=true, [238]=true, [242]=true, [317]=true, [802]=true};
 local additionalEffectMes = {[160]=true, [164]=true};
+-- JA 22 is Energy Drain on type 3 and Invincible on type 6. Drain only on WS-hit 185.
+local ENERGY_DRAIN_JA = 22;
 
 local BUFF_SABOTEUR = 454;
 local BUFF_STYMIE = 494;
@@ -227,17 +230,45 @@ local function ApplyBuffExpiry(targetDebuffs, buffId, expiry)
     targetDebuffs[buffId] = expiry;
 end
 
+-- Non-spell Param lookup. Old tracker used one table for every action type.
+local function LookupNonSpell(id)
+    return JA_DURATIONS[id] or JA_PHYSICAL_DURATIONS[id] or PET_DURATIONS[id];
+end
+
+-- Low 16 bits are the action id. 512-1023 is Ashita's JA resource range.
+-- Type 11 must not subtract 512: 688-695 are 2-hour mob skills.
+local function PacketParamId(id)
+    return bit.band(id or 0, 0xFFFF);
+end
+
+local function JobAbilityId(id)
+    id = PacketParamId(id);
+    if id >= 512 and id < 1024 then
+        return id - 512;
+    end
+    return id;
+end
+
+-- Type 4 is spells-only so BLU ids do not collide with 2-hours.
 local function GetDurationData(actionType, id)
+    id = PacketParamId(id);
+    local jaId = JobAbilityId(id);
     if actionType == 4 then
         return SPELL_DURATIONS[id];
-    elseif actionType == 3 then
-        return SPELL_DURATIONS[id] or JA_PHYSICAL_DURATIONS[id];
-    elseif actionType == 6 or actionType == 14 then
-        return JA_DURATIONS[id];
-    elseif actionType == 13 then
-        return PET_DURATIONS[id];
     end
-    return SPELL_DURATIONS[id];
+    if actionType == 3 then
+        return SPELL_DURATIONS[id] or LookupNonSpell(jaId);
+    end
+    if actionType == 6 or actionType == 14 then
+        return JA_DURATIONS[id] or LookupNonSpell(jaId);
+    end
+    if actionType == 13 then
+        return PET_DURATIONS[id] or PET_DURATIONS[jaId];
+    end
+    if actionType == 11 then
+        return LookupNonSpell(id) or SPELL_DURATIONS[id];
+    end
+    return SPELL_DURATIONS[id] or LookupNonSpell(id) or LookupNonSpell(jaId);
 end
 
 local function ApplySpellData(targetDebuffs, spellData, isOwnActor, now, packetBuffId)
@@ -272,7 +303,7 @@ local function ApplyMessage(debuffs, action)
         for _, ability in pairs(target.Actions) do
 
             -- Set up our state
-            local spell = action.Param
+            local spell = PacketParamId(action.Param);
             local message = ability.Message
             local additionalEffect
 
@@ -292,9 +323,9 @@ local function ApplyMessage(debuffs, action)
                 if spellData then
                     ApplySpellData(targetDebuffs, spellData, isOwnActor, now, 2);
                 end
-            -- Handle weapon skills and physical job abilities (Type 3 with damage message)
-            elseif action.Type == 3 and message == 185 then
-                if spellData then
+            -- Type 3 WS/JA on a physical hit. Energy Drain only on 185 (JA 22 collision).
+            elseif action.Type == 3 and spellData and physicalHitMes[message] then
+                if JobAbilityId(spell) ~= ENERGY_DRAIN_JA or message == 185 then
                     ApplySpellData(targetDebuffs, spellData, isOwnActor, now);
                 end
             -- Handle dia/bio/helix and physical additional-effect spells (Type 4 damage)
@@ -326,25 +357,25 @@ local function ApplyMessage(debuffs, action)
                 if ability.Param ~= nil then
                     targetDebuffs[ability.Param] = nil
                 end
-            -- Handle job abilities with additional effects
-            elseif action.Type == 3 and additionalEffectJobAbilities[spell] then
-                local jaData = JA_PHYSICAL_DURATIONS[spell];
-                if jaData and jaData.buffId and (message == 185 or spell ~= 22) then
-                    if (targetDebuffs[jaData.buffId] == nil or targetDebuffs[jaData.buffId] < now) then
-                        targetDebuffs[jaData.buffId] = now + ResolveDuration(jaData, isOwnActor);
-                    end
+            -- Type 11: ja/jaPhysical/pet only (spell ids collide with WS/BLU).
+            elseif action.Type == 11 then
+                local nonSpell = LookupNonSpell(spell);
+                if nonSpell then
+                    ApplySpellData(targetDebuffs, nonSpell, isOwnActor, now, ability.Param);
                 end
-            -- Type 6 / 14 job abilities (Shadowbind, Tomahawk, Sepulcher, steps, etc.)
+            -- Type 6 / 14: any JA in the duration tables (512-normalized in GetDurationData).
             elseif (action.Type == 6 or action.Type == 14) and spellData then
                 ApplySpellData(targetDebuffs, spellData, isOwnActor, now, ability.Param);
-            -- Handle additional effects (weapon procs, etc.)
-            elseif additionalEffect ~= nil and additionalEffectMes[additionalEffect] then
+            end
+
+            -- Additional-effect procs. Do not replace a known timer with the 30s guess.
+            if additionalEffect ~= nil and additionalEffectMes[additionalEffect] then
                 local buffId = ability.AdditionalEffect.Param;
                 if buffId ~= nil then
                     local aeData = ADDITIONAL_EFFECT_DURATIONS[buffId];
                     if aeData then
                         targetDebuffs[buffId] = now + aeData.duration;
-                    else
+                    elseif targetDebuffs[buffId] == nil or targetDebuffs[buffId] < now then
                         targetDebuffs[buffId] = now + 30;
                     end
                 end

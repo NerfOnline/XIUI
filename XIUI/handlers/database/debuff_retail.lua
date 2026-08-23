@@ -220,7 +220,8 @@ durations.jaPhysical = {
     [170] = {duration = 30, buffId = 149}, -- Angon - Defense Down
 };
 
--- Type 6 / 14 job abilities. 2-hour keys stay here so they do not collide with BLU spells.
+-- Type 6 / 14 job abilities. 16-23 are packet JA ids; 688-695 are mob-skill ids
+-- (type 11). Keep 688-695 out of spells so they do not collide with BLU.
 durations.ja = {
     [72] = {duration = 30, buffId = 11}, -- Shadowbind - Bind
     [139] = {duration = 30, buffId = 149}, -- Tomahawk - Defense Down
@@ -231,12 +232,20 @@ durations.ja = {
     [312] = {duration = 30, buffId = 448}, -- Feather Step - Bewildered Daze
     [321] = {duration = 60}, -- Bully
     [354] = {duration = 180, buffId = 463}, -- Sepulcher
-    [688] = {duration = 45}, -- Mighty Strikes (legacy 2hr tracking)
-    [690] = {duration = 45}, -- Hundred Fists
-    [691] = {duration = 60}, -- Manafont
-    [693] = {duration = 30}, -- Perfect Dodge
-    [694] = {duration = 30}, -- Invincible
-    [695] = {duration = 30}, -- Blood Weapon
+    [16] = {duration = 45, buffId = 44}, -- Mighty Strikes
+    [17] = {duration = 45, buffId = 46}, -- Hundred Fists
+    [19] = {duration = 60, buffId = 47}, -- Manafont
+    [20] = {duration = 60, buffId = 48}, -- Chainspell
+    [21] = {duration = 30, buffId = 49}, -- Perfect Dodge
+    [22] = {duration = 30, buffId = 50}, -- Invincible
+    [23] = {duration = 30, buffId = 51}, -- Blood Weapon
+    [688] = {duration = 45, buffId = 44}, -- Mighty Strikes (mob skill)
+    [690] = {duration = 45, buffId = 46}, -- Hundred Fists
+    [691] = {duration = 60, buffId = 47}, -- Manafont
+    [692] = {duration = 60, buffId = 48}, -- Chainspell
+    [693] = {duration = 30, buffId = 49}, -- Perfect Dodge
+    [694] = {duration = 30, buffId = 50}, -- Invincible
+    [695] = {duration = 30, buffId = 51}, -- Blood Weapon
 };
 
 durations.pet = {
