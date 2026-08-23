@@ -23,6 +23,11 @@ local imtext = require('libs.imtext');
 local pendingTooltipBind = nil;
 local tooltipFontSettings = nil;
 
+-- Action names hang below the slot and overlap the bar underneath. Queue them
+-- and draw after every bar so later icons cannot cover earlier labels.
+local pendingLabels = {};
+local pendingLabelCount = 0;
+
 -- Tooltip constants (ARGB for text colors used with imtext, ABGR/U32 for rect colors)
 local TOOLTIP_FONT_SIZE = 12;
 local TOOLTIP_COL_GOLD   = 0xF2F4DA97;
@@ -1023,8 +1028,18 @@ function M.DrawSlot(params)
         local lines = GetLabelLayout(params.labelText, lblFontSize, maxW, params.labelWordWrap);
         for i = 1, #lines do
             local line = lines[i];
-            local labelX = x + (size - line.width) / 2 + labelOffsetX;
-            imtext.Draw(drawList, line.text, labelX, labelY + (i - 1) * lblFontSize, labelColor, lblFontSize);
+            pendingLabelCount = pendingLabelCount + 1;
+            local entry = pendingLabels[pendingLabelCount];
+            if not entry then
+                entry = {};
+                pendingLabels[pendingLabelCount] = entry;
+            end
+            entry.drawList = drawList;
+            entry.text = line.text;
+            entry.x = x + (size - line.width) / 2 + labelOffsetX;
+            entry.y = labelY + (i - 1) * lblFontSize;
+            entry.color = labelColor;
+            entry.fontSize = lblFontSize;
         end
     end
 
@@ -1440,10 +1455,23 @@ function M.DrawTooltip(bind)
 end
 
 
--- Call at the start of each frame to reset deferred tooltip state
+-- Call at the start of each frame to reset deferred tooltip / label state
 function M.BeginFrame(fontSettings)
     pendingTooltipBind = nil;
     tooltipFontSettings = fontSettings;
+    pendingLabelCount = 0;
+end
+
+-- Draw queued action names after all bars so they sit on top of overlapping slots.
+function M.FlushLabels()
+    if pendingLabelCount == 0 then return; end
+    for i = 1, pendingLabelCount do
+        local entry = pendingLabels[i];
+        imtext.Draw(entry.drawList, entry.text, entry.x, entry.y, entry.color, entry.fontSize);
+        entry.drawList = nil;
+        entry.text = nil;
+    end
+    pendingLabelCount = 0;
 end
 
 -- Size of the abbreviation "pick-up" tile that follows the cursor on icon-less drags.

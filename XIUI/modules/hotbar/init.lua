@@ -344,6 +344,8 @@ function M.DrawWindow(settings)
         crossbar.SetHidden(true);
     end
 
+    slotrenderer.FlushLabels();
+
     -- Always draw macro palette, keybind modal and palette manager (regardless of
     -- mode), so they render whether or not the config menu is open.
     macropalette.DrawPalette();

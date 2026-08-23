@@ -579,15 +579,9 @@ local function SlotPassesGates(skill, actionType)
     return true;
 end
 
--- Returns the target's currently-open resonation state, or nil when there is no
--- target or no open window. Cheap enough to gate the expensive slot lookups on.
-local function ResolveOpenResonation(targetServerId)
-    local targetIndex = nil;
-    if targetServerId and targetServerId > 0x8FF then
-        targetIndex = GetIndexFromId(targetServerId);
-    elseif targetServerId and targetServerId > 0 and targetServerId <= 0x8FF then
-        targetIndex = targetServerId;
-    end
+-- Target's open resonation, or nil. Callers pass the entity index from
+-- targetLib.GetTargets(); do not reverse-map ServerId on the draw path.
+local function ResolveOpenResonation(targetIndex)
     if not targetIndex or targetIndex == 0 then
         return nil;
     end
@@ -641,7 +635,7 @@ function M.DebugDumpState()
     end
 end
 
-function M.GetSkillchainForSlot(targetServerId, actionType, actionName)
+function M.GetSkillchainForSlot(targetIndex, actionType, actionName)
     if not actionType then return nil; end
     -- Legacy: GetSkillchainForSlot(target, wsIdOrName)
     if actionName == nil then
@@ -649,9 +643,7 @@ function M.GetSkillchainForSlot(targetServerId, actionType, actionName)
         actionType = 'ws';
     end
 
-    -- Cheap gate first: no open window means nothing to highlight, so skip the
-    -- per-slot skill lookup + buff/pet gates entirely (runs per slot per frame).
-    local resonation = ResolveOpenResonation(targetServerId);
+    local resonation = ResolveOpenResonation(targetIndex);
     if not resonation then return nil; end
 
     local skill = FindSlotSkill(actionType, actionName);

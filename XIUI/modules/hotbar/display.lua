@@ -629,15 +629,14 @@ local function DrawBarWindow(barIndex, settings, drawContext)
         local keybindEditorOpen = hotbarConfig.IsKeybindModalOpen();
         local isDragging = dragdrop.IsDragging() or dragdrop.IsDragPending();
 
-        local targetServerId = nil;
+        -- Skip per-slot SC work unless a window is open; pass the entity index
+        -- we already have (no ServerId reverse-lookup on the draw path).
+        local skillchainTargetIndex = nil;
         local skillchainEnabled = gConfig.hotbarGlobal.skillchainHighlightEnabled ~= false;
-        if skillchainEnabled then
+        if skillchainEnabled and skillchain.IsWindowOpen() then
             local mainTargetIdx = targetLib.GetTargets();
             if mainTargetIdx and mainTargetIdx ~= 0 then
-                local targetEntity = GetEntity(mainTargetIdx);
-                if targetEntity then
-                    targetServerId = targetEntity.ServerId;
-                end
+                skillchainTargetIndex = mainTargetIdx;
             end
         end
 
@@ -656,10 +655,10 @@ local function DrawBarWindow(barIndex, settings, drawContext)
                     -- Empty slot: skip rendering
                 else
                     local slotSkillchainName = nil;
-                    if skillchainEnabled and bind and bind.action then
+                    if skillchainTargetIndex and bind and bind.action then
                         local at = bind.actionType;
                         if at == 'ws' or at == 'ma' or at == 'pet' or at == 'ja' then
-                            slotSkillchainName = skillchain.GetSkillchainForSlot(targetServerId, at, bind.action);
+                            slotSkillchainName = skillchain.GetSkillchainForSlot(skillchainTargetIndex, at, bind.action);
                         end
                     end
                     DrawSlot(barIndex, slotIndex, slotX, slotY, buttonSize, bind, barSettings, animOpacity, slotSkillchainName);
