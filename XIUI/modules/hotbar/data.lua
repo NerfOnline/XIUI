@@ -6,6 +6,7 @@
 require('common');
 
 local gameState = require('core.gamestate');
+local jobs = require('libs.jobs');
 
 local M = {};
 
@@ -1132,15 +1133,22 @@ function M.ApplyJobFromPacket(mainJob, subJob)
     if not mainJob or mainJob == 0 then
         return false, false;
     end
-    subJob = subJob or 0;
+    -- Main job collapses into the Other category; subjob keeps its real id only
+    -- when standard, matching the storage keys built from M.jobId/M.subjobId.
+    local jobId = jobs.ResolveJobCategory(mainJob);
+    local subjobId = subJob or 0;
+    if subjobId ~= 0 then
+        subjobId = jobs.IsStandardJob(subjobId) and subjobId or 0;
+    end
 
-    local changed = (M.jobId ~= mainJob or M.subjobId ~= subJob);
+    local changed = (M.jobId ~= jobId or M.subjobId ~= subjobId);
     if changed then
         M.InvalidateStorageKeyCache();
     end
 
-    M.jobId = mainJob;
-    M.subjobId = subJob;
+    M.jobId = jobId;
+    M.rawJobId = mainJob;
+    M.subjobId = subjobId;
     return true, changed;
 end
 

@@ -118,6 +118,39 @@ local function WrapActionLabel(text, fontSize, maxWidth)
     return lines;
 end
 
+-- Memoized label layout: resolves wrapped/truncated lines and their widths so
+-- the per-slot per-frame draw path does zero imtext.Measure calls on a cache hit.
+-- Keyed on (fontKey, text, fontSize, maxWidth, wordWrap); cleared when the font changes.
+local labelLayoutCache = {};
+local labelLayoutFontKey = nil;
+
+local function GetLabelLayout(text, fontSize, maxWidth, wordWrap)
+    local fontKey = imtext.GetFontKey();
+    if fontKey ~= labelLayoutFontKey then
+        labelLayoutCache = {};
+        labelLayoutFontKey = fontKey;
+    end
+
+    local key = string.format('%d|%d|%s|%s', fontSize, maxWidth, wordWrap and '1' or '0', text);
+    local cached = labelLayoutCache[key];
+    if cached then return cached; end
+
+    local lines = {};
+    if wordWrap then
+        for _, line in ipairs(WrapActionLabel(text, fontSize, maxWidth)) do
+            lines[#lines + 1] = { text = line, width = imtext.Measure(line, fontSize) };
+        end
+    else
+        local truncated = TruncateLabelToWidth(text, fontSize, maxWidth);
+        if truncated ~= '' then
+            lines[1] = { text = truncated, width = imtext.Measure(truncated, fontSize) };
+        end
+    end
+
+    labelLayoutCache[key] = lines;
+    return lines;
+end
+
 local ACTION_TYPE_LABELS = {
     ma = 'Spell (ma)', ja = 'Ability (ja)', ws = 'Weaponskill (ws)',
     item = 'Item', equip = 'Equip', macro = 'Macro', pet = 'Pet Command',
@@ -604,8 +637,6 @@ end
 -- Skillchain Highlight Rendering
 -- ============================================
 
--- Skillchain icon cache (loaded on first use)
-local skillchainIconCache = {};
 local skillchainIconsPath = nil;
 
 local function GetSkillchainIconsPath()
@@ -698,27 +729,20 @@ local function DrawSkillchainHighlight(drawList, x, y, size, scName, color, opac
     local iconX = x + size - iconSize - 2 + offsetX;
     local iconY = y + 2 + offsetY;
 
-    -- Get or load icon texture
+    -- Get or load icon texture (cached ptr; failed loads cached as false so we
+    -- don't retry the load every frame while the highlight is active)
     local iconPath = GetSkillchainIconsPath() .. scName .. '.png';
-    if not skillchainIconCache[scName] then
-        local tex = textures:LoadTextureFromPath(iconPath);
-        skillchainIconCache[scName] = tex;
-    end
-
-    local iconTex = skillchainIconCache[scName];
-    if iconTex and iconTex.image then
-        local iconPtr = tonumber(ffi.cast("uint32_t", iconTex.image));
-        if iconPtr then
-            local iconAlpha = math.floor(255 * opacity);
-            local iconTint = bit.bor(bit.lshift(iconAlpha, 24), 0x00FFFFFF);
-            drawList:AddImage(
-                iconPtr,
-                {iconX, iconY},
-                {iconX + iconSize, iconY + iconSize},
-                {0, 0}, {1, 1},
-                iconTint
-            );
-        end
+    local iconPtr = GetCachedTexturePtr(iconPath);
+    if iconPtr then
+        local iconAlpha = math.floor(255 * opacity);
+        local iconTint = bit.bor(bit.lshift(iconAlpha, 24), 0x00FFFFFF);
+        drawList:AddImage(
+            iconPtr,
+            {iconX, iconY},
+            {iconX + iconSize, iconY + iconSize},
+            {0, 0}, {1, 1},
+            iconTint
+        );
     end
 end
 
@@ -996,21 +1020,11 @@ function M.DrawSlot(params)
         local labelOffsetX = params.labelOffsetX or 0;
         local labelY = y + size + 2 + (params.labelOffsetY or 0);
         local maxW = GetActionLabelMaxWidth(size, params.labelSlotSpacing or 0);
-        if params.labelWordWrap then
-            local lines = WrapActionLabel(params.labelText, lblFontSize, maxW);
-            for i = 1, #lines do
-                local line = lines[i];
-                local lblW = imtext.Measure(line, lblFontSize);
-                local labelX = x + (size - lblW) / 2 + labelOffsetX;
-                imtext.Draw(drawList, line, labelX, labelY + (i - 1) * lblFontSize, labelColor, lblFontSize);
-            end
-        else
-            local text = TruncateLabelToWidth(params.labelText, lblFontSize, maxW);
-            if text ~= '' then
-                local lblW = imtext.Measure(text, lblFontSize);
-                local labelX = x + (size - lblW) / 2 + labelOffsetX;
-                imtext.Draw(drawList, text, labelX, labelY, labelColor, lblFontSize);
-            end
+        local lines = GetLabelLayout(params.labelText, lblFontSize, maxW, params.labelWordWrap);
+        for i = 1, #lines do
+            local line = lines[i];
+            local labelX = x + (size - line.width) / 2 + labelOffsetX;
+            imtext.Draw(drawList, line.text, labelX, labelY + (i - 1) * lblFontSize, labelColor, lblFontSize);
         end
     end
 

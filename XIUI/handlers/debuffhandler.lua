@@ -168,9 +168,9 @@ local function IsOwnActor(actorId)
     return GetLocalPetServerId() == actorId;
 end
 
-local function ResolveDuration(spellData, actorId)
+local function ResolveDuration(spellData, isOwnActor)
     local duration = spellData.duration or 0;
-    if not IsOwnActor(actorId) then
+    if not isOwnActor then
         return duration;
     end
 
@@ -240,8 +240,8 @@ local function GetDurationData(actionType, id)
     return SPELL_DURATIONS[id];
 end
 
-local function ApplySpellData(targetDebuffs, spellData, actorId, now, packetBuffId)
-    local expiry = now + ResolveDuration(spellData, actorId);
+local function ApplySpellData(targetDebuffs, spellData, isOwnActor, now, packetBuffId)
+    local expiry = now + ResolveDuration(spellData, isOwnActor);
     if spellData.clearsBuffs then
         for _, clearBuffId in ipairs(spellData.clearsBuffs) do
             targetDebuffs[clearBuffId] = nil;
@@ -265,6 +265,8 @@ local function ApplyMessage(debuffs, action)
 
     local now = os.time()
     local actorId = action.UserId;
+    -- Constant for the whole packet; resolve once instead of per target.
+    local isOwnActor = IsOwnActor(actorId);
 
     for _, target in pairs(action.Targets) do
         for _, ability in pairs(target.Actions) do
@@ -288,17 +290,17 @@ local function ApplyMessage(debuffs, action)
             -- Handle pet abilities (Type 13)
             if action.Type == 13 then
                 if spellData then
-                    ApplySpellData(targetDebuffs, spellData, actorId, now, 2);
+                    ApplySpellData(targetDebuffs, spellData, isOwnActor, now, 2);
                 end
             -- Handle weapon skills and physical job abilities (Type 3 with damage message)
             elseif action.Type == 3 and message == 185 then
                 if spellData then
-                    ApplySpellData(targetDebuffs, spellData, actorId, now);
+                    ApplySpellData(targetDebuffs, spellData, isOwnActor, now);
                 end
             -- Handle dia/bio/helix and physical additional-effect spells (Type 4 damage)
             elseif action.Type == 4 and spellDamageMes[message] then
                 if spellData then
-                    local expiry = now + ResolveDuration(spellData, actorId);
+                    local expiry = now + ResolveDuration(spellData, isOwnActor);
                     if spell == 23 or spell == 24 or spell == 25 or spell == 33 then
                         targetDebuffs[134] = expiry;
                         targetDebuffs[135] = nil;
@@ -308,14 +310,14 @@ local function ApplyMessage(debuffs, action)
                     elseif (spell >= 278 and spell <= 285) or (spell >= 885 and spell <= 892) then
                         ApplyBuffExpiry(targetDebuffs, spellData.buffId, expiry);
                     elseif spellData.onDamage then
-                        ApplySpellData(targetDebuffs, spellData, actorId, now, buffTable.GetBuffIdBySpellId(spell));
+                        ApplySpellData(targetDebuffs, spellData, isOwnActor, now, buffTable.GetBuffIdBySpellId(spell));
                     end
                 end
             -- Handle regular status effect spells and magical BLU
             elseif statusOnMes[message] then
                 local buffId = ability.Param or (action.Type == 4 and buffTable.GetBuffIdBySpellId(spell) or nil);
                 if spellData then
-                    ApplySpellData(targetDebuffs, spellData, actorId, now, buffId);
+                    ApplySpellData(targetDebuffs, spellData, isOwnActor, now, buffId);
                 elseif buffId ~= nil then
                     targetDebuffs[buffId] = now + 300;
                 end
@@ -329,12 +331,12 @@ local function ApplyMessage(debuffs, action)
                 local jaData = JA_PHYSICAL_DURATIONS[spell];
                 if jaData and jaData.buffId and (message == 185 or spell ~= 22) then
                     if (targetDebuffs[jaData.buffId] == nil or targetDebuffs[jaData.buffId] < now) then
-                        targetDebuffs[jaData.buffId] = now + ResolveDuration(jaData, actorId);
+                        targetDebuffs[jaData.buffId] = now + ResolveDuration(jaData, isOwnActor);
                     end
                 end
             -- Type 6 / 14 job abilities (Shadowbind, Tomahawk, Sepulcher, steps, etc.)
             elseif (action.Type == 6 or action.Type == 14) and spellData then
-                ApplySpellData(targetDebuffs, spellData, actorId, now, ability.Param);
+                ApplySpellData(targetDebuffs, spellData, isOwnActor, now, ability.Param);
             -- Handle additional effects (weapon procs, etc.)
             elseif additionalEffect ~= nil and additionalEffectMes[additionalEffect] then
                 local buffId = ability.AdditionalEffect.Param;

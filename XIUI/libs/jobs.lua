@@ -32,12 +32,10 @@ function api.IsStandardJob(jobId)
     return jobId ~= nil and STANDARD_JOBS[jobId] ~= nil;
 end
 
--- 1-22 stay themselves. Unknown numeric ids map to Other.
--- nil/0 are not jobs and are returned unchanged.
+-- 1-22 stay themselves. nil/0/unknown ids collapse to the Other category so
+-- callers always get a usable palette/storage key (e.g. before the first job packet).
 function api.ResolveJobCategory(jobId)
-    if type(jobId) ~= 'number' or jobId < 1 then
-        return jobId;
-    end
+    jobId = tonumber(jobId) or 0;
     if api.IsStandardJob(jobId) then
         return jobId;
     end

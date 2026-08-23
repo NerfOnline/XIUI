@@ -55,26 +55,13 @@ local resonationNames = {
     'Darkness',
 };
 
-local nameToResonation = {
-    Liquefaction = Resonation.Liquefaction,
-    Induration = Resonation.Induration,
-    Detonation = Resonation.Detonation,
-    Scission = Resonation.Scission,
-    Impaction = Resonation.Impaction,
-    Reverberation = Resonation.Reverberation,
-    Transfixion = Resonation.Transfixion,
-    Compression = Resonation.Compression,
-    Fusion = Resonation.Fusion,
-    Gravitation = Resonation.Gravitation,
-    Distortion = Resonation.Distortion,
-    Fragmentation = Resonation.Fragmentation,
-    Light = Resonation.Light,
-    Darkness = Resonation.Darkness,
-    Light2 = Resonation.Light2,
-    Darkness2 = Resonation.Darkness2,
-    Radiance = Resonation.Radiance,
-    Umbra = Resonation.Umbra,
-};
+-- Inverse of Resonation (name -> id); None is not a real skillchain.
+local nameToResonation = {};
+for name, id in pairs(Resonation) do
+    if name ~= 'None' then
+        nameToResonation[name] = id;
+    end
+end
 
 -- Elements each burst can hit. Light and Darkness use a single orb.
 local resonationBurstElements = {
@@ -360,7 +347,7 @@ local function FindSkillByName(catKey, actionName)
     return bucket[NormalizeName(actionName)];
 end
 
-local function FindSlotSkill(actionType, actionName)
+local function FindSlotSkillUncached(actionType, actionName)
     if not actionName then return nil; end
     if actionType == 'ws' then
         if type(actionName) == 'number' then
@@ -384,6 +371,27 @@ local function FindSlotSkill(actionType, actionName)
         return FindSkillByName(14, actionName);
     end
     return nil;
+end
+
+-- Memoize (actionType, actionName) -> skill. Skill tables are static after load,
+-- so this avoids the per-slot per-frame string normalization/lookups. NO_SKILL is a
+-- negative sentinel so misses are cached too.
+local slotSkillCache = {};
+local NO_SKILL = {};
+local function FindSlotSkill(actionType, actionName)
+    if not actionName then return nil; end
+    local bucket = slotSkillCache[actionType];
+    if not bucket then
+        bucket = {};
+        slotSkillCache[actionType] = bucket;
+    end
+    local cached = bucket[actionName];
+    if cached ~= nil then
+        return cached ~= NO_SKILL and cached or nil;
+    end
+    local skill = FindSlotSkillUncached(actionType, actionName);
+    bucket[actionName] = skill or NO_SKILL;
+    return skill;
 end
 
 local function tableContains(tbl, val)
@@ -571,9 +579,9 @@ local function SlotPassesGates(skill, actionType)
     return true;
 end
 
-local function MatchCloser(wsAttributes, targetServerId)
-    if not wsAttributes then return nil; end
-
+-- Returns the target's currently-open resonation state, or nil when there is no
+-- target or no open window. Cheap enough to gate the expensive slot lookups on.
+local function ResolveOpenResonation(targetServerId)
     local targetIndex = nil;
     if targetServerId and targetServerId > 0x8FF then
         targetIndex = GetIndexFromId(targetServerId);
@@ -597,6 +605,12 @@ local function MatchCloser(wsAttributes, targetServerId)
     if now < resonation.WindowOpen then
         return nil;
     end
+
+    return resonation;
+end
+
+local function MatchCloser(wsAttributes, resonation)
+    if not wsAttributes or not resonation then return nil; end
 
     for _, sc in ipairs(possibleSkillchains) do
         local result, opening, closing = sc[1], sc[2], sc[3];
@@ -635,12 +649,17 @@ function M.GetSkillchainForSlot(targetServerId, actionType, actionName)
         actionType = 'ws';
     end
 
+    -- Cheap gate first: no open window means nothing to highlight, so skip the
+    -- per-slot skill lookup + buff/pet gates entirely (runs per slot per frame).
+    local resonation = ResolveOpenResonation(targetServerId);
+    if not resonation then return nil; end
+
     local skill = FindSlotSkill(actionType, actionName);
     local attrs = GetAttrIds(skill);
     if not attrs then return nil; end
     if not SlotPassesGates(skill, actionType) then return nil; end
 
-    return MatchCloser(attrs, targetServerId);
+    return MatchCloser(attrs, resonation);
 end
 
 function M.HandleActionPacket(actionPacket)
