@@ -13,6 +13,7 @@ M.JOB_ABILITY_CATEGORY = 6;
 M.BUST_STATUS = 309;       -- occupies a roll seat after a bust
 M.DOUBLE_UP_STATUS = 308;  -- window to Double-Up the last roll
 M.DOUBLE_UP_DURATION = 45;
+M.DOUBLE_UP_ABILITY = 123;
 
 -- powers[1..11] + bust; step = Phantom Roll+1; bonus = party job boost; scale for Gallant's.
 local ROLLS = {
@@ -81,8 +82,7 @@ local ROLLS = {
 };
 
 --[[
-* Horizon: no party-job bonus. Chaos ATK is floor(lv75 * level / 75);
-* bust is flat -15. Gallant's is flat DEF; Healer's is hMP.
+* Horizon: no party-job bonus. Main Job column from horizonffxi.wiki (lv75).
 ]]--
 local HORIZON = {
     rolls = {
@@ -92,6 +92,34 @@ local HORIZON = {
           powers = { 48, 60, 200, 72, 88, 104, 32, 120, 140, 160, 240, -120 } },
         ["Healer's"] = { unit = FLAT, stat = 'hMP',
           powers = { 2, 3, 10, 4, 4, 5, 1, 6, 6, 7, 12, -3 } },
+        ["Evoker's"] = {
+          powers = { 1, 1, 1, 1, 3, 2, 2, 2, 1, 2, 4, -1 } },
+        ['Ninja'] = {
+          powers = { 10, 13, 15, 40, 18, 20, 25, 5, 27, 30, 50, -15 } },
+        ["Hunter's"] = {
+          powers = { 10, 13, 15, 40, 18, 20, 25, 5, 27, 30, 50, -15 } },
+        ["Magus's"] = {
+          powers = { 5, 20, 6, 8, 9, 3, 10, 13, 14, 15, 25, -5 } },
+        ['Choral'] = {
+          powers = { -13, -55, -17, -20, -25, -8, -30, -35, -40, -45, -65, 25 } },
+        ["Monk's"] = {
+          powers = { 8, 10, 32, 12, 14, 16, 4, 20, 22, 24, 40, -11 } },
+        ['Samurai'] = {
+          powers = { 8, 32, 10, 12, 14, 4, 16, 20, 22, 24, 40, -5 } },
+        ["Rogue's"] = {
+          powers = { 2, 2, 3, 4, 12, 5, 6, 6, 1, 8, 19, -6 } },
+        ["Warlock's"] = {
+          powers = { 2, 3, 4, 12, 5, 6, 7, 1, 8, 9, 15, -5 } },
+        ["Fighter's"] = {
+          powers = { 2, 2, 3, 4, 12, 5, 6, 6, 1, 9, 18, -6 } },
+        ['Drachen'] = {
+          powers = { 10, 13, 15, 40, 18, 20, 25, 5, 27, 30, 50, 0 } },
+        ["Wizard's"] = {
+          powers = { 2, 3, 4, 4, 10, 5, 6, 7, 1, 7, 12, -4 } },
+        ["Corsair's"] = {
+          powers = { 10, 11, 11, 12, 20, 13, 15, 16, 8, 17, 24, -6 } },
+        ['Puppet'] = {
+          powers = { 4, 5, 18, 7, 9, 10, 2, 11, 13, 15, 22, -8 } },
     },
     gear = {
         [15601] = 1,  -- Corsair's Culottes

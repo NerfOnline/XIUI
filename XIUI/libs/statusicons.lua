@@ -259,24 +259,23 @@ function M.DrawStatusIcons(statusIds, iconSize, maxColumns, maxRows, drawBg, xOf
                         {bgX, bgY}, {bgX + bgSize + 1, bgY + bgSize / 0.75});
                 end
                 local iconPosX, iconPosY = imgui.GetCursorScreenPos();
-                local iconTint = 0xFFFFFFFF;
+                drawList:AddImage(icon, {iconPosX, iconPosY}, {iconPosX + iconSize, iconPosY + iconSize}, {0, 0}, {1, 1}, 0xFFFFFFFF);
                 local isUncertain = gConfig.showUncertainDebuffMarker and uncertainFlags and uncertainFlags[statusIds[i]];
                 if isUncertain then
-                    iconTint = 0xFFAAAAAA;
-                end
-                drawList:AddImage(icon, {iconPosX, iconPosY}, {iconPosX + iconSize, iconPosY + iconSize}, {0, 0}, {1, 1}, iconTint);
-                if isUncertain then
-                    local markSize = math.max(12, iconSize * 0.58);
+                    local r = math.max(5, iconSize * 0.26);
+                    local cx = iconPosX + iconSize - r * 0.45;
+                    local cy = iconPosY + r * 0.45;
+                    drawList:AddCircleFilled({cx, cy}, r + 1, imgui.GetColorU32({0, 0, 0, 0.85}), 16);
+                    drawList:AddCircleFilled({cx, cy}, r, imgui.GetColorU32({1.0, 0.78, 0.12, 0.95}), 16);
                     local mark = '?';
+                    local markSize = math.max(8, r * 1.55);
                     imtext.SetConfig(gConfig.fontFamily, true, 0);
                     local markW, markH = imtext.Measure(mark, markSize);
-                    local markX = iconPosX + iconSize - markW - 1;
-                    local markY = iconPosY + iconSize - markH;
-                    imtext.DrawSimple(drawList, mark, markX - 1, markY, 0xE6000000, markSize);
-                    imtext.DrawSimple(drawList, mark, markX + 1, markY, 0xE6000000, markSize);
-                    imtext.DrawSimple(drawList, mark, markX, markY - 1, 0xE6000000, markSize);
-                    imtext.DrawSimple(drawList, mark, markX, markY + 1, 0xE6000000, markSize);
-                    imtext.DrawSimple(drawList, mark, markX, markY, 0xE6FFFFFF, markSize);
+                    local markX = cx - markW / 2;
+                    local markY = cy - markH * 0.58;
+                    local markCol = 0xF2181408;
+                    imtext.DrawSimple(drawList, mark, markX + 1, markY, markCol, markSize);
+                    imtext.DrawSimple(drawList, mark, markX, markY, markCol, markSize);
                 end
                 imgui.Dummy({iconSize, iconSize});
                 if buffTimes ~= nil and buffTimes[i] ~= nil then

@@ -1862,6 +1862,8 @@ ashita.events.register('packet_in', 'packet_in_cb', function (e)
                 skillchainModule.HandleActionPacket(actionPacket);
             end
         end
+    elseif (e.id == 0x063) then
+        if gConfig.showPhantomRoll then phantomRoll.HandleBuffPacket(e); end
     elseif (e.id == 0x00E) then
         local mobUpdatePacket = ParseMobUpdatePacket(e);
         if gConfig.showEnemyList then enemyList.HandleMobUpdatePacket(mobUpdatePacket); end

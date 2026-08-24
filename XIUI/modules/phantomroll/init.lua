@@ -34,7 +34,7 @@ M.DrawWindow = function(settings)
     if hidden or settings == nil then return; end
 
     if not UpdatePreview() then
-        -- No seats: nothing to sync (packets create seats; Sync only snaps/clears).
+        -- No seats: packets create them; 0x63 corrects/clears.
         if not tracker.HasAny() then return; end
         tracker.Sync();
         if not tracker.HasAny() then return; end
@@ -45,6 +45,10 @@ end
 
 M.HandleActionPacket = function(actionPacket)
     tracker.HandleActionPacket(actionPacket);
+end
+
+M.HandleBuffPacket = function(packet)
+    tracker.HandleBuffPacket(packet);
 end
 
 M.HandleZonePacket = function()
