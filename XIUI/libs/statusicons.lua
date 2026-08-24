@@ -220,7 +220,7 @@ local debuff_font_settings = T{
 -- Status Icon Drawing
 -- ========================================
 
--- Draw status icons with optional backgrounds and timers
+-- Draw status icons with optional backgrounds, timers, and uncertain markers
 -- @param statusIds: array of status IDs to draw
 -- @param iconSize: size of each icon in pixels
 -- @param maxColumns: max icons per row
@@ -231,7 +231,8 @@ local debuff_font_settings = T{
 -- @param settings: optional font settings override
 -- @param statusHandler: the statushandler module
 -- @param buffTable: the bufftable module
-function M.DrawStatusIcons(statusIds, iconSize, maxColumns, maxRows, drawBg, xOffset, buffTimes, settings, statusHandler, buffTableLib)
+-- @param uncertainFlags: optional map [buffId]=true for inferred (hit, hidden resist) debuffs
+function M.DrawStatusIcons(statusIds, iconSize, maxColumns, maxRows, drawBg, xOffset, buffTimes, settings, statusHandler, buffTableLib, uncertainFlags)
     if (statusIds ~= nil and #statusIds > 0) then
         -- Draw onto the same list as window bgs so icons aren't hidden behind them.
         local drawList = GetUIDrawList();
@@ -258,7 +259,25 @@ function M.DrawStatusIcons(statusIds, iconSize, maxColumns, maxRows, drawBg, xOf
                         {bgX, bgY}, {bgX + bgSize + 1, bgY + bgSize / 0.75});
                 end
                 local iconPosX, iconPosY = imgui.GetCursorScreenPos();
-                drawList:AddImage(icon, {iconPosX, iconPosY}, {iconPosX + iconSize, iconPosY + iconSize});
+                local iconTint = 0xFFFFFFFF;
+                local isUncertain = gConfig.showUncertainDebuffMarker and uncertainFlags and uncertainFlags[statusIds[i]];
+                if isUncertain then
+                    iconTint = 0xFFAAAAAA;
+                end
+                drawList:AddImage(icon, {iconPosX, iconPosY}, {iconPosX + iconSize, iconPosY + iconSize}, {0, 0}, {1, 1}, iconTint);
+                if isUncertain then
+                    local markSize = math.max(12, iconSize * 0.58);
+                    local mark = '?';
+                    imtext.SetConfig(gConfig.fontFamily, true, 0);
+                    local markW, markH = imtext.Measure(mark, markSize);
+                    local markX = iconPosX + iconSize - markW - 1;
+                    local markY = iconPosY + iconSize - markH;
+                    imtext.DrawSimple(drawList, mark, markX - 1, markY, 0xE6000000, markSize);
+                    imtext.DrawSimple(drawList, mark, markX + 1, markY, 0xE6000000, markSize);
+                    imtext.DrawSimple(drawList, mark, markX, markY - 1, 0xE6000000, markSize);
+                    imtext.DrawSimple(drawList, mark, markX, markY + 1, 0xE6000000, markSize);
+                    imtext.DrawSimple(drawList, mark, markX, markY, 0xE6FFFFFF, markSize);
+                end
                 imgui.Dummy({iconSize, iconSize});
                 if buffTimes ~= nil and buffTimes[i] ~= nil then
                     local font_base = settings or debuff_font_settings;

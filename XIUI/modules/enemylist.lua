@@ -508,13 +508,14 @@ enemylist.DrawWindow = function(settings)
 				if (gConfig.showEnemyListDebuffs) then
 					local buffIds = nil;
 					local buffTimes = nil;
+					local buffUncertain = nil;
 					if isPreviewMode then
 						-- Use preview debuff data
 						buffIds = previewDebuffs[k];
 						buffTimes = previewDebuffTimers[k];
 					elseif entityMgr ~= nil then
 						-- Use cached entity manager (avoid repeated GetEntitySafe() calls)
-						buffIds, buffTimes = debuffHandler.GetActiveDebuffs(entityMgr:GetServerId(k));
+						buffIds, buffTimes, buffUncertain = debuffHandler.GetActiveDebuffs(entityMgr:GetServerId(k));
 					end
 					if (buffIds ~= nil and #buffIds > 0) then
 						local timesIn = gConfig.showEnemyListDebuffTimers and buffTimes or nil;
@@ -538,7 +539,7 @@ enemylist.DrawWindow = function(settings)
 						imgui.SetNextWindowPos({debuffX, debuffY});
 						if (imgui.Begin('EnemyDebuffs'..k, true, bit.bor(ImGuiWindowFlags_NoDecoration, ImGuiWindowFlags_AlwaysAutoResize, ImGuiWindowFlags_NoFocusOnAppearing, ImGuiWindowFlags_NoNav, ImGuiWindowFlags_NoBackground, ImGuiWindowFlags_NoSavedSettings, ImGuiWindowFlags_NoDocking))) then
 							imgui.PushStyleVar(ImGuiStyleVar_ItemSpacing, {1, 1});
-							DrawStatusIcons(drawIds, settings.iconSize, settings.maxIcons, 1, false, 0, drawTimes);
+							DrawStatusIcons(drawIds, settings.iconSize, settings.maxIcons, 1, false, 0, drawTimes, nil, buffUncertain);
 							imgui.PopStyleVar(1);
 						end
 						imgui.End();

@@ -13,6 +13,7 @@ T{
 -- These are cleared and reused each call instead of creating new tables
 local reusableDebuffIds = {};
 local reusableDebuffTimes = {};
+local reusableDebuffUncertain = {};
 
 -- Message type hash tables for O(1) lookup (converted from T{} arrays)
 local statusOnMes = {[101]=true, [127]=true, [160]=true, [164]=true, [166]=true, [186]=true, [194]=true, [203]=true, [205]=true, [230]=true, [236]=true, [266]=true, [267]=true, [268]=true, [269]=true, [237]=true, [271]=true, [272]=true, [277]=true, [278]=true, [279]=true, [280]=true, [319]=true, [320]=true, [375]=true, [412]=true, [645]=true, [754]=true, [755]=true, [804]=true};
@@ -225,9 +226,13 @@ local function ResolveDuration(spellData, isOwnActor)
     return duration;
 end
 
-local function ApplyBuffExpiry(targetDebuffs, buffId, expiry)
+local function ApplyBuffExpiry(targetDebuffs, buffId, expiry, uncertain)
     if buffId == nil then return; end
-    targetDebuffs[buffId] = expiry;
+    local prev = targetDebuffs[buffId];
+    if type(prev) == 'table' and prev.expiry and prev.expiry >= os.time() and not prev.uncertain then
+        uncertain = false;
+    end
+    targetDebuffs[buffId] = { expiry = expiry, uncertain = uncertain == true };
 end
 
 -- Non-spell Param lookup. Old tracker used one table for every action type.
@@ -271,7 +276,7 @@ local function GetDurationData(actionType, id)
     return SPELL_DURATIONS[id] or LookupNonSpell(id) or LookupNonSpell(jaId);
 end
 
-local function ApplySpellData(targetDebuffs, spellData, isOwnActor, now, packetBuffId)
+local function ApplySpellData(targetDebuffs, spellData, isOwnActor, now, packetBuffId, uncertain)
     local expiry = now + ResolveDuration(spellData, isOwnActor);
     if spellData.clearsBuffs then
         for _, clearBuffId in ipairs(spellData.clearsBuffs) do
@@ -280,12 +285,12 @@ local function ApplySpellData(targetDebuffs, spellData, isOwnActor, now, packetB
     end
     if spellData.buffIds then
         for _, buffId in ipairs(spellData.buffIds) do
-            ApplyBuffExpiry(targetDebuffs, buffId, expiry);
+            ApplyBuffExpiry(targetDebuffs, buffId, expiry, uncertain);
         end
         return;
     end
     local buffId = spellData.buffId or packetBuffId;
-    ApplyBuffExpiry(targetDebuffs, buffId, expiry);
+    ApplyBuffExpiry(targetDebuffs, buffId, expiry, uncertain);
 end
 
 local function ApplyMessage(debuffs, action)
@@ -321,36 +326,36 @@ local function ApplyMessage(debuffs, action)
             -- Handle pet abilities (Type 13)
             if action.Type == 13 then
                 if spellData then
-                    ApplySpellData(targetDebuffs, spellData, isOwnActor, now, 2);
+                    ApplySpellData(targetDebuffs, spellData, isOwnActor, now, 2, true);
                 end
             -- Type 3 WS/JA on a physical hit. Energy Drain only on 185 (JA 22 collision).
             elseif action.Type == 3 and spellData and physicalHitMes[message] then
                 if JobAbilityId(spell) ~= ENERGY_DRAIN_JA or message == 185 then
-                    ApplySpellData(targetDebuffs, spellData, isOwnActor, now);
+                    ApplySpellData(targetDebuffs, spellData, isOwnActor, now, nil, true);
                 end
             -- Handle dia/bio/helix and physical additional-effect spells (Type 4 damage)
             elseif action.Type == 4 and spellDamageMes[message] then
                 if spellData then
                     local expiry = now + ResolveDuration(spellData, isOwnActor);
                     if spell == 23 or spell == 24 or spell == 25 or spell == 33 then
-                        targetDebuffs[134] = expiry;
+                        ApplyBuffExpiry(targetDebuffs, 134, expiry, false);
                         targetDebuffs[135] = nil;
                     elseif spell == 230 or spell == 231 or spell == 232 then
                         targetDebuffs[134] = nil;
-                        targetDebuffs[135] = expiry;
+                        ApplyBuffExpiry(targetDebuffs, 135, expiry, false);
                     elseif (spell >= 278 and spell <= 285) or (spell >= 885 and spell <= 892) then
-                        ApplyBuffExpiry(targetDebuffs, spellData.buffId, expiry);
+                        ApplyBuffExpiry(targetDebuffs, spellData.buffId, expiry, false);
                     elseif spellData.onDamage then
-                        ApplySpellData(targetDebuffs, spellData, isOwnActor, now, buffTable.GetBuffIdBySpellId(spell));
+                        ApplySpellData(targetDebuffs, spellData, isOwnActor, now, buffTable.GetBuffIdBySpellId(spell), true);
                     end
                 end
             -- Handle regular status effect spells and magical BLU
             elseif statusOnMes[message] then
                 local buffId = ability.Param or (action.Type == 4 and buffTable.GetBuffIdBySpellId(spell) or nil);
                 if spellData then
-                    ApplySpellData(targetDebuffs, spellData, isOwnActor, now, buffId);
+                    ApplySpellData(targetDebuffs, spellData, isOwnActor, now, buffId, false);
                 elseif buffId ~= nil then
-                    targetDebuffs[buffId] = now + 300;
+                    ApplyBuffExpiry(targetDebuffs, buffId, now + 300, false);
                 end
             -- Handle dispel effects
             elseif statusOffMes[message] then
@@ -361,11 +366,11 @@ local function ApplyMessage(debuffs, action)
             elseif action.Type == 11 then
                 local nonSpell = LookupNonSpell(spell);
                 if nonSpell then
-                    ApplySpellData(targetDebuffs, nonSpell, isOwnActor, now, ability.Param);
+                    ApplySpellData(targetDebuffs, nonSpell, isOwnActor, now, ability.Param, false);
                 end
             -- Type 6 / 14: any JA in the duration tables (512-normalized in GetDurationData).
             elseif (action.Type == 6 or action.Type == 14) and spellData then
-                ApplySpellData(targetDebuffs, spellData, isOwnActor, now, ability.Param);
+                ApplySpellData(targetDebuffs, spellData, isOwnActor, now, ability.Param, false);
             end
 
             -- Additional-effect procs. Do not replace a known timer with the 30s guess.
@@ -374,9 +379,13 @@ local function ApplyMessage(debuffs, action)
                 if buffId ~= nil then
                     local aeData = ADDITIONAL_EFFECT_DURATIONS[buffId];
                     if aeData then
-                        targetDebuffs[buffId] = now + aeData.duration;
-                    elseif targetDebuffs[buffId] == nil or targetDebuffs[buffId] < now then
-                        targetDebuffs[buffId] = now + 30;
+                        ApplyBuffExpiry(targetDebuffs, buffId, now + aeData.duration, false);
+                    else
+                        local prev = targetDebuffs[buffId];
+                        local prevExpiry = type(prev) == 'table' and prev.expiry or prev;
+                        if prevExpiry == nil or prevExpiry < now then
+                            ApplyBuffExpiry(targetDebuffs, buffId, now + 30, true);
+                        end
                     end
                 end
             end
@@ -462,15 +471,22 @@ debuffHandler.GetActiveDebuffs = function(serverId)
         reusableDebuffIds[i] = nil;
         reusableDebuffTimes[i] = nil;
     end
+    for k in pairs(reusableDebuffUncertain) do
+        reusableDebuffUncertain[k] = nil;
+    end
 
     -- Cache os.time() once instead of calling it repeatedly in the loop
     local currentTime = os.time();
 
-    for buffId, expiryTime in pairs(debuffHandler.enemies[serverId]) do
-        if (expiryTime ~= 0 and expiryTime > currentTime) then
+    for buffId, entry in pairs(debuffHandler.enemies[serverId]) do
+        local expiryTime = type(entry) == 'table' and entry.expiry or entry;
+        if (expiryTime ~= 0 and expiryTime ~= nil and expiryTime > currentTime) then
             count = count + 1;
             reusableDebuffIds[count] = buffId;
             reusableDebuffTimes[count] = expiryTime - currentTime;
+            if type(entry) == 'table' and entry.uncertain then
+                reusableDebuffUncertain[buffId] = true;
+            end
         end
     end
 
@@ -479,7 +495,7 @@ debuffHandler.GetActiveDebuffs = function(serverId)
         return nil;
     end
 
-    return reusableDebuffIds, reusableDebuffTimes;
+    return reusableDebuffIds, reusableDebuffTimes, reusableDebuffUncertain;
 end
 
 return debuffHandler;

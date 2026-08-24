@@ -246,6 +246,7 @@ function M.createUserSettingsDefaults()
         enemyListPreview = true,
         showEnemyListDebuffTimers = false,
         enemyListDebuffTimersCCOnly = true,
+        showUncertainDebuffMarker = true,
 
         playerBarScaleX = 1,
         playerBarScaleY = 1,

@@ -127,6 +127,8 @@ local function DrawTargetBarSettingsContent()
         imgui.ShowHelp('Vertical offset for buffs/debuffs below the HP bar (in pixels).');
         components.DrawSlider('Icon Scale', 'targetBarIconScale', 0.1, 3.0, '%.1f');
         components.DrawSlider('Icon Text Size', 'targetBarIconFontSize', 8, 36);
+        components.DrawCheckbox('Uncertain Debuff Marker', 'showUncertainDebuffMarker');
+        imgui.ShowHelp('Show a ? on debuffs inferred from a hit (BLU additional effects, Weapon Bash, stun WS).\nThe second resist roll is hidden. Spells that report resist are unmarked.');
     end
 
     if components.CollapsingSection('Bard Song Settings##targetBar') then
