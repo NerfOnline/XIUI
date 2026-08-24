@@ -7,6 +7,8 @@ local debuffHandler =
 T{
     -- All enemies we have seen take a debuff
     enemies = T{};
+    -- Feint and similar: debuff lands on next melee/ranged hit from this actor
+    pendingOnHit = T{};
 };
 
 -- Reusable tables for GetActiveDebuffs to avoid per-frame allocations
@@ -23,8 +25,12 @@ local spellDamageMes = {[2]=true, [252]=true, [264]=true, [265]=true};
 -- Physical/ability hits (110 = bash/jump, 185 = WS). Not a per-ability list.
 local physicalHitMes = {[103]=true, [110]=true, [185]=true, [187]=true, [238]=true, [242]=true, [317]=true, [802]=true};
 local additionalEffectMes = {[160]=true, [164]=true};
--- JA 22 is Energy Drain on type 3 and Invincible on type 6. Drain only on WS-hit 185.
-local ENERGY_DRAIN_JA = 22;
+-- "No effect" confirms a matching uncertain debuff is already present (do not refresh timer).
+-- Distinct from complete resist / immunity (655), which means the effect is not present.
+local noEffectMes = {[75]=true, [189]=true, [283]=true, [323]=true};
+local immuneMes = {[655]=true}; -- MagicCompleteResist — target immune / cannot take the effect
+local MAX_TP = 3000;
+local ALLIANCE_MEMBER_SLOTS = 18;
 
 local BUFF_SABOTEUR = 454;
 local BUFF_STYMIE = 494;
@@ -83,7 +89,12 @@ local function ApplyHorizonOverlay(base, overlay)
                 elseif type(patch) == 'table' and type(base[cat][id]) == 'table' then
                     local merged = CloneDurationEntry(base[cat][id]);
                     for k, v in pairs(patch) do
-                        merged[k] = v;
+                        -- false clears a retail field (e.g. fixed duration -> TP formula).
+                        if v == false then
+                            merged[k] = nil;
+                        else
+                            merged[k] = v;
+                        end
                     end
                     base[cat][id] = merged;
                 else
@@ -101,10 +112,12 @@ if HzLimitedMode then
 end
 
 local SPELL_DURATIONS = durations.spells;
+local WEAPON_SKILL_DURATIONS = durations.weaponSkills or {};
 local JA_PHYSICAL_DURATIONS = durations.jaPhysical;
 local JA_DURATIONS = durations.ja;
 local PET_DURATIONS = durations.pet;
 local ADDITIONAL_EFFECT_DURATIONS = durations.additionalEffect;
+local ON_HIT_DURATIONS = durations.onHit or {};
 
 local function ClampSongPlus(value)
     value = tonumber(value) or 0;
@@ -229,14 +242,154 @@ end
 local function ApplyBuffExpiry(targetDebuffs, buffId, expiry, uncertain)
     if buffId == nil then return; end
     local prev = targetDebuffs[buffId];
+    -- Keep certainty if an active certain timer already exists (do not downgrade).
     if type(prev) == 'table' and prev.expiry and prev.expiry >= os.time() and not prev.uncertain then
         uncertain = false;
     end
     targetDebuffs[buffId] = { expiry = expiry, uncertain = uncertain == true };
 end
 
--- Non-spell Param lookup. Old tracker used one table for every action type.
-local function LookupNonSpell(id)
+-- Status already present ("no effect"): upgrade uncertain -> certain without refreshing timer.
+local function ConfirmUncertainDebuff(targetDebuffs, buffId, now)
+    if buffId == nil or buffId == 0 then return; end
+    local prev = targetDebuffs[buffId];
+    if type(prev) == 'table' and prev.uncertain and prev.expiry and prev.expiry >= now then
+        prev.uncertain = false;
+    end
+end
+
+-- Immunity / complete resist: effect cannot be on the target — clear tracked entry.
+local function ClearTrackedDebuff(targetDebuffs, buffId)
+    if buffId == nil or buffId == 0 then return; end
+    targetDebuffs[buffId] = nil;
+end
+
+local function ResolveActionBuffIds(actionType, spellId, abilityParam)
+    local ids = {};
+    if abilityParam ~= nil and abilityParam ~= 0 then
+        ids[#ids + 1] = abilityParam;
+        return ids;
+    end
+    if actionType == 4 then
+        local buffId = buffTable.GetBuffIdBySpellId(spellId);
+        if buffId ~= nil and buffId ~= 0 then
+            ids[#ids + 1] = buffId;
+        end
+        return ids;
+    end
+    if actionType == 3 then
+        local wsData = WEAPON_SKILL_DURATIONS[spellId];
+        if wsData then
+            if wsData.buffIds then
+                for _, id in ipairs(wsData.buffIds) do
+                    ids[#ids + 1] = id;
+                end
+            elseif wsData.buffId then
+                ids[#ids + 1] = wsData.buffId;
+            end
+        end
+    end
+    return ids;
+end
+
+local function GetActorTp(actorId)
+    if actorId == nil then return nil; end
+    local mem = AshitaCore:GetMemoryManager();
+    if not mem then return nil; end
+    local party = mem:GetParty();
+    if not party then return nil; end
+    for memIdx = 0, ALLIANCE_MEMBER_SLOTS - 1 do
+        if party:GetMemberIsActive(memIdx) ~= 0 then
+            if party:GetMemberServerId(memIdx) == actorId then
+                return party:GetMemberTP(memIdx);
+            end
+        end
+    end
+    return nil;
+end
+
+local function ResolveTpTierDuration(tpTier, tp)
+    for i = #tpTier, 1, -1 do
+        if tp >= tpTier[i][1] then
+            return tpTier[i][2];
+        end
+    end
+    if tpTier[1][1] > 0 then
+        return math.floor(tpTier[1][2] * tp / tpTier[1][1]);
+    end
+    return tpTier[1][2];
+end
+
+local function ResolveTpDuration(wsData, tp)
+    if wsData.duration then
+        return wsData.duration;
+    end
+    if wsData.tpTier then
+        return ResolveTpTierDuration(wsData.tpTier, tp);
+    end
+    if wsData.tpFTP then
+        local anchors = wsData.tpFTP;
+        if tp >= 3000 then
+            return anchors[3];
+        elseif tp >= 2000 then
+            return math.floor(anchors[2] + (anchors[3] - anchors[2]) * (tp - 2000) / 1000);
+        elseif tp >= 1000 then
+            return math.floor(anchors[1] + (anchors[2] - anchors[1]) * (tp - 1000) / 1000);
+        end
+        return math.floor(anchors[1] * tp / 1000);
+    end
+    if wsData.tpPer500 then
+        return math.floor(tp / 500);
+    end
+    local formula = wsData.tpDuration or wsData;
+    local duration = formula.base or 0;
+    if formula.per100Tp then
+        duration = duration + formula.per100Tp * tp / 100;
+    end
+    if formula.per1000Tp then
+        duration = duration + formula.per1000Tp * tp / 1000;
+    end
+    if formula.per200Tp then
+        duration = duration + formula.per200Tp * tp / 200;
+    end
+    return math.floor(duration);
+end
+
+local function ResolveWeaponSkillDuration(wsData, actorId)
+    local tp = GetActorTp(actorId);
+    local tpKnown = tp ~= nil;
+    if not tpKnown then
+        tp = MAX_TP;
+    end
+    return ResolveTpDuration(wsData, tp), tpKnown;
+end
+
+local function UsesTpDuration(data)
+    return data.tpTier ~= nil or data.tpDuration ~= nil or data.tpFTP ~= nil or data.tpPer500 ~= nil;
+end
+
+-- uncertain: true when land is inferred (WS hit) or TP is unknown (non-party actor).
+local function ApplyWeaponSkillData(targetDebuffs, wsData, actorId, now, uncertain)
+    local duration, tpKnown = ResolveWeaponSkillDuration(wsData, actorId);
+    if uncertain == nil then
+        uncertain = true;
+    end
+    if not tpKnown then
+        uncertain = true;
+    end
+    local entry = CloneDurationEntry(wsData);
+    entry.duration = duration;
+    ApplySpellData(targetDebuffs, entry, false, now, nil, uncertain);
+end
+
+-- Non-spell Param lookup. Order matters for id collisions (e.g. Invincible vs Energy Drain).
+local function LookupNonSpell(id, actionType)
+    if actionType == 3 then
+        return WEAPON_SKILL_DURATIONS[id] or JA_PHYSICAL_DURATIONS[id];
+    end
+    if actionType == 6 or actionType == 14 then
+        return JA_DURATIONS[id];
+    end
     return JA_DURATIONS[id] or JA_PHYSICAL_DURATIONS[id] or PET_DURATIONS[id];
 end
 
@@ -254,7 +407,7 @@ local function JobAbilityId(id)
     return id;
 end
 
--- Type 4 is spells-only so BLU ids do not collide with 2-hours.
+-- Type 4 is spells-only so BLU ids do not collide with 2-hours or weapon skills.
 local function GetDurationData(actionType, id)
     id = PacketParamId(id);
     local jaId = JobAbilityId(id);
@@ -262,18 +415,18 @@ local function GetDurationData(actionType, id)
         return SPELL_DURATIONS[id];
     end
     if actionType == 3 then
-        return SPELL_DURATIONS[id] or LookupNonSpell(jaId);
+        return WEAPON_SKILL_DURATIONS[id] or JA_PHYSICAL_DURATIONS[jaId];
     end
     if actionType == 6 or actionType == 14 then
-        return JA_DURATIONS[id] or LookupNonSpell(jaId);
+        return JA_DURATIONS[jaId] or JA_DURATIONS[id];
     end
     if actionType == 13 then
         return PET_DURATIONS[id] or PET_DURATIONS[jaId];
     end
     if actionType == 11 then
-        return LookupNonSpell(id) or SPELL_DURATIONS[id];
+        return LookupNonSpell(id, actionType) or SPELL_DURATIONS[id];
     end
-    return SPELL_DURATIONS[id] or LookupNonSpell(id) or LookupNonSpell(jaId);
+    return SPELL_DURATIONS[id] or LookupNonSpell(id, actionType) or LookupNonSpell(jaId, actionType);
 end
 
 local function ApplySpellData(targetDebuffs, spellData, isOwnActor, now, packetBuffId, uncertain)
@@ -328,10 +481,23 @@ local function ApplyMessage(debuffs, action)
                 if spellData then
                     ApplySpellData(targetDebuffs, spellData, isOwnActor, now, 2, true);
                 end
-            -- Type 3 WS/JA on a physical hit. Energy Drain only on 185 (JA 22 collision).
-            elseif action.Type == 3 and spellData and physicalHitMes[message] then
-                if JobAbilityId(spell) ~= ENERGY_DRAIN_JA or message == 185 then
-                    ApplySpellData(targetDebuffs, spellData, isOwnActor, now, nil, true);
+            -- Type 1 melee only: Feint applies on regular melee hits (not ranged, not WS).
+            elseif action.Type == 1 and physicalHitMes[message] then
+                local pending = debuffHandler.pendingOnHit[actorId];
+                if pending and pending.expires > now then
+                    -- Guaranteed on connecting melee hit (including 0 dmg / countered).
+                    ApplyBuffExpiry(targetDebuffs, pending.buffId, now + pending.duration, false);
+                    debuffHandler.pendingOnHit[actorId] = nil;
+                end
+            -- Type 3 WS or physical JA on a hit
+            elseif action.Type == 3 and physicalHitMes[message] then
+                local wsData = WEAPON_SKILL_DURATIONS[spell];
+                if wsData then
+                    ApplyWeaponSkillData(targetDebuffs, wsData, actorId, now, true);
+                elseif spellData then
+                    -- Angon etc.: certainOnHit when land is guaranteed on connecting hit.
+                    local uncertain = spellData.certainOnHit ~= true;
+                    ApplySpellData(targetDebuffs, spellData, isOwnActor, now, nil, uncertain);
                 end
             -- Handle dia/bio/helix and physical additional-effect spells (Type 4 damage)
             elseif action.Type == 4 and spellDamageMes[message] then
@@ -349,10 +515,13 @@ local function ApplyMessage(debuffs, action)
                         ApplySpellData(targetDebuffs, spellData, isOwnActor, now, buffTable.GetBuffIdBySpellId(spell), true);
                     end
                 end
-            -- Handle regular status effect spells and magical BLU
+            -- Handle regular status effect spells and magical BLU / confirmed WS status
             elseif statusOnMes[message] then
                 local buffId = ability.Param or (action.Type == 4 and buffTable.GetBuffIdBySpellId(spell) or nil);
-                if spellData then
+                local wsData = action.Type == 3 and WEAPON_SKILL_DURATIONS[spell] or nil;
+                if wsData or (spellData and UsesTpDuration(spellData)) then
+                    ApplyWeaponSkillData(targetDebuffs, wsData or spellData, actorId, now, false);
+                elseif spellData then
                     ApplySpellData(targetDebuffs, spellData, isOwnActor, now, buffId, false);
                 elseif buffId ~= nil then
                     ApplyBuffExpiry(targetDebuffs, buffId, now + 300, false);
@@ -362,15 +531,36 @@ local function ApplyMessage(debuffs, action)
                 if ability.Param ~= nil then
                     targetDebuffs[ability.Param] = nil
                 end
+            -- "No effect": debuff already present — confirm uncertain, keep timer.
+            -- Not used for immunity (that is complete resist / immuneMes).
+            elseif noEffectMes[message] then
+                for _, buffId in ipairs(ResolveActionBuffIds(action.Type, spell, ability.Param)) do
+                    ConfirmUncertainDebuff(targetDebuffs, buffId, now);
+                end
+            -- Complete resist / immunity: effect is not on the target — clear tracker.
+            elseif immuneMes[message] then
+                for _, buffId in ipairs(ResolveActionBuffIds(action.Type, spell, ability.Param)) do
+                    ClearTrackedDebuff(targetDebuffs, buffId);
+                end
             -- Type 11: ja/jaPhysical/pet only (spell ids collide with WS/BLU).
             elseif action.Type == 11 then
-                local nonSpell = LookupNonSpell(spell);
+                local nonSpell = LookupNonSpell(spell, action.Type);
                 if nonSpell then
                     ApplySpellData(targetDebuffs, nonSpell, isOwnActor, now, ability.Param, false);
                 end
-            -- Type 6 / 14: any JA in the duration tables (512-normalized in GetDurationData).
-            elseif (action.Type == 6 or action.Type == 14) and spellData then
-                ApplySpellData(targetDebuffs, spellData, isOwnActor, now, ability.Param, false);
+            -- Type 6 / 14: job abilities (512-normalized in GetDurationData).
+            elseif action.Type == 6 or action.Type == 14 then
+                local jaId = JobAbilityId(spell);
+                local onHitData = ON_HIT_DURATIONS[jaId];
+                if onHitData then
+                    debuffHandler.pendingOnHit[actorId] = {
+                        buffId = onHitData.buffId,
+                        duration = onHitData.duration,
+                        expires = now + (onHitData.window or 60),
+                    };
+                elseif spellData then
+                    ApplySpellData(targetDebuffs, spellData, isOwnActor, now, ability.Param, false);
+                end
             end
 
             -- Additional-effect procs. Do not replace a known timer with the 30s guess.
@@ -452,6 +642,7 @@ end
 
 debuffHandler.HandleZonePacket = function(e)
     debuffHandler.enemies = {};
+    debuffHandler.pendingOnHit = T{};
 end
 
 debuffHandler.HandleMessagePacket = function(e)
