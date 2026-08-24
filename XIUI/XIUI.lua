@@ -28,10 +28,8 @@ addon.version   = '1.8.4';
 addon.desc      = 'Multiple UI elements with manager';
 addon.link      = 'https://github.com/tirem/XIUI'
 
--- Ashita version targeting (for ImGui compatibility)
--- Set to nil for auto-detection, true to force 4.3 mode, and false for 4.16 mode
-_G._XIUI_USE_ASHITA_4_3 = nil;
-require('handlers.imgui_compat');
+-- ImGui compatibility (auto-detects current vs legacy Ashita imgui.lua)
+local imguiCompat = require('handlers.imgui_compat');
 
 -- Global switch to hard-disable functionality that is limited on HX servers.
 -- Set before module requires so load-time checks (e.g. petbar data) see the correct value.
@@ -107,9 +105,19 @@ local satchelTooltipFonts = require('modules.satchel.tooltips');
 
 -- Flag to skip settings_update callback during internal saves
 local bInternalSave = false;
--- For Ashita 4.3+, callbacks are async so we need to defer clearing the flag
-local bIsAshita43 = (ImGuiChildFlags_Borders ~= nil);
+local bLegacyImGui = imguiCompat.legacyImGui == true;
 local bPendingInternalSaveClear = false;
+
+-- Call right after settings.save() on an internal (XIUI-initiated) save.
+-- Current Ashita fires settings_update asynchronously, so the flag has to stay
+-- set until that callback runs; legacy Ashita is synchronous and already done.
+local function ClearInternalSaveFlag()
+    if bLegacyImGui then
+        bInternalSave = false;
+    else
+        bPendingInternalSaveClear = true;
+    end
+end
 
 
 
@@ -692,7 +700,7 @@ function ChangeProfile(name)
     config.currentProfile = name;
     bInternalSave = true;
     settings.save(); -- Save character preference
-    if bIsAshita43 then bPendingInternalSaveClear = true; else bInternalSave = false; end
+    ClearInternalSaveFlag();
 
     -- Clear textures to prevent ghosting
     TextureManager.clear();
@@ -774,7 +782,7 @@ uiRecovery.Configure({
         profileManager.SaveProfileSettings(config.currentProfile, gConfig);
         bInternalSave = true;
         settings.save();
-        if bIsAshita43 then bPendingInternalSaveClear = true; else bInternalSave = false; end
+        ClearInternalSaveFlag();
     end,
 });
 
@@ -841,7 +849,7 @@ function SaveSettingsToDisk()
     profileManager.SaveProfileSettings(config.currentProfile, gConfig);
     bInternalSave = true;
     settings.save();
-    if bIsAshita43 then bPendingInternalSaveClear = true; else bInternalSave = false; end
+    ClearInternalSaveFlag();
 end
 
 function SaveSettingsOnly()
@@ -852,7 +860,7 @@ function SaveSettingsOnly()
     profileManager.SaveProfileSettings(config.currentProfile, gConfig);
     bInternalSave = true;
     settings.save();
-    if bIsAshita43 then bPendingInternalSaveClear = true; else bInternalSave = false; end
+    ClearInternalSaveFlag();
     UpdateUserSettings();
 end
 
@@ -861,7 +869,7 @@ end
 function SaveCharacterSettingsInternal()
     bInternalSave = true;
     settings.save();
-    if bIsAshita43 then bPendingInternalSaveClear = true; else bInternalSave = false; end
+    ClearInternalSaveFlag();
 end
 
 -- New functions for profile management
@@ -899,7 +907,7 @@ function RenameProfile(oldName, newName)
         config.currentProfile = newName;
         bInternalSave = true;
         settings.save();
-        if bIsAshita43 then bPendingInternalSaveClear = true; else bInternalSave = false; end
+        ClearInternalSaveFlag();
     end
 
     return true;

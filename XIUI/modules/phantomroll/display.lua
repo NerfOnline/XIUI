@@ -39,6 +39,15 @@ local BAR_FILL = {
 local BAR_BACKDROP = { 0.10, 0.11, 0.13, 0.80 };
 local BAR_BORDER = { 0, 0, 0, 1 };
 
+-- Layout ratios. Everything except ODDS_GAP is a multiple of dieSize so the
+-- whole window scales as one unit when the user changes die size.
+local COLUMN_WIDTH   = 1.35;
+local COLUMN_GAP     = 0.50;
+local ROW_GAP        = 0.09;
+local NAME_GAP       = 0.30;  -- clears the flame tips above a hot die
+local ICE_HEADROOM   = 0.32;  -- room for the icicles below a cold die
+local ODDS_GAP       = 0.45;  -- x oddsSize, between "Bust %" and its timer
+
 local function FormatClock(seconds)
     if seconds == nil then return ''; end
     if seconds < 0 then return '--:--'; end
@@ -118,40 +127,122 @@ local function DrawBar(drawList, x, y, width, height, column)
         dice.Color(BAR_BACKDROP), rounding);
 
     if column.fraction > 0 then
-        -- Inset fill so AA stays in the track (bar 2's left sits in the gap).
+        -- Width-clipped fill (no PushClipRect): on 4.16, clip stacks on the
+        -- shared BackgroundDrawList while config is open interact badly with
+        -- RunWithScreenClip and can leave global ImGui layout unstable.
         local inset = 1;
-        local innerRounding = math.max(0, rounding - inset);
-        local fillRight = x + math.max(inset, width * column.fraction - inset);
-        drawList:PushClipRect({ x + inset, y + inset }, { fillRight, y + height - inset }, true);
-        drawList:AddRectFilled({ x + inset, y + inset }, { x + width - inset, y + height - inset },
-            dice.Color(column.fill), innerRounding);
-        drawList:PopClipRect();
+        local fillWidth = width * column.fraction - inset * 2;
+        if fillWidth > 0 then
+            drawList:AddRectFilled(
+                { x + inset, y + inset },
+                { x + inset + fillWidth, y + height - inset },
+                dice.Color(column.fill), math.max(0, rounding - inset));
+        end
     end
 
     -- Same idea as player/target bars: a thin stroke around the fill.
     drawList:AddRect({ x, y }, { x + width, y + height },
-        dice.Color(BAR_BORDER), rounding, 15, 1.0);
+        dice.Color(BAR_BORDER), rounding, ImDrawCornerFlags_All, 1.0);
 
     dice.CenteredText(drawList, column.clock, x + width / 2, y + height / 2,
         height * 0.86, TEXT.clock);
 end
 
-M.DrawWindow = function(settings)
+-- One roll column, drawn top-down: name, die, potency, duration bar, odds.
+local function DrawColumn(drawList, settings, column, centerX, top, clock)
     local dieSize = settings.dieSize;
-    local gap = dieSize * 0.50;
-    local rowGap = dieSize * 0.09;
-    local nameGap = dieSize * 0.30;      -- clears flame tips above the die
-    local iceHeadroom = dieSize * 0.32;  -- room for icicles below
+    local rowGap = dieSize * ROW_GAP;
+    local y = top;
 
+    dice.CenteredText(drawList, column.name, centerX, y + settings.nameSize / 2,
+        settings.nameSize, column.nameColor);
+    y = y + settings.nameSize + dieSize * NAME_GAP;
+
+    dice.Draw(drawList, centerX - dieSize / 2, y, dieSize, column.state, clock,
+        settings.font_settings);
+    y = y + dieSize + dieSize * ICE_HEADROOM + rowGap;
+
+    dice.CenteredText(drawList, column.potency, centerX, y + settings.potencySize / 2,
+        settings.potencySize, column.potencyColor);
+    y = y + settings.potencySize + rowGap;
+
+    local columnWidth = dieSize * COLUMN_WIDTH;
+    DrawBar(drawList, centerX - columnWidth / 2, y, columnWidth, settings.barHeight, column);
+    y = y + settings.barHeight + rowGap;
+
+    if column.odds == '' then return; end
+
+    local oddsY = y + settings.oddsSize / 2;
+    if column.oddsTimer == '' then
+        dice.CenteredText(drawList, column.odds, centerX, oddsY,
+            settings.oddsSize, column.oddsColor);
+        return;
+    end
+
+    -- Odds and its countdown are centered together as one group.
+    local oddsGap = settings.oddsSize * ODDS_GAP;
+    local oddsW = imtext.Measure(column.odds, settings.oddsSize);
+    local timerW = imtext.Measure(column.oddsTimer, settings.oddsSize);
+    local left = centerX - (oddsW + oddsGap + timerW) / 2;
+    dice.CenteredText(drawList, column.odds, left + oddsW / 2, oddsY,
+        settings.oddsSize, column.oddsColor);
+    dice.CenteredText(drawList, column.oddsTimer, left + oddsW + oddsGap + timerW / 2,
+        oddsY, settings.oddsSize, TEXT.muted);
+end
+
+-- Window body. Kept separate so DrawWindow can pcall it and still guarantee
+-- the matching imgui.End() / PopStyleVar().
+local function DrawColumns(settings, columns, contentWidth, contentHeight)
+    SaveWindowPosition(WINDOW_NAME);
+
+    local originX, originY = imgui.GetCursorScreenPos();
+    imgui.Dummy({ contentWidth, contentHeight });
+
+    -- Window draw list (not GetUIDrawList/Background): keeps text and
+    -- primitives on the same list as this window. Measuring via PushFont
+    -- on 4.16 touches CurrentWindow's texture stack; drawing to the
+    -- background list while config is open was splitting those targets.
+    local drawList = imgui.GetWindowDrawList();
+    local clock = os.clock();
+    local columnWidth = settings.dieSize * COLUMN_WIDTH;
+    local stride = columnWidth + settings.dieSize * COLUMN_GAP;
+
+    for i = 1, #columns do
+        DrawColumn(drawList, settings, columns[i],
+            originX + (i - 1) * stride + columnWidth / 2, originY, clock);
+    end
+end
+
+-- Explicit size, no AlwaysAutoResize: on legacy ImGui an always-applied
+-- auto-resize fights the explicit size every frame and can make other windows
+-- appear to stretch/shrink. That rules out sharing GetBaseWindowFlags().
+local baseWindowFlags = nil;
+local function WindowFlags(lockPositions)
+    if baseWindowFlags == nil then
+        baseWindowFlags = bit.bor(
+            ImGuiWindowFlags_NoDecoration,
+            ImGuiWindowFlags_NoFocusOnAppearing,
+            ImGuiWindowFlags_NoNav,
+            ImGuiWindowFlags_NoBackground,
+            ImGuiWindowFlags_NoBringToFrontOnFocus,
+            ImGuiWindowFlags_NoDocking
+        );
+    end
+
+    if lockPositions then
+        return bit.bor(baseWindowFlags, ImGuiWindowFlags_NoMove);
+    end
+
+    return baseWindowFlags;
+end
+
+M.DrawWindow = function(settings)
     imtext.SetConfigFromSettings(settings.font_settings);
 
     local slots = tracker.Slots();
     local doubleUpIndex, doubleUpSeconds = tracker.DoubleUp();
 
     local columns = {};
-    local columnWidth = dieSize * 1.35;
-    local oddsGap = settings.oddsSize * 0.45;
-
     for i = 1, 2 do
         if slots[i] ~= nil then
             columns[#columns + 1] = BuildColumn(
@@ -162,64 +253,33 @@ M.DrawWindow = function(settings)
     local count = #columns;
     if count == 0 then return; end
 
-    local contentWidth = columnWidth * count + gap * (count - 1);
-    local contentHeight = settings.nameSize + nameGap + dieSize + iceHeadroom
-        + rowGap + settings.potencySize + rowGap + settings.barHeight + rowGap + settings.oddsSize;
+    local dieSize = settings.dieSize;
+    local rowGap = dieSize * ROW_GAP;
+    local columnWidth = dieSize * COLUMN_WIDTH;
+    local contentWidth = columnWidth * count + dieSize * COLUMN_GAP * (count - 1);
+    local contentHeight = settings.nameSize + dieSize * NAME_GAP
+        + dieSize + dieSize * ICE_HEADROOM + rowGap
+        + settings.potencySize + rowGap + settings.barHeight + rowGap + settings.oddsSize;
 
-    imgui.SetNextWindowSize({ -1, -1 }, ImGuiCond_Always);
+    -- Explicit size (not -1,-1) so legacy ImGui isn't re-fitting the window
+    -- every frame; see WindowFlags above.
+    imgui.SetNextWindowSize({ contentWidth, contentHeight }, ImGuiCond_Always);
     imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, { 0, 0 });
 
     ApplyWindowPosition(WINDOW_NAME);
-    if imgui.Begin(WINDOW_NAME, true, GetBaseWindowFlags(gConfig.lockPositions)) then
-        SaveWindowPosition(WINDOW_NAME);
+    local open = imgui.Begin(WINDOW_NAME, true, WindowFlags(gConfig and gConfig.lockPositions));
 
-        local originX, originY = imgui.GetCursorScreenPos();
-        imgui.Dummy({ contentWidth, contentHeight });
-
-        local drawList = GetUIDrawList();
-        local clock = os.clock();
-
-        for i = 1, count do
-            local column = columns[i];
-            local centerX = originX + (i - 1) * (columnWidth + gap) + columnWidth / 2;
-            local y = originY;
-
-            dice.CenteredText(drawList, column.name, centerX, y + settings.nameSize / 2,
-                settings.nameSize, column.nameColor);
-            y = y + settings.nameSize + nameGap;
-
-            dice.Draw(drawList, centerX - dieSize / 2, y, dieSize, column.state, clock,
-                settings.font_settings);
-            y = y + dieSize + iceHeadroom + rowGap;
-
-            dice.CenteredText(drawList, column.potency, centerX, y + settings.potencySize / 2,
-                settings.potencySize, column.potencyColor);
-            y = y + settings.potencySize + rowGap;
-
-            DrawBar(drawList, centerX - columnWidth / 2, y, columnWidth, settings.barHeight, column);
-            y = y + settings.barHeight + rowGap;
-
-            if column.odds ~= '' then
-                local oddsY = y + settings.oddsSize / 2;
-                if column.oddsTimer ~= '' then
-                    local oddsW = imtext.Measure(column.odds, settings.oddsSize);
-                    local timerW = imtext.Measure(column.oddsTimer, settings.oddsSize);
-                    local totalW = oddsW + oddsGap + timerW;
-                    local left = centerX - totalW / 2;
-                    dice.CenteredText(drawList, column.odds, left + oddsW / 2, oddsY,
-                        settings.oddsSize, column.oddsColor);
-                    dice.CenteredText(drawList, column.oddsTimer, left + oddsW + oddsGap + timerW / 2,
-                        oddsY, settings.oddsSize, TEXT.muted);
-                else
-                    dice.CenteredText(drawList, column.odds, centerX, oddsY,
-                        settings.oddsSize, column.oddsColor);
-                end
-            end
-        end
+    -- Only the body is protected: End/PopStyleVar must run even if a draw call
+    -- errors, or ImGui's window and style stacks stay unbalanced for every
+    -- other addon window this frame. End() is required even when Begin() is false.
+    local ok, err = true, nil;
+    if open then
+        ok, err = pcall(DrawColumns, settings, columns, contentWidth, contentHeight);
     end
-    imgui.End();
 
+    imgui.End();
     imgui.PopStyleVar();
+    if not ok then error(err); end
 end
 
 M.ResetPositions = function()

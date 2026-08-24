@@ -192,7 +192,37 @@ function M.Reset()
     colorCache = {};
 end
 
+-- Normalize CalcTextSize / CalcTextSizeA results across Ashita bindings
+-- (number width, ImVec2 userdata/table, or width+height multi-return).
+local function sizeXY(a, b)
+    if type(a) == 'number' then
+        return a, (type(b) == 'number' and b) or nil;
+    end
+    if a ~= nil then
+        local x = a.x or a[1];
+        local y = a.y or a[2];
+        if type(x) == 'number' then
+            return x, (type(y) == 'number' and y) or nil;
+        end
+    end
+    return 0, nil;
+end
+
+-- FLT_MAX: wrap width large enough that text is measured on a single line.
+local NO_WRAP_WIDTH = 3.402823e+38;
+
+-- Width and line height of `text` in whatever font is currently pushed.
+local function measurePushedFont(text)
+    local lineHeight = imgui.GetTextLineHeight();
+    local width = sizeXY(imgui.CalcTextSize(text));
+    return width, lineHeight;
+end
+
 --- Measure text width and height at the given font size.
+--- Prefer ImFont:CalcTextSizeA so we never PushFont during measure. On Ashita
+--- 4.16 (ImGui 1.80), PushFont also PushTextureID on the current window draw
+--- list; unbalanced or high-frequency Push/Pop from hot paths (Phantom Roll
+--- with config open) corrupts global layout and makes windows pulse/vanish.
 --- @param text string
 --- @param fontSize number|nil Pixel size (nil uses ImGui default)
 --- @return number width, number height
@@ -202,24 +232,37 @@ function M.Measure(text, fontSize)
 
     local font = activeFont;
     if font and fontSize then
-        local pushOk = pcall(imgui.PushFont, font);
-        if pushOk then
-            local lineH = imgui.GetTextLineHeight();
-            local w = imgui.CalcTextSize(text);
-            imgui.PopFont();
-            if lineH > 0 then
-                local scale = fontSize / lineH;
-                return w * scale, fontSize;
+        -- Direct glyph metrics at the draw size — no font/texture stack.
+        -- A zero width for non-empty text means the binding returned junk, so
+        -- only trust a positive result.
+        local ok, a, b = pcall(function()
+            return font:CalcTextSizeA(fontSize, NO_WRAP_WIDTH, 0.0, text);
+        end);
+        if ok then
+            local width, height = sizeXY(a, b);
+            if width > 0 then
+                return width, height or fontSize;
+            end
+        end
+
+        -- Binding has no CalcTextSizeA: measure with the font pushed, and
+        -- always PopFont on the same path so the stack stays balanced.
+        if pcall(imgui.PushFont, font) then
+            local measured, width, lineHeight = pcall(measurePushedFont, text);
+            pcall(imgui.PopFont);
+            if measured and lineHeight > 0 then
+                return width * (fontSize / lineHeight), fontSize;
             end
         end
     end
 
+    -- Default font: scale its metrics to the requested size.
     local defaultHeight = getLineHeight();
+    local width, height = sizeXY(imgui.CalcTextSize(text));
     if fontSize and defaultHeight > 0 then
-        local scale = fontSize / defaultHeight;
-        return imgui.CalcTextSize(text) * scale, fontSize;
+        return width * (fontSize / defaultHeight), fontSize;
     end
-    return imgui.CalcTextSize(text), defaultHeight;
+    return width, height or defaultHeight;
 end
 
 --- Draw outlined text on an ImGui draw list.

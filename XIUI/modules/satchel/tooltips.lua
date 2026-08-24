@@ -6,6 +6,7 @@
 ]]--
 
 local imgui = require('imgui')
+local imguiCompat = require('handlers.imgui_compat')
 local fontcore = require('modules.satchel.satchelfontcore')
 local TextureManager = require('libs.texturemanager')
 
@@ -527,7 +528,7 @@ local SPECIALS = {
 local glyph_cache = {}
 
 -- Ashita main/4.16 TextColored is printf-style; 4.3 is not.
-local imgui_needs_printf_escape = (ImGuiChildFlags_Borders == nil)
+local imgui_needs_printf_escape = imguiCompat.legacyImGui == true
 
 local function escape_imgui_format(text)
     if type(text) ~= 'string' or text == '' then

@@ -4,7 +4,18 @@
 * This module provides compatibility between the current Ashita v4beta (main)
 * and the upcoming Ashita 4.3 (2025_q3_update branch) which has breaking ImGui changes.
 *
-* Set _XIUI_USE_ASHITA_4_3 = true in XIUI.lua to enable 4.3 mode.
+* "Main" here includes Ashita 4.16-final private-server installs that ship the
+* older addons/libs/imgui.lua. Prefer this shim over telling users to replace
+* their shared libs folder (mismatched StyleVar indices break XIUI and other addons).
+*
+* Auto-detect only (no manual override):
+*   - Native ImGuiChildFlags_Borders present  -> current ImGui (Ashita 4.3+)
+*   - Native ImGuiChildFlags_Borders missing  -> legacy ImGui (Ashita 4.16-final libs)
+* Detect runs BEFORE polyfills. Callers that need the answer must read the
+* returned legacyImGui flag:
+*     local legacy = require('handlers.imgui_compat').legacyImGui;
+* Never re-check ImGuiChildFlags_Borders yourself — the legacy path polyfills
+* those constant names for call-site compatibility, so they exist on both.
 *
 * Changes in 4.3:
 *   - BeginChild: cflags default changed, now needs explicit ImGuiChildFlags_Borders
@@ -12,6 +23,11 @@
 *   - ImGuiCol_Tab* constants renamed (TabActive -> TabSelected, etc.)
 *   - ImDrawCornerFlags renamed to ImDrawFlags_RoundCorners*
 *   - BeginDisabled/EndDisabled: exists in 4.3 (ImGui 1.85+), polyfilled for main
+*
+* Additional legacy (4.16) / main notes:
+*   - BeginChild third arg is a boolean border (not ImGuiChildFlags)
+*   - Passing nil child-flag constants into BeginChild breaks config/satchel/etc.
+*   - Use ImDrawCornerFlags_* in draw calls; values differ from RoundCorners* bits
 ]]--
 
 local imgui = require('imgui');
@@ -19,18 +35,15 @@ local imgui = require('imgui');
 -- Store original functions
 local orig_imgui_BeginChild = imgui.BeginChild;
 
--- Auto-detect Ashita 4.3 vs main branch based on ImGui constants
--- 4.3 has ImGuiChildFlags_Borders constant, main branch does not
--- Manual override via _XIUI_USE_ASHITA_4_3 global is still supported
-local use43 = rawget(_G, '_XIUI_USE_ASHITA_4_3');
-if use43 == nil then
-    -- Auto-detect: ImGuiChildFlags_Borders exists only in 4.3
-    use43 = (ImGuiChildFlags_Borders ~= nil);
-end
+-- Auto-detect current vs legacy ImGui based on native constants
+-- Current (4.3+) ships ImGuiChildFlags_Borders; legacy (4.16) stock libs do not
+-- Detect BEFORE polyfills so a missing ImGuiChildFlags_Borders stays meaningful
+local legacyImGui = (ImGuiChildFlags_Borders == nil);
 
 -- ImDrawCornerFlags -> ImDrawFlags_RoundCorners* aliases
 -- 4.3 uses ImDrawFlags_RoundCorners* (new naming), main uses ImDrawCornerFlags_* (old naming)
 -- Create aliases so code can use ImDrawCornerFlags_* consistently on both branches
+-- (Bit layouts differ: do not hardcode 0xF / 15; use ImDrawCornerFlags_All instead)
 if ImDrawFlags_RoundCornersAll ~= nil then
     -- 4.3 branch: new names exist, create old name aliases pointing to new names
     ImDrawCornerFlags_None = ImDrawFlags_RoundCornersNone;
@@ -46,8 +59,34 @@ if ImDrawFlags_RoundCornersAll ~= nil then
 end
 -- On main branch: ImDrawCornerFlags_* already exist natively, no aliases needed
 
-if use43 then
-    -- Running on 4.3 branch - add backwards compatibility aliases for old constant names
+-- Convert current-style child flags / legacy bools into a legacy boolean border arg
+local function toBoolBorder(cflags)
+    if cflags == true then
+        return true;
+    end
+    if cflags == false or cflags == nil then
+        return false;
+    end
+    if type(cflags) == 'number' then
+        -- Current ImGuiChildFlags_Borders is bit 0 (= 1)
+        return bit.band(cflags, 1) ~= 0;
+    end
+    return false;
+end
+
+-- Convert legacy bool border args into current ImGuiChildFlags values
+local function toChildFlags(cflags)
+    if cflags == true then
+        return ImGuiChildFlags_Borders;
+    end
+    if cflags == false or cflags == nil then
+        return ImGuiChildFlags_None;
+    end
+    return cflags;
+end
+
+if not legacyImGui then
+    -- Running on current ImGui (4.3+) - add backwards compatibility aliases for old constant names
     -- These were renamed in ImGui 1.90+
     -- Always set fallbacks first, then override with actual values if they exist
     ImGuiCol_Tab = ImGuiCol_Tab or ImGuiCol_Header or 0;
@@ -64,16 +103,28 @@ if use43 then
 
     -- BeginChild: Handle boolean->flags conversion for backwards compat
     imgui.BeginChild = function(id, size, cflags, wflags)
-        if cflags == true then
-            cflags = ImGuiChildFlags_Borders;
-        elseif cflags == false then
-            cflags = ImGuiChildFlags_None;
-        end
-        return orig_imgui_BeginChild(id, size, cflags, wflags);
+        return orig_imgui_BeginChild(id, size, toChildFlags(cflags), wflags);
     end
 
 else
-    -- Running on MAIN branch - apply compatibility shims for 4.3-style code
+    -- Running on legacy ImGui - apply compatibility shims for current-style code
+    -- (Includes Ashita 4.16-final stock imgui.lua used by many private servers)
+
+    -- Polyfill ImGuiChildFlags_* names so current-style call sites (config, satchel, etc.)
+    -- can pass them. BeginChild below maps these back to a real boolean border.
+    -- Do not treat presence of these names as proof of current ImGui after this block runs.
+    if ImGuiChildFlags_None == nil then
+        ImGuiChildFlags_None = 0;
+        ImGuiChildFlags_Borders = 1;
+        ImGuiChildFlags_AlwaysUseWindowPadding = bit.lshift(1, 1);
+        ImGuiChildFlags_ResizeX = bit.lshift(1, 2);
+        ImGuiChildFlags_ResizeY = bit.lshift(1, 3);
+        ImGuiChildFlags_AutoResizeX = bit.lshift(1, 4);
+        ImGuiChildFlags_AutoResizeY = bit.lshift(1, 5);
+        ImGuiChildFlags_AlwaysAutoResize = bit.lshift(1, 6);
+        ImGuiChildFlags_FrameStyle = bit.lshift(1, 7);
+        ImGuiChildFlags_NavFlattened = bit.lshift(1, 8);
+    end
 
     -- ImGuiWindowFlags_NoDocking doesn't exist on main branch (added in 4.3)
     -- Define as 0 so bit.bor() calls don't fail
@@ -128,9 +179,12 @@ else
     end
 
     -- BeginChild: 4.3 changed default cflags behavior
-    -- On main, true = ImGuiChildFlags_Borders, on 4.3 it's more explicit
+    -- On legacy/4.16 the third arg is a boolean border; on current it is ImGuiChildFlags
+    -- Map bools and polyfilled flag values to a real boolean (never pass nil flags)
+    -- Older shim forwarded ImGuiChildFlags_* which are nil on stock 4.16 libs and
+    -- broke BeginChild for config, satchel, and Phantom Roll preview windows
     imgui.BeginChild = function(id, size, cflags, wflags)
-        return orig_imgui_BeginChild(id, size, cflags == true and ImGuiChildFlags_Borders or ImGuiChildFlags_None, wflags);
+        return orig_imgui_BeginChild(id, size, toBoolBorder(cflags), wflags);
     end
 
     -- PushStyleColor wrapper removed - all constants now guaranteed to exist via fallbacks above
@@ -140,7 +194,8 @@ end
 
 -- Return module info for debugging
 return {
-    version = '1.0.0',
-    mode = use43 and '4.3' or 'main',
-    description = 'ImGui compatibility layer for Ashita v4beta main/4.3'
+    version = '1.1.0',
+    legacyImGui = legacyImGui,
+    mode = legacyImGui and 'legacy' or 'current',
+    description = 'ImGui compatibility layer for Ashita v4beta current/legacy (4.3 / 4.16)',
 };

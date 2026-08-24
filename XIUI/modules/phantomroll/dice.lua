@@ -51,6 +51,8 @@ M.CenteredText = function(drawList, text, centerX, centerY, size, argbColor)
 end
 
 -- Face already has contrast; global bold/outline turns the numeral into a blob.
+-- Switch to regular/no-outline only for this draw, then restore. Fonts are
+-- cache lookups (no atlas load); Measure itself must not PushFont (see imtext).
 local function DrawNumeral(drawList, text, boxX, boxY, boxSize, fontSize, argbColor, fontSettings)
     imtext.SetConfig(fontSettings.font_family or 'Tahoma', false, 0);
 

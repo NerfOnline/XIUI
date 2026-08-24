@@ -1,5 +1,6 @@
 local breader = require('bitreader')
 local imgui = require('imgui')
+local imguiCompat = require('handlers.imgui_compat')
 local TextureManager = require('libs.texturemanager')
 local tooltips = require('modules.satchel.tooltips')
 local satchelfontcore = require('modules.satchel.satchelfontcore')
@@ -1280,7 +1281,7 @@ local function create_item_logic(ctx)
 
     -- Ashita main/4.16 TextColored treats strings as printf formats (% must be doubled).
     -- Ashita 4.3 does not, so escaping would show a literal "%%".
-    local imgui_needs_printf_escape = (ImGuiChildFlags_Borders == nil)
+    local imgui_needs_printf_escape = imguiCompat.legacyImGui == true
 
     local function escape_imgui_format(text)
         if type(text) ~= 'string' or text == '' then
