@@ -268,6 +268,20 @@ local function ClearTrackedDebuff(targetDebuffs, buffId)
     targetDebuffs[buffId] = nil;
 end
 
+-- Low 16 bits are the action id. 512-1023 is Ashita's JA resource range.
+-- Type 11 must not subtract 512: 688-695 are 2-hour mob skills.
+local function PacketParamId(id)
+    return bit.band(id or 0, 0xFFFF);
+end
+
+local function JobAbilityId(id)
+    id = PacketParamId(id);
+    if id >= 512 and id < 1024 then
+        return id - 512;
+    end
+    return id;
+end
+
 local function ResolveActionBuffIds(actionType, spellId, abilityParam)
     local ids = {};
     if abilityParam ~= nil and abilityParam ~= 0 then
@@ -307,6 +321,8 @@ local function ResolveActionBuffIds(actionType, spellId, abilityParam)
     return ids;
 end
 
+-- 0x028 is sent after SpendCost; party TP is 0 or a stale 0x0DD value.
+-- Treat <100 as unknown so tpPer500 stuns are not applied as 0s.
 local function GetActorTp(actorId)
     if actorId == nil then return nil; end
     local mem = AshitaCore:GetMemoryManager();
@@ -316,7 +332,11 @@ local function GetActorTp(actorId)
     for memIdx = 0, ALLIANCE_MEMBER_SLOTS - 1 do
         if party:GetMemberIsActive(memIdx) ~= 0 then
             if party:GetMemberServerId(memIdx) == actorId then
-                return party:GetMemberTP(memIdx);
+                local tp = party:GetMemberTP(memIdx);
+                if tp ~= nil and tp >= 100 then
+                    return tp;
+                end
+                return nil;
             end
         end
     end
@@ -411,20 +431,6 @@ local function LookupNonSpell(id, actionType)
         return JA_DURATIONS[id] or JA_PHYSICAL_DURATIONS[id];
     end
     return JA_DURATIONS[id] or JA_PHYSICAL_DURATIONS[id] or PET_DURATIONS[id];
-end
-
--- Low 16 bits are the action id. 512-1023 is Ashita's JA resource range.
--- Type 11 must not subtract 512: 688-695 are 2-hour mob skills.
-local function PacketParamId(id)
-    return bit.band(id or 0, 0xFFFF);
-end
-
-local function JobAbilityId(id)
-    id = PacketParamId(id);
-    if id >= 512 and id < 1024 then
-        return id - 512;
-    end
-    return id;
 end
 
 -- Type 4 is spells-only so BLU ids do not collide with 2-hours or weapon skills.
@@ -599,19 +605,17 @@ local function ApplyMessage(debuffs, action)
                 end
             end
 
-            -- Additional-effect procs. Do not replace a known timer with the 30s guess.
+            -- Weapon/mob extra-effect only. Do not shorten a spell/BLU/WS timer from this packet.
             if additionalEffect ~= nil and additionalEffectMes[additionalEffect] then
                 local buffId = ability.AdditionalEffect.Param;
                 if buffId ~= nil then
+                    local prev = targetDebuffs[buffId];
+                    local prevExpiry = type(prev) == 'table' and prev.expiry or prev;
+                    local prevCertain = type(prev) == 'table' and prevExpiry and prevExpiry >= now and not prev.uncertain;
                     local aeData = ADDITIONAL_EFFECT_DURATIONS[buffId];
-                    if aeData then
-                        ApplyBuffExpiry(targetDebuffs, buffId, now + aeData.duration, false);
-                    else
-                        local prev = targetDebuffs[buffId];
-                        local prevExpiry = type(prev) == 'table' and prev.expiry or prev;
-                        if prevExpiry == nil or prevExpiry < now then
-                            ApplyBuffExpiry(targetDebuffs, buffId, now + 30, true);
-                        end
+                    local newExpiry = now + (aeData and aeData.duration or 30);
+                    if not prevCertain and (prevExpiry == nil or prevExpiry < now or newExpiry > prevExpiry) then
+                        ApplyBuffExpiry(targetDebuffs, buffId, newExpiry, true);
                     end
                 end
             end

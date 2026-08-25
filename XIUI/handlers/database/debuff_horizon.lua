@@ -18,6 +18,7 @@ overlay.spells = {
 };
 
 overlay.jaPhysical = {
+    [45] = {duration = 30, buffId = 448}, -- Mug - Bewildered Daze (type 3 path; keep in sync with ja)
     [46] = {duration = 6}, -- Shield Bash (type 3 path; keep in sync with ja)
     [77] = {duration = 6}, -- Weapon Bash (type 3 path; keep in sync with ja)
 };
@@ -28,6 +29,7 @@ overlay.ja = {
     [45] = {duration = 30, buffId = 448}, -- Mug - Bewildered Daze (always applies, even if gil steal fails)
 };
 
+-- Horizon WS debuffs. Energy Drain Slow uses the 1k/2k/3k TP tiers below.
 overlay.weaponSkills = {
     [22] = {buffId = 13, uncertain = true, tpTier = {{1000, 90}, {2000, 150}, {3000, 210}}}, -- Energy Drain - Slow (Uncertain: strong Haste can block Slow with no reliable signal)
     [66] = {buffId = 12, duration = false, uncertain = true, tpTier = {{1000, 20}, {2000, 40}, {3000, 60}}}, -- Gale Axe - Weight (Replaces retail Choke)
