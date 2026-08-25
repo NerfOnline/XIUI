@@ -5,26 +5,6 @@
 local durations = {};
 
 durations.spells = {
-    -- Weapon skills with debuffs (do not track Shield Break)
-    [181] = {duration = 180, buffId = 149}, -- Shell Crusher - Defense Down
-    [83] = {duration = 180, buffId = 149},  -- Armor Break - Defense Down
-    [87] = {duration = 180, buffIds = {149, 147}}, -- Full Break - Defense Down & Attack Down
-    [155] = {duration = 180, buffId = 149}, -- Tachi: Ageha - Defense Down
-    [187] = {duration = 180, buffId = 149}, -- Garland of Bliss - Defense Down
-    [89] = {duration = 180, buffId = 149},  -- Metatron Torment - Defense Down
-    [85] = {duration = 180, buffId = 147},  -- Weapon Break - Attack Down
-    [185] = {duration = 180, buffId = 147}, -- Gate of Tartarus - Attack Down
-    [107] = {duration = 180, buffId = 147}, -- Infernal Scythe - Attack Down
-    [16] = {duration = 90, buffId = 3},     -- Wasp Sting - Poison
-    [17] = {duration = 90, buffId = 3},     -- Viper Bite - Poison
-    [18] = {duration = 30, buffId = 11},    -- Shadowstitch - Bind
-    [35] = {duration = 5, buffId = 10},     -- Flat Blade - Stun
-    [115] = {duration = 5, buffId = 10},    -- Leg Sweep - Stun
-    [2] = {duration = 5, buffId = 10},      -- Shoulder Tackle - Stun
-    [65] = {duration = 5, buffId = 10},     -- Smash Axe - Stun
-    [162] = {duration = 5, buffId = 10},    -- Brainshaker - Stun
-    [145] = {duration = 5, buffId = 10},    -- Tachi: Hobaku - Stun
-
     -- Dia/Bio spells
     [23] = {duration = 60, kind = 'enfeeble'},   -- Dia
     [33] = {duration = 60, kind = 'enfeeble'},   -- Diaga
@@ -211,19 +191,75 @@ durations.spells = {
     [707] = {duration = 12, buffId = 156}, -- Retinal Glare - Flash
 };
 
+-- Type 3 weapon skills with debuffs (separate from spells to avoid id collisions).
+durations.weaponSkills = {
+    [2] = {buffId = 10, tpPer500 = 1}, -- Shoulder Tackle - Stun
+    [15] = {buffId = 31, tpDuration = {base = 15, per1000Tp = 3}}, -- Shijin Spiral - Plague
+    [16] = {buffId = 3, tpDuration = {base = 75, per1000Tp = 15}}, -- Wasp Sting - Poison
+    [17] = {buffId = 3, tpDuration = {base = 30, per100Tp = 6}}, -- Viper Bite - Poison
+    [18] = {buffId = 11, tpDuration = {base = 5, per200Tp = 1}}, -- Shadowstitch - Bind
+    [28] = {buffId = 12, duration = 60}, -- Mordant Rime - Weight
+    [29] = {buffId = 148, tpDuration = {per100Tp = 6}}, -- Pyrrhic Kleos - Evasion Down
+    [31] = {buffId = 12, duration = 60}, -- Rudra's Storm - Weight
+    [35] = {buffId = 10, duration = 4}, -- Flat Blade - Stun
+    [44] = {buffId = 404, duration = 60}, -- Death Blossom - Magic Evasion Down
+    [52] = {buffId = 2, tpDuration = {per100Tp = 6}}, -- Shockwave - Sleep
+    [58] = {buffId = 4, tpDuration = {per100Tp = 6}}, -- Herculean Slash - Paralyze
+    [65] = {buffId = 10, tpPer500 = 1}, -- Smash Axe - Stun
+    [66] = {buffId = 130, duration = 60}, -- Gale Axe - Choke
+    [73] = {buffId = 146, duration = 120}, -- Onslaught - Accuracy Down
+    [75] = {buffId = 11, duration = 20}, -- Bora Axe - Bind
+    [80] = {buffId = 148, tpDuration = {base = 120, per100Tp = 6}}, -- Shield Break - Evasion Down
+    [83] = {buffId = 149, tpDuration = {base = 120, per100Tp = 6}}, -- Armor Break - Defense Down
+    [85] = {buffId = 147, tpDuration = {base = 120, per100Tp = 6}}, -- Weapon Break - Attack Down
+    [87] = {buffIds = {147, 149, 146, 148}, tpDuration = {base = 60, per100Tp = 3}}, -- Full Break
+    [89] = {buffId = 149, duration = 120}, -- Metatron Torment - Defense Down
+    [92] = {buffId = 13, duration = 60}, -- Ukko's Fury - Slow
+    [102] = {buffId = 6, tpDuration = {base = 30, per100Tp = 3}}, -- Guillotine - Silence
+    [107] = {buffId = 147, tpDuration = {per100Tp = 6}}, -- Infernal Scythe - Attack Down
+    [115] = {buffId = 10, duration = 4}, -- Leg Sweep - Stun
+    [125] = {buffId = 298, duration = 60}, -- Stardiver - Crit Hit Evasion Down
+    [129] = {buffId = 4, tpFTP = {30, 60, 120}}, -- Blade: Retsu - Paralyze
+    [137] = {buffId = 4, duration = 60}, -- Blade: Metsu - Paralyze
+    [138] = {buffId = 146, tpDuration = {per1000Tp = 6}}, -- Blade: Kamu - Accuracy Down
+    [139] = {buffId = 3, tpDuration = {base = 75, per1000Tp = 15}}, -- Blade: Yu - Poison
+    [145] = {buffId = 10, duration = 3}, -- Tachi: Hobaku - Stun
+    [150] = {buffId = 5, duration = 60}, -- Tachi: Yukikaze - Blind
+    [151] = {buffId = 6, duration = 45}, -- Tachi: Gekko - Silence
+    [152] = {buffId = 4, duration = 60}, -- Tachi: Kasha - Paralyze
+    [155] = {buffId = 149, tpDuration = {per100Tp = 6}}, -- Tachi: Ageha - Defense Down
+    [162] = {buffId = 10, tpPer500 = 1}, -- Brainshaker - Stun
+    [165] = {buffId = 140, duration = 140}, -- Skullbreaker - INT Down
+    [170] = {buffId = 148, duration = 120}, -- Randgrith - Evasion Down
+    [181] = {buffId = 149, tpDuration = {base = 120, per100Tp = 6}}, -- Shell Crusher - Defense Down
+    [185] = {buffId = 147, duration = 120}, -- Gate of Tartarus - Attack Down
+    [186] = {buffId = 167, tpDuration = {per100Tp = 6}}, -- Vidohunir - Magic Def Down
+    [187] = {buffId = 149, tpDuration = {per100Tp = 6}}, -- Garland of Bliss - Defense Down
+    [188] = {buffId = 175, tpDuration = {per100Tp = 6}}, -- Omniscience - Magic Atk Down
+    [191] = {buffId = 167, duration = 120}, -- Shattersoul - Magic Def Down
+    [210] = {buffId = 140, duration = 140}, -- Sniper Shot - INT Down
+    [219] = {buffId = 4, tpDuration = {per100Tp = 6}}, -- Numbing Shot - Paralyze
+    [224] = {buffId = 146, tpDuration = {base = 45, per1000Tp = 45}}, -- Exenterator - Accuracy Down
+    [238] = {buffId = 156, duration = 15}, -- Uriel Blade - Flash
+    [239] = {buffId = 10, tpPer500 = 1}, -- Glory Slash - Stun
+};
+
+-- Job abilities that apply a debuff on the next melee/ranged hit (not on use).
+durations.onHit = {
+    [156] = {buffId = 148, duration = 30, window = 60}, -- Feint -> Evasion Down
+};
+
 -- Type 3 job abilities that land like a weaponskill.
 durations.jaPhysical = {
-    [22] = {duration = 120, buffId = 144}, -- Energy Drain - Max HP Down
-    [45] = {duration = 30, buffId = 448},  -- Mug
     [46] = {duration = 8, buffId = 10},    -- Shield Bash - Stun (LSB 2-8)
     [77] = {duration = 8, buffId = 10},    -- Weapon Bash - Stun
-    [170] = {duration = 30, buffId = 149}, -- Angon - Defense Down
+    [170] = {duration = 30, buffId = 149, certainOnHit = true}, -- Angon - Defense Down (no resist roll)
 };
 
 -- Type 6 / 14 job abilities. 16-23 are packet JA ids; 688-695 are mob-skill ids
 -- (type 11). Keep 688-695 out of spells so they do not collide with BLU.
 durations.ja = {
-    [72] = {duration = 30, buffId = 11}, -- Shadowbind - Bind
+    [57] = {duration = 30, buffId = 11}, -- Shadowbind - Bind
     [139] = {duration = 30, buffId = 149}, -- Tomahawk - Defense Down
     [201] = {duration = 30, buffId = 386}, -- Quickstep - Lethargic Daze
     [202] = {duration = 30, buffId = 396}, -- Stutter Step - Weakened Daze
@@ -254,9 +290,28 @@ durations.pet = {
 
 -- Additional-effect procs keyed by the landed buff id (not spell/WS id).
 durations.additionalEffect = {
-    [2] = {duration = 25},   -- Sleep Bolt
+    [2] = {duration = 25},   -- Sleep
+    [3] = {duration = 90},   -- Poison
+    [4] = {duration = 120},  -- Paralyze
+    [5] = {duration = 180},  -- Blind
+    [6] = {duration = 120},  -- Silence
+    [10] = {duration = 5},   -- Stun
+    [11] = {duration = 30},  -- Bind
+    [12] = {duration = 30},  -- Weight / Gravity
+    [13] = {duration = 180}, -- Slow
+    [31] = {duration = 60},  -- Plague
+    [130] = {duration = 90}, -- Choke
+    [136] = {duration = 60}, -- STR Down
+    [140] = {duration = 120}, -- INT Down
+    [146] = {duration = 120}, -- Accuracy Down
+    [147] = {duration = 120}, -- Attack Down
+    [148] = {duration = 120}, -- Evasion Down
     [149] = {duration = 60}, -- Defense Down / Acid Bolt
-    [12] = {duration = 30},  -- Gravity / Mandau
+    [156] = {duration = 12}, -- Flash
+    [167] = {duration = 120}, -- Magic Def Down
+    [175] = {duration = 120}, -- Magic Atk Down
+    [298] = {duration = 60}, -- Crit Hit Evasion Down
+    [404] = {duration = 60}, -- Magic Evasion Down
 };
 
 return durations;
