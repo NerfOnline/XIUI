@@ -17,16 +17,17 @@ overlay.spells = {
     [240] = {duration = 120}, -- Drown
 };
 
+-- Physical JAs sometimes show up as type 6 in packets, but are mainly a type 3.
 overlay.jaPhysical = {
-    [45] = {duration = 30, buffId = 448}, -- Mug - Bewildered Daze (type 3 path; keep in sync with ja)
-    [46] = {duration = 6}, -- Shield Bash (type 3 path; keep in sync with ja)
-    [77] = {duration = 6}, -- Weapon Bash (type 3 path; keep in sync with ja)
+    [45] = {duration = 30, buffId = 448}, -- Mug - Bewildered Daze (always applies, even if gil steal fails)
+    [46] = {duration = 6, buffId = 10, uncertain = true}, -- Shield Bash - Stun
+    [77] = {duration = 6, buffId = 10, uncertain = true}, -- Weapon Bash - Stun
 };
 
 overlay.ja = {
-    [46] = {duration = 6}, -- Shield Bash (type 6 path; keep in sync with jaPhysical)
-    [77] = {duration = 6}, -- Weapon Bash (type 6 path; keep in sync with jaPhysical)
-    [45] = {duration = 30, buffId = 448}, -- Mug - Bewildered Daze (always applies, even if gil steal fails)
+    [46] = {duration = 6, buffId = 10, uncertain = true}, -- Shield Bash - Stun (also type 3 / jaPhysical)
+    [77] = {duration = 6, buffId = 10, uncertain = true}, -- Weapon Bash - Stun (also type 3 / jaPhysical)
+    [45] = {duration = 30, buffId = 448}, -- Mug - Bewildered Daze (also type 3 / jaPhysical, always applies, even if gil steal fails)
 };
 
 -- Horizon WS debuffs. Energy Drain Slow uses the 1k/2k/3k TP tiers below.

@@ -254,12 +254,12 @@ durations.onHit = {
 };
 
 -- Type 3 job abilities that land like a weaponskill.
--- Physical JAs mostly arrive as type 3; the same ids are mirrored in durations.ja for type 6/14.
+-- Physical JAs sometimes show up as type 6 in packets, but are mainly a type 3.
 -- uncertain = true: effect can resist after the physical hit connects.
 -- certainOnHit = true: effect always lands when the hit connects (no resist roll).
 durations.jaPhysical = {
+    [57] = {duration = 30, buffId = 11},   -- Shadowbind - Bind (msg 203)
     [46] = {duration = 8, buffId = 10, uncertain = true}, -- Shield Bash - Stun
-    [57] = {duration = 30, buffId = 11}, -- Shadowbind - Bind (msg 203; also type 6 / ja)
     [77] = {duration = 8, buffId = 10, uncertain = true}, -- Weapon Bash - Stun
     [168] = {duration = 30, buffId = 31, buffIds = {10, 31}, uncertain = true}, -- Blade Bash - Stun (~6s) + Plague (15+merits); resist each
     [170] = {duration = 30, buffId = 149, certainOnHit = true}, -- Angon - Defense Down (15+merit; 30 at 1)
@@ -271,15 +271,15 @@ durations.jaPhysical = {
 -- not for miss-only abilities (missMes already skips those).
 -- Ability IDs verified against LandSandBoat scripts/enum/job_ability.lua (GitHub base).
 durations.ja = {
-    [46] = {duration = 8, buffId = 10, uncertain = true}, -- Shield Bash (also type 3 / jaPhysical)
     [57] = {duration = 30, buffId = 11}, -- Shadowbind - Bind (also type 3 / jaPhysical)
-    [77] = {duration = 8, buffId = 10, uncertain = true}, -- Weapon Bash (also type 3 / jaPhysical)
+    [46] = {duration = 6, buffId = 10, uncertain = true}, -- Shield Bash - Stun (also type 3 / jaPhysical)
+    [77] = {duration = 6, buffId = 10, uncertain = true}, -- Weapon Bash - Stun (also type 3 / jaPhysical)
+    [168] = {duration = 30, buffId = 31, buffIds = {10, 31}, uncertain = true}, -- Blade Bash - Stun (~6s) + Plague (15+merits); resist each (also type 3 / jaPhysical)
+    [170] = {duration = 30, buffId = 149, certainOnHit = true}, -- Angon (also type 3 / jaPhysical)
     [82] = {duration = 100, buffId = 168, uncertain = true}, -- Chi Blast - Inhibit TP only with Penance
     [131] = {duration = 90, buffId = 2, uncertain = true}, -- Light Shot - Sleep
     [150] = {duration = 30, buffId = 805}, -- Tomahawk (silent client icon; not Defense Down 149)
-    [161] = {duration = 10, buffId = 28, uncertain = true}, -- Feral Howl - Terror
-    [168] = {duration = 30, buffId = 31, buffIds = {10, 31}, uncertain = true}, -- Blade Bash (also type 3 / jaPhysical)
-    [170] = {duration = 30, buffId = 149, certainOnHit = true}, -- Angon (also type 3 / jaPhysical)
+    [161] = {duration = 10, buffId = 28, uncertain = true}, -- Feral Howl - Terror    
     [201] = {duration = 60, buffId = 386}, -- Quickstep - Lethargic Daze
     [202] = {duration = 60, buffId = 391}, -- Box Step - Sluggish Daze
     [203] = {duration = 60, buffId = 396}, -- Stutter Step - Weakened Daze
@@ -344,8 +344,7 @@ durations.pet = {
     [1908] = {duration = 90, buffId = 2, buffIds = {2, 135}}, -- Nightmare (mob-skill id form)
 };
 
--- Additional-effect procs keyed by the landed buff id (not spell/WS id).
--- Duration is the maximum for that status; the handler always applies these as uncertain.
+-- Additional-effect procs keyed by landed buff id. Max duration for that status; handler applies as uncertain.
 durations.additionalEffect = {
     [2] = {duration = 25},   -- Sleep
     [3] = {duration = 90},   -- Poison
