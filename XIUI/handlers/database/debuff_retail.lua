@@ -272,8 +272,8 @@ durations.jaPhysical = {
 -- Ability IDs verified against LandSandBoat scripts/enum/job_ability.lua (GitHub base).
 durations.ja = {
     [57] = {duration = 30, buffId = 11}, -- Shadowbind - Bind (also type 3 / jaPhysical)
-    [46] = {duration = 6, buffId = 10, uncertain = true}, -- Shield Bash - Stun (also type 3 / jaPhysical)
-    [77] = {duration = 6, buffId = 10, uncertain = true}, -- Weapon Bash - Stun (also type 3 / jaPhysical)
+    [46] = {duration = 8, buffId = 10, uncertain = true}, -- Shield Bash - Stun (also type 3 / jaPhysical)
+    [77] = {duration = 8, buffId = 10, uncertain = true}, -- Weapon Bash - Stun (also type 3 / jaPhysical)
     [168] = {duration = 30, buffId = 31, buffIds = {10, 31}, uncertain = true}, -- Blade Bash - Stun (~6s) + Plague (15+merits); resist each (also type 3 / jaPhysical)
     [170] = {duration = 30, buffId = 149, certainOnHit = true}, -- Angon (also type 3 / jaPhysical)
     [82] = {duration = 100, buffId = 168, uncertain = true}, -- Chi Blast - Inhibit TP only with Penance
