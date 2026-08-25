@@ -16,12 +16,9 @@ overlay.spells = {
 };
 
 overlay.jaPhysical = {
+    [45] = {duration = 30, buffId = 448}, -- Mug - Bewildered Daze (type 3)
     [46] = {duration = 6}, -- Shield Bash
     [77] = {duration = 6}, -- Weapon Bash
-};
-
-overlay.ja = {
-    [45] = {duration = 30, buffId = 448}, -- Mug - Bewildered Daze (crit hit rate bonus)
 };
 
 -- Horizon WS debuffs (see horizonffxi.wiki). Energy Drain Slow durations at 1k/2k/3k TP.

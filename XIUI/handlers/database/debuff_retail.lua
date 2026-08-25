@@ -252,6 +252,7 @@ durations.onHit = {
 -- Type 3 job abilities that land like a weaponskill.
 durations.jaPhysical = {
     [46] = {duration = 8, buffId = 10},    -- Shield Bash - Stun (LSB 2-8)
+    [57] = {duration = 30, buffId = 11},   -- Shadowbind - Bind (type 3, msg 203)
     [77] = {duration = 8, buffId = 10},    -- Weapon Bash - Stun
     [170] = {duration = 30, buffId = 149, certainOnHit = true}, -- Angon - Defense Down (no resist roll)
 };
@@ -259,7 +260,6 @@ durations.jaPhysical = {
 -- Type 6 / 14 job abilities. 16-23 are packet JA ids; 688-695 are mob-skill ids
 -- (type 11). Keep 688-695 out of spells so they do not collide with BLU.
 durations.ja = {
-    [57] = {duration = 30, buffId = 11}, -- Shadowbind - Bind
     [139] = {duration = 30, buffId = 149}, -- Tomahawk - Defense Down
     [201] = {duration = 30, buffId = 386}, -- Quickstep - Lethargic Daze
     [202] = {duration = 30, buffId = 396}, -- Stutter Step - Weakened Daze
@@ -288,7 +288,7 @@ durations.pet = {
     [1908] = {duration = 60, buffId = 2}, -- Nightmare
 };
 
--- Additional-effect procs keyed by the landed buff id (not spell/WS id).
+-- Additional-effect procs keyed by landed buff id. Max duration for that status; handler applies as uncertain.
 durations.additionalEffect = {
     [2] = {duration = 25},   -- Sleep
     [3] = {duration = 90},   -- Poison

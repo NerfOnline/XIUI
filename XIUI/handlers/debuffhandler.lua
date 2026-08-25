@@ -27,7 +27,7 @@ local physicalHitMes = {[103]=true, [110]=true, [185]=true, [187]=true, [238]=tr
 local additionalEffectMes = {[160]=true, [164]=true};
 -- "No effect" confirms a matching uncertain debuff is already present (do not refresh timer).
 -- Distinct from complete resist / immunity (655), which means the effect is not present.
-local noEffectMes = {[75]=true, [189]=true, [283]=true, [323]=true};
+local noEffectMes = {[75]=true, [156]=true, [189]=true, [283]=true, [323]=true};
 local immuneMes = {[655]=true}; -- MagicCompleteResist — target immune / cannot take the effect
 local MAX_TP = 3000;
 local ALLIANCE_MEMBER_SLOTS = 18;
@@ -264,6 +264,20 @@ local function ClearTrackedDebuff(targetDebuffs, buffId)
     targetDebuffs[buffId] = nil;
 end
 
+-- Low 16 bits are the action id. 512-1023 is Ashita's JA resource range.
+-- Type 11 must not subtract 512: 688-695 are 2-hour mob skills.
+local function PacketParamId(id)
+    return bit.band(id or 0, 0xFFFF);
+end
+
+local function JobAbilityId(id)
+    id = PacketParamId(id);
+    if id >= 512 and id < 1024 then
+        return id - 512;
+    end
+    return id;
+end
+
 local function ResolveActionBuffIds(actionType, spellId, abilityParam)
     local ids = {};
     if abilityParam ~= nil and abilityParam ~= 0 then
@@ -278,20 +292,22 @@ local function ResolveActionBuffIds(actionType, spellId, abilityParam)
         return ids;
     end
     if actionType == 3 then
-        local wsData = WEAPON_SKILL_DURATIONS[spellId];
-        if wsData then
-            if wsData.buffIds then
-                for _, id in ipairs(wsData.buffIds) do
+        local data = WEAPON_SKILL_DURATIONS[spellId] or JA_PHYSICAL_DURATIONS[JobAbilityId(spellId)];
+        if data then
+            if data.buffIds then
+                for _, id in ipairs(data.buffIds) do
                     ids[#ids + 1] = id;
                 end
-            elseif wsData.buffId then
-                ids[#ids + 1] = wsData.buffId;
+            elseif data.buffId then
+                ids[#ids + 1] = data.buffId;
             end
         end
     end
     return ids;
 end
 
+-- 0x028 is sent after SpendCost; party TP is 0 or a stale 0x0DD value.
+-- Treat <100 as unknown so tpPer500 stuns are not applied as 0s.
 local function GetActorTp(actorId)
     if actorId == nil then return nil; end
     local mem = AshitaCore:GetMemoryManager();
@@ -301,7 +317,11 @@ local function GetActorTp(actorId)
     for memIdx = 0, ALLIANCE_MEMBER_SLOTS - 1 do
         if party:GetMemberIsActive(memIdx) ~= 0 then
             if party:GetMemberServerId(memIdx) == actorId then
-                return party:GetMemberTP(memIdx);
+                local tp = party:GetMemberTP(memIdx);
+                if tp ~= nil and tp >= 100 then
+                    return tp;
+                end
+                return nil;
             end
         end
     end
@@ -391,20 +411,6 @@ local function LookupNonSpell(id, actionType)
         return JA_DURATIONS[id];
     end
     return JA_DURATIONS[id] or JA_PHYSICAL_DURATIONS[id] or PET_DURATIONS[id];
-end
-
--- Low 16 bits are the action id. 512-1023 is Ashita's JA resource range.
--- Type 11 must not subtract 512: 688-695 are 2-hour mob skills.
-local function PacketParamId(id)
-    return bit.band(id or 0, 0xFFFF);
-end
-
-local function JobAbilityId(id)
-    id = PacketParamId(id);
-    if id >= 512 and id < 1024 then
-        return id - 512;
-    end
-    return id;
 end
 
 -- Type 4 is spells-only so BLU ids do not collide with 2-hours or weapon skills.
@@ -563,19 +569,17 @@ local function ApplyMessage(debuffs, action)
                 end
             end
 
-            -- Additional-effect procs. Do not replace a known timer with the 30s guess.
+            -- Weapon/mob extra-effect only. Do not shorten a spell/BLU/WS timer from this packet.
             if additionalEffect ~= nil and additionalEffectMes[additionalEffect] then
                 local buffId = ability.AdditionalEffect.Param;
                 if buffId ~= nil then
+                    local prev = targetDebuffs[buffId];
+                    local prevExpiry = type(prev) == 'table' and prev.expiry or prev;
+                    local prevCertain = type(prev) == 'table' and prevExpiry and prevExpiry >= now and not prev.uncertain;
                     local aeData = ADDITIONAL_EFFECT_DURATIONS[buffId];
-                    if aeData then
-                        ApplyBuffExpiry(targetDebuffs, buffId, now + aeData.duration, false);
-                    else
-                        local prev = targetDebuffs[buffId];
-                        local prevExpiry = type(prev) == 'table' and prev.expiry or prev;
-                        if prevExpiry == nil or prevExpiry < now then
-                            ApplyBuffExpiry(targetDebuffs, buffId, now + 30, true);
-                        end
+                    local newExpiry = now + (aeData and aeData.duration or 30);
+                    if not prevCertain and (prevExpiry == nil or prevExpiry < now or newExpiry > prevExpiry) then
+                        ApplyBuffExpiry(targetDebuffs, buffId, newExpiry, true);
                     end
                 end
             end
