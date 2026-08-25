@@ -32,7 +32,7 @@ local missMes = {[15]=true, [63]=true, [158]=true, [188]=true, [213]=true, [324]
 -- Distinct from complete resist / immunity (655), which means the effect is not present.
 -- 75 MAGIC_NO_EFFECT, 156 JA_NO_EFFECT, 189 SKILL_NO_EFFECT, 283 NO_EFFECT, 323 JA_NO_EFFECT_2
 local noEffectMes = {[75]=true, [156]=true, [189]=true, [283]=true, [323]=true};
-local immuneMes = {[655]=true}; -- MAGIC_COMPLETE_RESIST — target immune / cannot take the effect
+local immuneMes = {[655]=true}; -- MagicCompleteResist — target immune / cannot take the effect
 local MAX_TP = 3000;
 local ALLIANCE_MEMBER_SLOTS = 18;
 
