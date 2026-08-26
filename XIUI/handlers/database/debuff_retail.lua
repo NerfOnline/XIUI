@@ -5,24 +5,24 @@
 local durations = {};
 
 durations.spells = {
-    -- Dia/Bio spells
-    [23] = {duration = 60, kind = 'enfeeble'},   -- Dia
-    [33] = {duration = 60, kind = 'enfeeble'},   -- Diaga
-    [230] = {duration = 60, kind = 'enfeeble'},  -- Bio
-    [24] = {duration = 120, kind = 'enfeeble'},  -- Dia II
-    [231] = {duration = 120, kind = 'enfeeble'}, -- Bio II
-    [25] = {duration = 180, kind = 'enfeeble'},  -- Dia III
-    [232] = {duration = 180, kind = 'enfeeble'}, -- Bio III
+    -- Dia/Bio: damage message is the apply (no separate status-on). They overwrite each other.
+    [23] = {duration = 60, buffId = 134, clearsBuffs = {135}, kind = 'enfeeble', applyOnDamage = true},   -- Dia
+    [33] = {duration = 60, buffId = 134, clearsBuffs = {135}, kind = 'enfeeble', applyOnDamage = true},   -- Diaga
+    [24] = {duration = 120, buffId = 134, clearsBuffs = {135}, kind = 'enfeeble', applyOnDamage = true},  -- Dia II
+    [25] = {duration = 180, buffId = 134, clearsBuffs = {135}, kind = 'enfeeble', applyOnDamage = true},  -- Dia III
+    [230] = {duration = 60, buffId = 135, clearsBuffs = {134}, kind = 'enfeeble', applyOnDamage = true},  -- Bio
+    [231] = {duration = 120, buffId = 135, clearsBuffs = {134}, kind = 'enfeeble', applyOnDamage = true}, -- Bio II
+    [232] = {duration = 180, buffId = 135, clearsBuffs = {134}, kind = 'enfeeble', applyOnDamage = true}, -- Bio III
 
-    -- Helix: LSB base 30 +60 at lvl 60+ (=90). Dark Arts JP added in ResolveDuration.
-    [278] = {duration = 90, buffId = 186, kind = 'helix'}, [279] = {duration = 90, buffId = 186, kind = 'helix'},
-    [280] = {duration = 90, buffId = 186, kind = 'helix'}, [281] = {duration = 90, buffId = 186, kind = 'helix'},
-    [282] = {duration = 90, buffId = 186, kind = 'helix'}, [283] = {duration = 90, buffId = 186, kind = 'helix'},
-    [284] = {duration = 90, buffId = 186, kind = 'helix'}, [285] = {duration = 90, buffId = 186, kind = 'helix'},
-    [885] = {duration = 90, buffId = 186, kind = 'helix'}, [886] = {duration = 90, buffId = 186, kind = 'helix'},
-    [887] = {duration = 90, buffId = 186, kind = 'helix'}, [888] = {duration = 90, buffId = 186, kind = 'helix'},
-    [889] = {duration = 90, buffId = 186, kind = 'helix'}, [890] = {duration = 90, buffId = 186, kind = 'helix'},
-    [891] = {duration = 90, buffId = 186, kind = 'helix'}, [892] = {duration = 90, buffId = 186, kind = 'helix'},
+    -- Helix: applyOnDamage (DoT lands on the damage message). Dark Arts JP added in ResolveDuration.
+    [278] = {duration = 90, buffId = 186, kind = 'helix', applyOnDamage = true}, [279] = {duration = 90, buffId = 186, kind = 'helix', applyOnDamage = true},
+    [280] = {duration = 90, buffId = 186, kind = 'helix', applyOnDamage = true}, [281] = {duration = 90, buffId = 186, kind = 'helix', applyOnDamage = true},
+    [282] = {duration = 90, buffId = 186, kind = 'helix', applyOnDamage = true}, [283] = {duration = 90, buffId = 186, kind = 'helix', applyOnDamage = true},
+    [284] = {duration = 90, buffId = 186, kind = 'helix', applyOnDamage = true}, [285] = {duration = 90, buffId = 186, kind = 'helix', applyOnDamage = true},
+    [885] = {duration = 90, buffId = 186, kind = 'helix', applyOnDamage = true}, [886] = {duration = 90, buffId = 186, kind = 'helix', applyOnDamage = true},
+    [887] = {duration = 90, buffId = 186, kind = 'helix', applyOnDamage = true}, [888] = {duration = 90, buffId = 186, kind = 'helix', applyOnDamage = true},
+    [889] = {duration = 90, buffId = 186, kind = 'helix', applyOnDamage = true}, [890] = {duration = 90, buffId = 186, kind = 'helix', applyOnDamage = true},
+    [891] = {duration = 90, buffId = 186, kind = 'helix', applyOnDamage = true}, [892] = {duration = 90, buffId = 186, kind = 'helix', applyOnDamage = true},
 
     -- Regular debuff spells
     [58] = {duration = 120, kind = 'enfeeble'},  -- Paralyze
@@ -130,7 +130,8 @@ durations.spells = {
     [466] = {duration = 30, songFamily = 'songPlusVirelai'}, -- Maiden's Virelai
     [472] = {duration = 120, songFamily = 'songPlusNocturne'}, -- Pining Nocturne
 
-    -- Blue Magic from LSB scripts/actions/spells/blue. Physical/breath AE uses onDamage.
+    -- Blue Magic. onDamage = status is an additional effect of a damaging spell.
+    -- Remaining duration is resist-scaled (handler marks those rows uncertain).
     [513] = {duration = 60, buffId = 3}, -- Venom Shell - Poison
     [515] = {duration = 60, buffId = 136, onDamage = true}, -- Maelstrom - STR Down
     [524] = {duration = 60, buffId = 146, onDamage = true}, -- Sandspin - Accuracy Down
@@ -176,7 +177,7 @@ durations.spells = {
     [644] = {duration = 90, buffId = 4, onDamage = true}, -- Mind Blast - Paralyze
     [648] = {duration = 30, buffId = 11, onDamage = true}, -- Regurgitation - Bind
     [650] = {duration = 120, buffId = 149, onDamage = true}, -- Seedspray - Defense Down
-    [651] = {duration = 90, buffId = 149, buffIds = {149, 147}}, -- Corrosive Ooze - Def/Atk Down
+    [651] = {duration = 90, buffId = 149, buffIds = {149, 147}, onDamage = true}, -- Corrosive Ooze - Def/Atk Down
     [652] = {duration = 60, buffId = 146, onDamage = true}, -- Spiral Spin - Accuracy Down
     [654] = {duration = 180, buffId = 4, onDamage = true}, -- Sub-zero Smash - Paralyze
     [660] = {duration = 90, buffId = 13}, -- Cimicine Discharge - Slow
@@ -184,14 +185,14 @@ durations.spells = {
     [671] = {duration = 60, buffId = 6, buffIds = {6, 11}, onDamage = true}, -- Auroral Drape - Silence + Bind
     [675] = {duration = 60, buffId = 5, onDamage = true}, -- Thermal Pulse - Blind
     [678] = {duration = 90, buffId = 2}, -- Dream Flower - Sleep
-    [682] = {duration = 30, buffId = 31, onDamage = true}, -- Delta Thrust - Plague
-    [687] = {duration = 90, buffId = 6}, -- Water Bomb - Silence (BG: 60~90)
+    [682] = {duration = 60, buffId = 31, onDamage = true}, -- Delta Thrust - Plague
+    [687] = {duration = 90, buffId = 6, onDamage = true}, -- Water Bomb - Silence (BG: 60~90)
     [692] = {duration = 5, buffId = 10, onDamage = true}, -- Sudden Lunge - Stun
     [699] = {duration = 120, buffId = 146, onDamage = true}, -- Barbed Crescent - Accuracy Down
-    [703] = {duration = 180, buffId = 13}, -- Embalming Earth - Slow
+    [703] = {duration = 180, buffId = 13, onDamage = true}, -- Embalming Earth - Slow
     [704] = {duration = 60, buffId = 4, onDamage = true}, -- Paralyzing Triad - Paralyze
-    [705] = {duration = 180, buffId = 133}, -- Foul Waters - Drown
-    [707] = {duration = 15, buffId = 156}, -- Retinal Glare - Flash
+    [705] = {duration = 180, buffId = 133, onDamage = true}, -- Foul Waters - Drown
+    [707] = {duration = 15, buffId = 156, onDamage = true}, -- Retinal Glare - Flash
 };
 
 -- Type 3 weapon skills with debuffs (separate from spells to avoid id collisions).

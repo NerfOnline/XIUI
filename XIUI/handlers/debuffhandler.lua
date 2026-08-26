@@ -28,6 +28,16 @@ local additionalEffectMes = {[160]=true, [164]=true};
 -- Ability / WS miss — do not infer a debuff from the action alone.
 -- 158 = JA_MISS, 324 = JA_MISS_2 (Light Shot / Feral Howl etc.)
 local missMes = {[15]=true, [63]=true, [158]=true, [188]=true, [213]=true, [324]=true, [354]=true};
+-- Hits that deal HP damage (wakes Sleep). Healing messages are omitted.
+local damageHitMes = {
+    [1]=true, [2]=true, [67]=true, [110]=true, [163]=true, [185]=true,
+    [187]=true, [229]=true, [252]=true, [264]=true, [265]=true, [317]=true,
+    [352]=true, [353]=true, [379]=true, [576]=true, [577]=true, [802]=true,
+};
+local SLEEP_BUFF_IDS = { 2, 19, 193 };
+-- Type 4 spell ids 513-760 are Blue Magic (511 is Haste II, 841 is Distract).
+local BLU_SPELL_ID_MIN = 513;
+local BLU_SPELL_ID_MAX = 760;
 -- "No effect" confirms a matching uncertain debuff is already present (do not refresh timer).
 -- Distinct from complete resist / immunity (655), which means the effect is not present.
 -- 75 MAGIC_NO_EFFECT, 156 JA_NO_EFFECT, 189 SKILL_NO_EFFECT, 283 NO_EFFECT, 323 JA_NO_EFFECT_2
@@ -57,13 +67,21 @@ local BRD_SONG_DURATION_GIFT_PCT = 5;
 local meritCounts = {};
 local jobPointCategories = {};
 
+local function CloneDurationEntry(entry)
+    local copy = {};
+    for k, v in pairs(entry) do
+        copy[k] = v;
+    end
+    return copy;
+end
+
 local function CopyDurationTables(src)
     local dst = {};
     for cat, entries in pairs(src) do
         if type(entries) == 'table' then
             local copy = {};
             for id, data in pairs(entries) do
-                copy[id] = data;
+                copy[id] = type(data) == 'table' and CloneDurationEntry(data) or data;
             end
             dst[cat] = copy;
         else
@@ -71,14 +89,6 @@ local function CopyDurationTables(src)
         end
     end
     return dst;
-end
-
-local function CloneDurationEntry(entry)
-    local copy = {};
-    for k, v in pairs(entry) do
-        copy[k] = v;
-    end
-    return copy;
 end
 
 local function ApplyHorizonOverlay(base, overlay)
@@ -116,6 +126,13 @@ if HzLimitedMode then
 end
 
 local SPELL_DURATIONS = durations.spells;
+-- BLU remaining duration is resist-scaled; always show ?.
+for id = BLU_SPELL_ID_MIN, BLU_SPELL_ID_MAX do
+    local row = SPELL_DURATIONS[id];
+    if row then
+        row.uncertain = true;
+    end
+end
 local WEAPON_SKILL_DURATIONS = durations.weaponSkills or {};
 local JA_PHYSICAL_DURATIONS = durations.jaPhysical;
 local JA_DURATIONS = durations.ja;
@@ -189,6 +206,20 @@ local function IsOwnActor(actorId)
     return GetLocalPetServerId() == actorId;
 end
 
+local function IsAllianceActor(actorId)
+    if actorId == nil then return false; end
+    if IsOwnActor(actorId) then return true; end
+    local mem = AshitaCore:GetMemoryManager();
+    local party = mem and mem:GetParty();
+    if not party then return false; end
+    for memIdx = 0, ALLIANCE_MEMBER_SLOTS - 1 do
+        if party:GetMemberIsActive(memIdx) ~= 0 and party:GetMemberServerId(memIdx) == actorId then
+            return true;
+        end
+    end
+    return false;
+end
+
 local function ResolveDuration(spellData, isOwnActor)
     local duration = spellData.duration or 0;
     if not isOwnActor then
@@ -245,11 +276,6 @@ end
 
 local function ApplyBuffExpiry(targetDebuffs, buffId, expiry, uncertain)
     if buffId == nil then return; end
-    local prev = targetDebuffs[buffId];
-    -- Keep certainty if an active certain timer already exists (do not downgrade).
-    if type(prev) == 'table' and prev.expiry and prev.expiry >= os.time() and not prev.uncertain then
-        uncertain = false;
-    end
     targetDebuffs[buffId] = { expiry = expiry, uncertain = uncertain == true };
 end
 
@@ -266,6 +292,23 @@ end
 local function ClearTrackedDebuff(targetDebuffs, buffId)
     if buffId == nil or buffId == 0 then return; end
     targetDebuffs[buffId] = nil;
+end
+
+local function ClearSleepDebuffs(targetDebuffs)
+    for i = 1, #SLEEP_BUFF_IDS do
+        targetDebuffs[SLEEP_BUFF_IDS[i]] = nil;
+    end
+end
+
+local function SpellHasBuff(spellData, buffId)
+    if spellData == nil or buffId == nil then return false; end
+    if spellData.buffIds then
+        for i = 1, #spellData.buffIds do
+            if spellData.buffIds[i] == buffId then return true; end
+        end
+        return false;
+    end
+    return spellData.buffId == buffId;
 end
 
 -- Low 16 bits are the action id. 512-1023 is Ashita's JA resource range.
@@ -403,25 +446,6 @@ local function UsesTpDuration(data)
     return data.tpTier ~= nil or data.tpDuration ~= nil or data.tpFTP ~= nil or data.tpPer500 ~= nil;
 end
 
--- uncertain: true when land is inferred (WS hit) or TP is unknown for a TP-scaled duration.
-local function ApplyWeaponSkillData(targetDebuffs, wsData, actorId, now, uncertain)
-    local duration, tpKnown = ResolveWeaponSkillDuration(wsData, actorId);
-    if uncertain == nil then
-        uncertain = true;
-    end
-    -- Unknown TP only matters when duration depends on TP.
-    if not tpKnown and UsesTpDuration(wsData) then
-        uncertain = true;
-    end
-    -- Guaranteed land (e.g. Angon-like) stays certain even if TP was assumed.
-    if wsData.certainOnHit then
-        uncertain = false;
-    end
-    local entry = CloneDurationEntry(wsData);
-    entry.duration = duration;
-    ApplySpellData(targetDebuffs, entry, false, now, nil, uncertain);
-end
-
 -- Non-spell Param lookup. Order matters for id collisions (e.g. Invincible vs Energy Drain).
 local function LookupNonSpell(id, actionType)
     if actionType == 3 then
@@ -458,20 +482,79 @@ local function GetDurationData(actionType, id)
 end
 
 local function ApplySpellData(targetDebuffs, spellData, isOwnActor, now, packetBuffId, uncertain)
+    if spellData.uncertain then
+        uncertain = true;
+    end
     local expiry = now + ResolveDuration(spellData, isOwnActor);
     if spellData.clearsBuffs then
         for _, clearBuffId in ipairs(spellData.clearsBuffs) do
             targetDebuffs[clearBuffId] = nil;
         end
     end
-    if spellData.buffIds then
+    -- onDamage AEs land one buff per message. Magical multi-enfeeble (Enervation) lands together.
+    if spellData.buffIds and not spellData.onDamage then
         for _, buffId in ipairs(spellData.buffIds) do
             ApplyBuffExpiry(targetDebuffs, buffId, expiry, uncertain);
         end
         return;
     end
-    local buffId = spellData.buffId or packetBuffId;
+    local buffId = packetBuffId;
+    if buffId == nil or buffId == 0 then
+        buffId = spellData.buffId;
+    end
     ApplyBuffExpiry(targetDebuffs, buffId, expiry, uncertain);
+end
+
+-- uncertain: true when land is inferred (WS hit) or TP is unknown for a TP-scaled duration.
+local function ApplyWeaponSkillData(targetDebuffs, wsData, actorId, now, uncertain)
+    local duration, tpKnown = ResolveWeaponSkillDuration(wsData, actorId);
+    if uncertain == nil then
+        uncertain = true;
+    end
+    -- Unknown TP only matters when duration depends on TP.
+    if not tpKnown and UsesTpDuration(wsData) then
+        uncertain = true;
+    end
+    -- Guaranteed land (e.g. Angon-like) stays certain even if TP was assumed.
+    if wsData.certainOnHit then
+        uncertain = false;
+    end
+    local entry = CloneDurationEntry(wsData);
+    entry.duration = duration;
+    ApplySpellData(targetDebuffs, entry, false, now, nil, uncertain);
+end
+
+-- applyOnDamage: certain land on the damage message. onDamage: infer when the packet has no AE block.
+local function ApplyType4Damage(targetDebuffs, spellData, isOwnActor, now, damage, additionalEffect)
+    if not spellData then return; end
+    if spellData.onDamage then
+        if (damage or 0) > 0 and additionalEffect == nil then
+            ApplySpellData(targetDebuffs, spellData, isOwnActor, now, nil, true);
+        end
+        return;
+    end
+    if spellData.applyOnDamage then
+        ApplySpellData(targetDebuffs, spellData, isOwnActor, now, nil, false);
+    end
+end
+
+local function ApplyPacketAdditionalEffect(targetDebuffs, spellData, isOwnActor, now, buffId)
+    if buffId == nil then return; end
+    if SpellHasBuff(spellData, buffId) then
+        local landed = CloneDurationEntry(spellData);
+        landed.buffIds = nil;
+        landed.buffId = buffId;
+        ApplySpellData(targetDebuffs, landed, isOwnActor, now, buffId, true);
+        return;
+    end
+    local prev = targetDebuffs[buffId];
+    local prevExpiry = prev and prev.expiry;
+    local prevCertain = prev and prevExpiry and prevExpiry >= now and not prev.uncertain;
+    local aeData = ADDITIONAL_EFFECT_DURATIONS[buffId];
+    local newExpiry = now + (aeData and aeData.duration or 30);
+    if not prevCertain and (prevExpiry == nil or prevExpiry < now or newExpiry > prevExpiry) then
+        ApplyBuffExpiry(targetDebuffs, buffId, newExpiry, true);
+    end
 end
 
 local function ApplyMessage(debuffs, action)
@@ -488,7 +571,6 @@ local function ApplyMessage(debuffs, action)
     for _, target in pairs(action.Targets) do
         for _, ability in pairs(target.Actions) do
 
-            -- Set up our state
             local spell = PacketParamId(action.Param);
             local message = ability.Message
             local additionalEffect
@@ -503,6 +585,11 @@ local function ApplyMessage(debuffs, action)
 
             local targetDebuffs = debuffs[target.Id];
             local spellData = GetDurationData(action.Type, spell);
+
+            -- Damage wakes Sleep; this action may re-apply it afterward.
+            if damageHitMes[message] then
+                ClearSleepDebuffs(targetDebuffs);
+            end
 
             -- Handle pet abilities (Type 13)
             if action.Type == 13 then
@@ -535,23 +622,8 @@ local function ApplyMessage(debuffs, action)
                     local uncertain = spellData.certainOnHit ~= true;
                     ApplySpellData(targetDebuffs, spellData, isOwnActor, now, nil, uncertain);
                 end
-            -- Handle dia/bio/helix and physical additional-effect spells (Type 4 damage)
             elseif action.Type == 4 and spellDamageMes[message] then
-                if spellData then
-                    local expiry = now + ResolveDuration(spellData, isOwnActor);
-                    if spell == 23 or spell == 24 or spell == 25 or spell == 33 then
-                        ApplyBuffExpiry(targetDebuffs, 134, expiry, false);
-                        targetDebuffs[135] = nil;
-                    elseif spell == 230 or spell == 231 or spell == 232 then
-                        targetDebuffs[134] = nil;
-                        ApplyBuffExpiry(targetDebuffs, 135, expiry, false);
-                    elseif (spell >= 278 and spell <= 285) or (spell >= 885 and spell <= 892) then
-                        ApplyBuffExpiry(targetDebuffs, spellData.buffId, expiry, false);
-                    elseif spellData.onDamage then
-                        ApplySpellData(targetDebuffs, spellData, isOwnActor, now, buffTable.GetBuffIdBySpellId(spell), true);
-                    end
-                end
-            -- Handle regular status effect spells and magical BLU / confirmed WS status
+                ApplyType4Damage(targetDebuffs, spellData, isOwnActor, now, ability.Param, additionalEffect);
             elseif statusOnMes[message] then
                 local buffId = ability.Param or (action.Type == 4 and buffTable.GetBuffIdBySpellId(spell) or nil);
                 local wsData = action.Type == 3 and WEAPON_SKILL_DURATIONS[spell] or nil;
@@ -560,20 +632,20 @@ local function ApplyMessage(debuffs, action)
                 elseif spellData then
                     ApplySpellData(targetDebuffs, spellData, isOwnActor, now, buffId, false);
                 elseif buffId ~= nil then
-                    ApplyBuffExpiry(targetDebuffs, buffId, now + 300, false);
+                    local aeData = ADDITIONAL_EFFECT_DURATIONS[buffId];
+                    ApplyBuffExpiry(targetDebuffs, buffId, now + (aeData and aeData.duration or 30), true);
                 end
-            -- Handle dispel effects
             elseif statusOffMes[message] then
                 if ability.Param ~= nil then
                     targetDebuffs[ability.Param] = nil
                 end
-            -- "No effect": debuff already present — confirm uncertain, keep timer.
-            -- Not used for immunity (that is complete resist / immuneMes).
+            -- Confirm ? without refreshing. Only alliance actors.
             elseif noEffectMes[message] then
-                for _, buffId in ipairs(ResolveActionBuffIds(action.Type, spell, ability.Param)) do
-                    ConfirmUncertainDebuff(targetDebuffs, buffId, now);
+                if IsAllianceActor(actorId) then
+                    for _, buffId in ipairs(ResolveActionBuffIds(action.Type, spell, ability.Param)) do
+                        ConfirmUncertainDebuff(targetDebuffs, buffId, now);
+                    end
                 end
-            -- Complete resist / immunity: effect is not on the target — clear tracker.
             elseif immuneMes[message] then
                 for _, buffId in ipairs(ResolveActionBuffIds(action.Type, spell, ability.Param)) do
                     ClearTrackedDebuff(targetDebuffs, buffId);
@@ -605,19 +677,8 @@ local function ApplyMessage(debuffs, action)
                 end
             end
 
-            -- Weapon/mob extra-effect only. Do not shorten a spell/BLU/WS timer from this packet.
             if additionalEffect ~= nil and additionalEffectMes[additionalEffect] then
-                local buffId = ability.AdditionalEffect.Param;
-                if buffId ~= nil then
-                    local prev = targetDebuffs[buffId];
-                    local prevExpiry = type(prev) == 'table' and prev.expiry or prev;
-                    local prevCertain = type(prev) == 'table' and prevExpiry and prevExpiry >= now and not prev.uncertain;
-                    local aeData = ADDITIONAL_EFFECT_DURATIONS[buffId];
-                    local newExpiry = now + (aeData and aeData.duration or 30);
-                    if not prevCertain and (prevExpiry == nil or prevExpiry < now or newExpiry > prevExpiry) then
-                        ApplyBuffExpiry(targetDebuffs, buffId, newExpiry, true);
-                    end
-                end
+                ApplyPacketAdditionalEffect(targetDebuffs, spellData, isOwnActor, now, ability.AdditionalEffect.Param);
             end
         end
     end
@@ -641,9 +702,7 @@ local function ClearMessage(debuffs, basic)
         -- Clear the buffid that just wore off
         if (basic.param ~= nil) then
             if (basic.param == 2) then --Sleep/Lullaby Handling
-                debuffs[basic.target][2] = nil
-                debuffs[basic.target][193] = nil
-                debuffs[basic.target][19] = nil
+                ClearSleepDebuffs(debuffs[basic.target]);
             else
                 debuffs[basic.target][basic.param] = nil
             end
@@ -690,13 +749,10 @@ debuffHandler.HandleMessagePacket = function(e)
 end
 
 debuffHandler.GetActiveDebuffs = function(serverId)
-
     if (debuffHandler.enemies[serverId] == nil) then
         return nil
     end
 
-    -- Clear and reuse tables instead of allocating new ones every frame
-    -- This significantly reduces garbage collection pressure
     local count = 0;
     for i = 1, #reusableDebuffIds do
         reusableDebuffIds[i] = nil;
@@ -706,22 +762,19 @@ debuffHandler.GetActiveDebuffs = function(serverId)
         reusableDebuffUncertain[k] = nil;
     end
 
-    -- Cache os.time() once instead of calling it repeatedly in the loop
     local currentTime = os.time();
-
     for buffId, entry in pairs(debuffHandler.enemies[serverId]) do
-        local expiryTime = type(entry) == 'table' and entry.expiry or entry;
-        if (expiryTime ~= 0 and expiryTime ~= nil and expiryTime > currentTime) then
+        local expiryTime = entry and entry.expiry;
+        if expiryTime ~= nil and expiryTime > currentTime then
             count = count + 1;
             reusableDebuffIds[count] = buffId;
             reusableDebuffTimes[count] = expiryTime - currentTime;
-            if type(entry) == 'table' and entry.uncertain then
+            if entry.uncertain then
                 reusableDebuffUncertain[buffId] = true;
             end
         end
     end
 
-    -- Return nil if no active debuffs (same behavior as before)
     if count == 0 then
         return nil;
     end

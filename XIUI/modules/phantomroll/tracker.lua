@@ -9,9 +9,8 @@ local vanatime = require('libs.vanatime');
 local M = {};
 
 local MAX_SLOTS = 2;
-local ADOPT_WINDOW = 2;
-local CLEAR_GRACE = 0.2;
-local DOUBLE_UP_MAX = (data.DOUBLE_UP_DURATION or 45) + 5;
+-- Action packet lands before 0x63; keep the new seat until its buff id shows.
+local CLEAR_GRACE = 3;
 
 local slots = {};
 local rollSequence = 0;
@@ -43,18 +42,10 @@ local function ArmTimer(entry, duration)
     entry.pending = true;
 end
 
-local function StampFitsId(statusId, seconds)
-    if seconds == nil or seconds < 0 then return false; end
-    if statusId == data.DOUBLE_UP_STATUS then
-        return seconds <= DOUBLE_UP_MAX;
-    end
-    return seconds > DOUBLE_UP_MAX;
-end
-
--- Only the first ~2s after a packet; 0x63 already pairs id with time.
-local function AdoptTimer(entry, seconds, now, statusId)
-    if entry == nil or not StampFitsId(statusId, seconds) then return; end
-    if (now - (entry.armedAt or 0)) > ADOPT_WINDOW then return; end
+-- 0x63 pairs each id with its own time, so a live Evoker's (324) and a
+-- busted Evoker's (309) keep independent clocks even when both are named the same.
+local function AdoptTimer(entry, seconds, now)
+    if entry == nil or seconds == nil or seconds < 0 then return; end
     entry.expiresAt = now + seconds;
     if seconds > 0 then
         entry.duration = math.max(entry.duration or seconds, seconds);
@@ -226,16 +217,18 @@ M.HandleBuffPacket = function(packet)
         local entry = slots[i];
         if entry ~= nil then
             if entry.busted then
+                -- Timer is 309 only. Do not read entry.status: a re-roll of the
+                -- same roll (live 324 + busted 324) must not keep or clear this seat.
                 local seconds = MatchBustStamp(entry);
                 if seconds ~= nil then
                     entry.pending = false;
-                    AdoptTimer(entry, seconds, now, data.BUST_STATUS);
+                    AdoptTimer(entry, seconds, now);
                 elseif (not entry.pending) or (now - (entry.armedAt or 0) > CLEAR_GRACE) then
                     slots[i] = nil;
                 end
             elseif presentBuf[entry.status] then
                 entry.pending = false;
-                AdoptTimer(entry, timersBuf[entry.status], now, entry.status);
+                AdoptTimer(entry, timersBuf[entry.status], now);
             elseif (not entry.pending) or (now - (entry.armedAt or 0) > CLEAR_GRACE) then
                 slots[i] = nil;
             end
@@ -245,7 +238,7 @@ M.HandleBuffPacket = function(packet)
     if doubleUp ~= nil then
         if presentBuf[data.DOUBLE_UP_STATUS] then
             doubleUp.pending = false;
-            AdoptTimer(doubleUp, timersBuf[data.DOUBLE_UP_STATUS], now, data.DOUBLE_UP_STATUS);
+            AdoptTimer(doubleUp, timersBuf[data.DOUBLE_UP_STATUS], now);
         elseif (not doubleUp.pending) or (now - (doubleUp.armedAt or 0) > CLEAR_GRACE) then
             doubleUp = nil;
         end
@@ -261,13 +254,9 @@ M.DoubleUp = function()
     return best, seconds;
 end
 
+-- Presence is 0x63's job. Local 0:00 on two 300s seeds started seconds apart
+-- would wipe live Evoker's with its bust even while 324 is still on you.
 M.Sync = function()
-    for i = 1, MAX_SLOTS do
-        local entry = slots[i];
-        if entry ~= nil and Remaining(entry.expiresAt) <= 0 and not entry.pending then
-            slots[i] = nil;
-        end
-    end
     if doubleUp ~= nil and Remaining(doubleUp.expiresAt) <= 0 and not doubleUp.pending then
         doubleUp = nil;
     end

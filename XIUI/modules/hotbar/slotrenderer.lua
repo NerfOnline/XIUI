@@ -469,6 +469,18 @@ local imgP1 = {0, 0};
 local imgP2 = {0, 0};
 local UV0 = {0, 0};
 local UV1 = {1, 1};
+local triA = {0, 0};
+local triB = {0, 0};
+local triC = {0, 0};
+
+-- Lower-right half of the icon (split top-left → bottom-right) while extra charges refill.
+local function DrawRechargingHalf(drawList, ix, iy, iw, ih, animOpacity)
+    triA[1] = ix + iw; triA[2] = iy;
+    triB[1] = ix;      triB[2] = iy + ih;
+    triC[1] = ix + iw; triC[2] = iy + ih;
+    local a = math.floor(128 * animOpacity);
+    drawList:AddTriangleFilled(triA, triB, triC, bit.bor(bit.lshift(a, 24), 0x000000));
+end
 
 -- Texture cache: keeps texture tables alive (prevents GC release of D3D textures)
 -- and stores the derived uint32 pointer for fast AddImage calls.
@@ -853,6 +865,7 @@ function M.DrawSlot(params)
     local cooldown = recast.GetCooldownInfo(bind);
     local isOnCooldown = cooldown.isOnCooldown;
     local recastText = cooldown.recastText;
+    local rechargingExtra = cooldown.rechargingExtra == true;
 
     -- Resource cost (MP / TP / charges / finishing moves)
     local costKind, costLabel, costMet = 'none', nil, true;
@@ -872,6 +885,7 @@ function M.DrawSlot(params)
     -- 4. Icon Rendering (unified ImGui AddImage path)
     -- ========================================
     local iconRendered = false;
+    local iconX, iconY, renderedWidth, renderedHeight;
 
     if icon and icon.image and drawList then
         local iconPtr = tonumber(ffi.cast("uint32_t", icon.image));
@@ -881,12 +895,12 @@ function M.DrawSlot(params)
 
             -- Calculate scale to fit icon within slot with padding
             local scale = targetIconSize / math.max(texWidth, texHeight);
-            local renderedWidth = texWidth * scale;
-            local renderedHeight = texHeight * scale;
+            renderedWidth = texWidth * scale;
+            renderedHeight = texHeight * scale;
 
             -- Center the icon within the slot
-            local iconX = x + (size - renderedWidth) / 2;
-            local iconY = y + (size - renderedHeight) / 2;
+            iconX = x + (size - renderedWidth) / 2;
+            iconY = y + (size - renderedHeight) / 2;
 
             -- Calculate color: unavailable/cooldown/noMP darkening + dim factor + animation opacity
             local colorMult, applyGreyTint = GetSlotColorMult(
@@ -917,6 +931,14 @@ function M.DrawSlot(params)
             imgP2[1] = iconX + renderedWidth; imgP2[2] = iconY + renderedHeight;
             drawList:AddImage(iconPtr, imgP1, imgP2, UV0, UV1, tintColor);
             iconRendered = true;
+        end
+    end
+
+    if rechargingExtra and not isUnavailable and not isOnCooldown and animOpacity > 0.01 and drawList then
+        if iconRendered then
+            DrawRechargingHalf(drawList, iconX, iconY, renderedWidth, renderedHeight, animOpacity);
+        else
+            DrawRechargingHalf(drawList, x + iconPadding, y + iconPadding, targetIconSize, targetIconSize, animOpacity);
         end
     end
 
