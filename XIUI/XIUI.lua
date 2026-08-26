@@ -84,6 +84,7 @@ local hotbar = uiMods.hotbar;
 local readyCheck = uiMods.readycheck;
 local satchelModule = uiMods.satchel;
 local magicBurst = uiMods.magicburst;
+local blueMagicLearned = uiMods.bluemagiclearned;
 local phantomRoll = uiMods.phantomroll;
 local macropalette = require('modules.hotbar.macropalette');
 local palette = require('modules.hotbar.palette');
@@ -195,6 +196,12 @@ uiModules.Register('magicBurst', {
     settingsKey = 'magicBurstSettings',
     configKey = 'magicBurstEnabled',
     hideOnEventKey = 'hideDuringEvents',
+    hasSetHidden = true,
+});
+uiModules.Register('blueMagicLearned', {
+    module = blueMagicLearned,
+    settingsKey = nil,
+    configKey = 'blueMagicLearnedEnabled',
     hasSetHidden = true,
 });
 uiModules.Register('phantomRoll', {
@@ -561,6 +568,7 @@ local function GetDefaultWindowPositions()
     local elx, ely = defPos.GetEnemyListPosition();
     local ccx, ccy = defPos.GetCastCostPosition();
     local mbx, mby = defPos.GetMagicBurstPosition();
+    local blux, bluy = defPos.GetBlueMagicLearnedPosition();
     local prx, pry = defPos.GetPhantomRollPosition();
 
     local staggerY = 35;
@@ -580,6 +588,7 @@ local function GetDefaultWindowPositions()
         EnemyList = { x = elx, y = ely },
         CastCost = { x = ccx, y = ccy },
         MagicBurst = { x = mbx, y = mby },
+        BlueMagicLearned = { x = blux, y = bluy },
         PhantomRoll = { x = prx, y = pry },
         InventoryTracker = { x = ix, y = iy },
         Satchel = { x = sx, y = sy },
@@ -594,6 +603,11 @@ end
 -- Inject default positions if profile has none (brand new profile)
 if (not gConfig.windowPositions or next(gConfig.windowPositions) == nil) then
     gConfig.windowPositions = GetDefaultWindowPositions();
+end
+
+-- Seed Blue Magic learned position for existing profiles that predate it
+if gConfig.windowPositions and not gConfig.windowPositions.BlueMagicLearned then
+    gConfig.windowPositions.BlueMagicLearned = GetDefaultWindowPositions().BlueMagicLearned;
 end
 
 gConfigVersion = 0;
@@ -756,6 +770,7 @@ function ResetSettings()
     uiMods.treasurepool.ResetPositions();
     uiMods.satchel.ResetPositions();
     uiMods.magicburst.ResetPositions();
+    uiMods.bluemagiclearned.ResetPositions();
     hotbar.ResetPositions();
 
     -- Persist + defer the heavy visual update cascade. ResetSettings is called
@@ -1899,6 +1914,7 @@ ashita.events.register('packet_in', 'packet_in_cb', function (e)
             debuffHandler.HandleMessagePacket(messagePacket);
             petBuffHandler.HandleMessagePacket(messagePacket);
             if enemyCastTrackingEnabled() then enemyCasts.HandleMessagePacket(messagePacket); end
+            blueMagicLearned.HandleMessagePacket(messagePacket);
             if gConfig.showNotifications then
                 notifications.HandleMessagePacket(e, messagePacket, 0x0029);
             end
