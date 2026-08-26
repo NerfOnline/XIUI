@@ -141,6 +141,44 @@ function M.GetNotificationsPosition()
     return x, y;
 end
 
+-- Blue Magic learned banner: original ActionLearned box, designed at 1920x1080.
+-- PNG native size is only used to seed the default window at the letterboxed
+-- origin before the texture has loaded.
+local BLU_REF_W, BLU_REF_H = 1920, 1080;
+local BLU_BOX_W, BLU_BOX_H = 720, 200;
+local BLU_BOX_X = (BLU_REF_W - BLU_BOX_W) / 2;
+local BLU_BOX_Y = 200;
+local BLU_ART_W, BLU_ART_H = 1983, 793;
+
+local function GetBlueMagicLearnedBox(userScale)
+    userScale = userScale or 1;
+    local sw, sh = M.GetScreenSize();
+    local boxW = BLU_BOX_W * (sw / BLU_REF_W) * userScale;
+    local boxH = BLU_BOX_H * (sh / BLU_REF_H) * userScale;
+    local boxX = BLU_BOX_X * (sw / BLU_REF_W);
+    local boxY = BLU_BOX_Y * (sh / BLU_REF_H);
+    return boxX, boxY, boxW, boxH;
+end
+
+-- Letterbox texW x texH into the design box. Returns draw size, then the
+-- top-left that centers that size in the box (used as the default window pos).
+function M.FitBlueMagicLearned(texW, texH, userScale)
+    local boxX, boxY, boxW, boxH = GetBlueMagicLearnedBox(userScale);
+    if not texW or texW <= 0 or not texH or texH <= 0 then
+        return boxW, boxH, boxX, boxY;
+    end
+
+    local fit = math.min(boxW / texW, boxH / texH);
+    local drawW = texW * fit;
+    local drawH = texH * fit;
+    return drawW, drawH, boxX + (boxW - drawW) / 2, boxY + (boxH - drawH) / 2;
+end
+
+function M.GetBlueMagicLearnedPosition()
+    local _, _, x, y = M.FitBlueMagicLearned(BLU_ART_W, BLU_ART_H, 1);
+    return x, y;
+end
+
 -- Treasure Pool: below notifications
 function M.GetTreasurePoolPosition()
     local nx, ny = M.GetNotificationsPosition();

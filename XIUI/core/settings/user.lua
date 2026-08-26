@@ -30,6 +30,12 @@ function M.createUserSettingsDefaults()
         showNotifications = true,
         showReadyCheck = true,
 
+        -- Blue Magic learned banner (Notifications > Blue Magic)
+        blueMagicLearnedEnabled = true,
+        blueMagicLearnedPreview = false,
+        blueMagicLearnedDuration = 3,
+        blueMagicLearnedScale = 1.0,
+
         -- Magic burst notification (checkbox lives under Hotbar > Skillchain)
         magicBurstEnabled = false,
         magicBurstScale = 1.0,
