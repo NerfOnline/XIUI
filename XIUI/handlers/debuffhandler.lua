@@ -25,6 +25,9 @@ local deathMes = {[6]=true, [20]=true, [97]=true, [113]=true, [406]=true, [605]=
 local spellDamageMes = {[2]=true, [252]=true, [264]=true, [265]=true};
 -- Physical/ability hits (110 = bash/jump, 185 = WS). Not a per-ability list.
 local physicalHitMes = {[103]=true, [110]=true, [185]=true, [187]=true, [238]=true, [242]=true, [317]=true, [802]=true};
+-- Messages only job abilities emit (110/317 damage, 127/266/267/319/320 status,
+-- 156/323 no effect). Weapon skills use 185/242/189, so these mark an ability id.
+local jaOnlyMes = {[110]=true, [127]=true, [156]=true, [266]=true, [267]=true, [317]=true, [319]=true, [320]=true, [323]=true};
 local additionalEffectMes = {[160]=true, [164]=true};
 -- Ability / WS miss — do not infer a debuff from the action alone.
 -- 158 = JA_MISS, 324 = JA_MISS_2 (Light Shot / Feral Howl etc.)
@@ -41,7 +44,8 @@ local SLEEP_BUFF_IDS = { 2, 19, 193 };
 -- 75 MAGIC_NO_EFFECT, 156 JA_NO_EFFECT, 189 SKILL_NO_EFFECT, 283 NO_EFFECT, 323 JA_NO_EFFECT_2
 local noEffectMes = {[75]=true, [156]=true, [189]=true, [283]=true, [323]=true};
 local immuneMes = {[655]=true}; -- MagicCompleteResist — target immune / cannot take the effect
-local MAX_TP = 3000;
+-- TP is already spent when 0x028 arrives, so scaled durations assume a 1-hit WS.
+local ASSUMED_TP = 1000;
 local ALLIANCE_MEMBER_SLOTS = 18;
 
 local BUFF_SABOTEUR = 454;
@@ -180,7 +184,7 @@ local function PlayerHasBuff(buffId)
     if not player or not player.GetBuffs then return false; end
     local buffs = player:GetBuffs();
     if not buffs then return false; end
-    for i = 0, 63 do
+    for i = 0, 31 do
         if buffs[i] == buffId then
             return true;
         end
@@ -303,7 +307,7 @@ local function ResolveDuration(spellData, isOwnActor)
 end
 
 local function ApplyBuffExpiry(targetDebuffs, buffId, expiry, uncertain)
-    if buffId == nil then return; end
+    if buffId == nil or buffId == 0 then return; end
     -- Sleep I/II/Lullaby share one server slot (mutually exclusive). Clear the
     -- other sleep icons so a target only ever shows the active one.
     if buffId == 2 or buffId == 19 or buffId == 193 then
@@ -361,7 +365,7 @@ local function JobAbilityId(id)
     return id;
 end
 
-local function ResolveActionBuffIds(actionType, spellId, abilityParam)
+local function ResolveActionBuffIds(actionType, spellId, abilityParam, isJobAbility)
     local ids = {};
     if abilityParam ~= nil and abilityParam ~= 0 then
         ids[#ids + 1] = abilityParam;
@@ -377,7 +381,10 @@ local function ResolveActionBuffIds(actionType, spellId, abilityParam)
     spellId = PacketParamId(spellId);
     local jaId = JobAbilityId(spellId);
     local data = nil;
-    if actionType == 3 then
+    if actionType == 3 and isJobAbility then
+        -- Ability id in a type 3 packet: never fall back to weapon skills.
+        data = JA_DURATIONS[jaId] or JA_PHYSICAL_DURATIONS[jaId];
+    elseif actionType == 3 then
         data = WEAPON_SKILL_DURATIONS[spellId] or JA_PHYSICAL_DURATIONS[jaId];
     elseif actionType == 6 or actionType == 14 then
         data = JA_DURATIONS[jaId] or JA_DURATIONS[spellId];
@@ -470,7 +477,7 @@ local function ResolveTpDuration(wsData, tp)
 end
 
 local function ResolveWeaponSkillDuration(wsData, actorId)
-    local tp = GetActorTp(actorId) or MAX_TP;
+    local tp = GetActorTp(actorId) or ASSUMED_TP;
     return ResolveTpDuration(wsData, tp);
 end
 
@@ -490,13 +497,18 @@ local function LookupNonSpell(id, actionType)
 end
 
 -- Type 4 is spells-only so BLU ids do not collide with 2-hours or weapon skills.
-local function GetDurationData(actionType, id)
+local function GetDurationData(actionType, id, isJobAbility)
     id = PacketParamId(id);
     local jaId = JobAbilityId(id);
     if actionType == 4 then
         return SPELL_DURATIONS[id];
     end
     if actionType == 3 then
+        -- Damaging/enfeebling JAs also arrive as type 3, so an ability id must never
+        -- resolve against weapon skills (Jump 66 vs Gale Axe, Angon 170 vs Randgrith).
+        if isJobAbility then
+            return JA_DURATIONS[jaId] or JA_PHYSICAL_DURATIONS[jaId];
+        end
         return WEAPON_SKILL_DURATIONS[id] or JA_PHYSICAL_DURATIONS[jaId];
     end
     if actionType == 6 or actionType == 14 then
@@ -533,16 +545,22 @@ local function ApplySpellData(targetDebuffs, spellData, isOwnActor, now, packetB
     end
     -- onDamage AEs land one buff per message. Magical multi-enfeeble (Enervation) lands together.
     if spellData.buffIds and not spellData.onDamage then
+        local perBuff = spellData.buffDurations;
         for _, buffId in ipairs(spellData.buffIds) do
-            ApplyBuffExpiry(targetDebuffs, buffId, expiry, uncertain);
+            -- Some actions land two statuses on different timers (Blade Bash stun vs plague).
+            local own = perBuff and perBuff[buffId];
+            ApplyBuffExpiry(targetDebuffs, buffId, own and (now + own) or expiry, uncertain);
         end
         return;
     end
-    -- Prefer the data table's buffId (the intended status) over the packet param,
-    -- which can carry unrelated values. displayBuffId forces a specific icon
-    -- (e.g. Sleep II reports effect 2 but shows the Sleep II icon 19).
-    local buffId = spellData.displayBuffId or spellData.buffId or packetBuffId;
-    ApplyBuffExpiry(targetDebuffs, buffId, expiry, uncertain);
+    -- The table's buffId is the intended status, since the packet param can carry
+    -- unrelated values (damage). Trust the param only when it names one of this
+    -- action's own statuses, which is how a multi-status onDamage row lands.
+    local buffId = spellData.displayBuffId;
+    if buffId == nil and SpellHasBuff(spellData, packetBuffId) then
+        buffId = packetBuffId;
+    end
+    ApplyBuffExpiry(targetDebuffs, buffId or spellData.buffId or packetBuffId, expiry, uncertain);
 end
 
 -- uncertain: true when the WS secondary is inferred (no land message).
@@ -594,6 +612,22 @@ local function ApplyPacketAdditionalEffect(targetDebuffs, spellData, isOwnActor,
     ApplyBuffExpiry(targetDebuffs, buffId, expiry, false);
 end
 
+-- Feint and friends arm a debuff for the next melee hit. They are self-targeted,
+-- so this has to run before the enemy-only filter in ApplyMessage.
+local function ArmOnHitAbility(action, message, now)
+    if action.Type ~= 6 and action.Type ~= 14 then return; end
+    if missMes[message] then return; end
+
+    local onHitData = ON_HIT_DURATIONS[JobAbilityId(action.Param)];
+    if onHitData == nil then return; end
+
+    debuffHandler.pendingOnHit[action.UserId] = {
+        buffId = onHitData.buffId,
+        duration = onHitData.duration,
+        expires = now + (onHitData.window or 60),
+    };
+end
+
 local function ApplyMessage(debuffs, action)
 
     if (action == nil) then
@@ -604,6 +638,12 @@ local function ApplyMessage(debuffs, action)
     local actorId = action.UserId;
     -- Constant for the whole packet; resolve once instead of per target.
     local isOwnActor = IsOwnActor(actorId);
+
+    for _, target in pairs(action.Targets) do
+        for _, ability in pairs(target.Actions) do
+            ArmOnHitAbility(action, ability.Message, now);
+        end
+    end
 
     for _, target in pairs(action.Targets) do
         -- Only track effects landing on enemies. Buffs/rolls/songs on alliance
@@ -624,10 +664,12 @@ local function ApplyMessage(debuffs, action)
             end
 
             local targetDebuffs = debuffs[target.Id];
-            local spellData = GetDurationData(action.Type, spell);
+            local isJobAbility = jaOnlyMes[message];
+            local spellData = GetDurationData(action.Type, spell, isJobAbility);
 
-            -- Damage wakes Sleep; this action may re-apply it afterward.
-            if damageHitMes[message] then
+            -- Damage wakes Sleep; this action may re-apply it afterward. A blocked
+            -- or 0-damage hit does not wake, so require actual damage.
+            if damageHitMes[message] and (ability.Param or 0) > 0 then
                 ClearSleepDebuffs(targetDebuffs);
             end
 
@@ -642,10 +684,10 @@ local function ApplyMessage(debuffs, action)
             -- Type 3 WS or physical JA on a hit
             elseif action.Type == 3 and physicalHitMes[message] then
                 local jaId = JobAbilityId(spell);
-                -- Ashita JA params are often 512+id; prefer jaPhysical to avoid WS id collisions
-                -- (e.g. Angon 170 vs Randgrith 170, Shield Bash 46 vs Expiacion 46).
-                local jaPhys = (spell ~= jaId) and JA_PHYSICAL_DURATIONS[jaId] or nil;
-                local wsData = (not jaPhys) and WEAPON_SKILL_DURATIONS[spell] or nil;
+                -- A 512+id param or a JA-only message means an ability, so keep it out
+                -- of the weapon skill rows its raw id would otherwise match.
+                local jaPhys = (isJobAbility or spell ~= jaId) and JA_PHYSICAL_DURATIONS[jaId] or nil;
+                local wsData = (not isJobAbility and not jaPhys) and WEAPON_SKILL_DURATIONS[spell] or nil;
                 if jaPhys then
                     local marker = HiddenSecondaryMarker(jaPhys, additionalEffect, false);
                     if marker ~= nil then
@@ -672,8 +714,12 @@ local function ApplyMessage(debuffs, action)
             elseif action.Type == 4 and spellDamageMes[message] then
                 ApplyType4Damage(targetDebuffs, spellData, isOwnActor, now, ability.Param);
             elseif statusOnMes[message] then
-                local buffId = ability.Param or (action.Type == 4 and buffTable.GetBuffIdBySpellId(spell) or nil);
-                local wsData = action.Type == 3 and WEAPON_SKILL_DURATIONS[spell] or nil;
+                local buffId = ability.Param;
+                if buffId == nil or buffId == 0 then
+                    buffId = action.Type == 4 and buffTable.GetBuffIdBySpellId(spell) or nil;
+                end
+                local wsData = (action.Type == 3 and not isJobAbility)
+                    and WEAPON_SKILL_DURATIONS[spell] or nil;
                 if wsData or (spellData and UsesTpDuration(spellData)) then
                     ApplyWeaponSkillData(targetDebuffs, wsData or spellData, actorId, now, false);
                 elseif spellData then
@@ -682,18 +728,21 @@ local function ApplyMessage(debuffs, action)
                     ApplyBuffExpiry(targetDebuffs, buffId, now + UnknownStatusDuration(buffId), false);
                 end
             elseif statusOffMes[message] then
-                if ability.Param ~= nil then
+                if ability.Param == 2 then
+                    -- Sleep I/II/Lullaby share server slot 2 but are tracked per icon.
+                    ClearSleepDebuffs(targetDebuffs);
+                elseif ability.Param ~= nil then
                     targetDebuffs[ability.Param] = nil
                 end
             -- Confirm ? without refreshing. Only alliance actors.
             elseif noEffectMes[message] then
                 if IsAllianceActor(actorId) then
-                    for _, buffId in ipairs(ResolveActionBuffIds(action.Type, spell, ability.Param)) do
+                    for _, buffId in ipairs(ResolveActionBuffIds(action.Type, spell, ability.Param, isJobAbility)) do
                         ConfirmUncertainDebuff(targetDebuffs, buffId, now);
                     end
                 end
             elseif immuneMes[message] then
-                for _, buffId in ipairs(ResolveActionBuffIds(action.Type, spell, ability.Param)) do
+                for _, buffId in ipairs(ResolveActionBuffIds(action.Type, spell, ability.Param, isJobAbility)) do
                     ClearTrackedDebuff(targetDebuffs, buffId);
                 end
             -- Type 11: mob skills. Only apply when we have mapped data for the
@@ -703,23 +752,14 @@ local function ApplyMessage(debuffs, action)
                 if spellData then
                     ApplySpellData(targetDebuffs, spellData, isOwnActor, now, ability.Param, false);
                 end
-            -- Type 6 / 14: Feint pending, or bash-style physical JA inferred from a hit.
+            -- Type 6 / 14: bash-style physical JA inferred from a hit.
             -- Do not apply ja[] on "uses" — lands are status-on (e.g. Light Shot 127).
-            elseif (action.Type == 6 or action.Type == 14) and not missMes[message] then
+            elseif (action.Type == 6 or action.Type == 14) and physicalHitMes[message] and not missMes[message] then
                 local jaId = JobAbilityId(spell);
-                local onHitData = ON_HIT_DURATIONS[jaId];
-                if onHitData then
-                    debuffHandler.pendingOnHit[actorId] = {
-                        buffId = onHitData.buffId,
-                        duration = onHitData.duration,
-                        expires = now + (onHitData.window or 60),
-                    };
-                elseif physicalHitMes[message] then
-                    local jaPhys = JA_PHYSICAL_DURATIONS[jaId] or JA_PHYSICAL_DURATIONS[spell];
-                    local marker = HiddenSecondaryMarker(jaPhys, additionalEffect, false);
-                    if marker ~= nil then
-                        ApplySpellData(targetDebuffs, jaPhys, isOwnActor, now, nil, marker);
-                    end
+                local jaPhys = JA_PHYSICAL_DURATIONS[jaId] or JA_PHYSICAL_DURATIONS[spell];
+                local marker = HiddenSecondaryMarker(jaPhys, additionalEffect, false);
+                if marker ~= nil then
+                    ApplySpellData(targetDebuffs, jaPhys, isOwnActor, now, nil, marker);
                 end
             end
 
@@ -819,6 +859,9 @@ debuffHandler.GetActiveDebuffs = function(serverId)
             if entry.uncertain then
                 reusableDebuffUncertain[buffId] = true;
             end
+        else
+            -- Drop dead entries so a recycled server id can't inherit them.
+            debuffHandler.enemies[serverId][buffId] = nil;
         end
     end
 

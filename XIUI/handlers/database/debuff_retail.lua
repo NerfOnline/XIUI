@@ -60,10 +60,10 @@ durations.spells = {
     [98] = {duration = 90, displayBuffId = 19, kind = 'enfeeble'}, -- Repose
     [841] = {duration = 120, kind = 'enfeeble'}, -- Distract
     [842] = {duration = 120, kind = 'enfeeble'}, -- Distract II
-    [843] = {duration = 120, kind = 'enfeeble'}, -- Distract III
-    [844] = {duration = 120, kind = 'enfeeble'}, -- Frazzle
-    [845] = {duration = 120, kind = 'enfeeble'}, -- Frazzle II
-    [846] = {duration = 120, kind = 'enfeeble'}, -- Frazzle III
+    [843] = {duration = 120, kind = 'enfeeble'}, -- Frazzle
+    [844] = {duration = 120, kind = 'enfeeble'}, -- Frazzle II
+    -- 845/846 are Flurry I/II (ally haste), not debuffs. Distract III (882) and
+    -- Frazzle III (883) are unimplemented on LSB.
     [255] = {duration = 30, kind = 'enfeeble'},  -- Break
     [365] = {duration = 30, kind = 'enfeeble'},  -- Breakga
     [879] = {duration = 300, kind = 'enfeeble'}, -- Inundation
@@ -258,7 +258,7 @@ durations.jaPhysical = {
     [57] = {duration = 30, buffId = 11},   -- Shadowbind - Bind (msg 203)
     [46] = {duration = 8, buffId = 10, uncertain = true}, -- Shield Bash - Stun
     [77] = {duration = 8, buffId = 10, uncertain = true}, -- Weapon Bash - Stun
-    [168] = {duration = 30, buffId = 31, buffIds = {10, 31}, uncertain = true}, -- Blade Bash - Stun (~6s) + Plague (15+merits); resist each
+    [168] = {duration = 30, buffId = 31, buffIds = {10, 31}, buffDurations = {[10] = 6}, uncertain = true}, -- Blade Bash - Stun 6s + Plague (15+merits); resist each
     [170] = {duration = 30, buffId = 149, certainOnHit = true}, -- Angon - Defense Down (15+merit; 30 at 1)
 };
 
@@ -268,7 +268,7 @@ durations.ja = {
     [57] = {duration = 30, buffId = 11}, -- Shadowbind - Bind (also type 3 / jaPhysical)
     [46] = {duration = 8, buffId = 10, uncertain = true}, -- Shield Bash - Stun (also type 3 / jaPhysical)
     [77] = {duration = 8, buffId = 10, uncertain = true}, -- Weapon Bash - Stun (also type 3 / jaPhysical)
-    [168] = {duration = 30, buffId = 31, buffIds = {10, 31}, uncertain = true}, -- Blade Bash - Stun (~6s) + Plague (15+merits); resist each (also type 3 / jaPhysical)
+    [168] = {duration = 30, buffId = 31, buffIds = {10, 31}, buffDurations = {[10] = 6}, uncertain = true}, -- Blade Bash - Stun 6s + Plague (15+merits); resist each (also type 3 / jaPhysical)
     [170] = {duration = 30, buffId = 149, certainOnHit = true}, -- Angon (also type 3 / jaPhysical)
     [82] = {duration = 100, buffId = 168, uncertain = true}, -- Chi Blast - Inhibit TP only with Penance
     [131] = {duration = 90, buffId = 2}, -- Light Shot - Sleep
@@ -316,7 +316,7 @@ durations.ja = {
 durations.pet = {
     [513] = {duration = 90, buffId = 3}, -- Poison Nails - Poison
     [522] = {duration = 90, buffId = 2}, -- Mewing Lullaby - Sleep
-    [523] = {duration = 30, buffId = 6, buffIds = {6, 16}}, -- Eerie Eye - Silence (+ Amnesia)-- Silence 30s; Amnesia is 15s in LSB (shared timer uses Silence).
+    [523] = {duration = 30, buffId = 6, buffIds = {6, 16}, buffDurations = {[16] = 15}}, -- Eerie Eye - Silence 30s + Amnesia 15s
     [528] = {duration = 60, buffId = 5}, -- Moonlit Charge - Blind
     [529] = {duration = 60, buffId = 4}, -- Crescent Fang - Paralyze
     [530] = {duration = 180, buffId = 146, buffIds = {146, 148}}, -- Lunar Cry - Acc/Eva Down
@@ -338,7 +338,7 @@ durations.pet = {
     [2066] = {duration = 4, buffId = 10}, -- Daze - Stun
     [2067] = {duration = 30, buffId = 148}, -- Knockout - Evasion Down
     [2299] = {duration = 4, buffId = 10}, -- Bone Crusher - Stun
-    [2744] = {duration = 150, buffId = 149}, -- Armor Shatterer - Defense Down
+    [2744] = {duration = 150, buffId = 149}, -- Armor Shatterer - Defense Down (LSB 60 + 3*TP/100; 150 is the 3000 TP max)
     [1908] = {duration = 90, buffId = 2, buffIds = {2, 135}}, -- Nightmare (mob-skill id form)
 };
 
