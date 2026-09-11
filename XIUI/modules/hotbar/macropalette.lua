@@ -1471,6 +1471,7 @@ end
 
 -- Add a macro copy to a specific palette type key (Global, job ID, etc.)
 local function AddMacroToTypeKey(typeKey, macroData)
+    typeKey = jobs.ResolveMacroPaletteKey(typeKey);
     if not gConfig.macroDB then
         gConfig.macroDB = {};
     end
@@ -1913,7 +1914,8 @@ local function GetCopyTargetOptions()
     };
     for _, job in ipairs(GetJobDropdownEntries()) do
         options[#options + 1] = {
-            key = job.id,
+            -- Other uses 'other', not numeric 23 (UI id stays OTHER_JOB_ID)
+            key = jobs.ResolveMacroPaletteKey(job.id),
             label = job.name,
         };
     end
@@ -2121,10 +2123,11 @@ function M.DrawPalette()
             -- Separator between Global and jobs
             imgui.Separator();
 
-            -- Unlocked jobs (plus Other when the current job is non-standard)
+            -- Unlocked jobs (plus Other)
             for _, job in ipairs(GetJobDropdownEntries()) do
-                local isSelected = (not isGlobal and job.id == typeKey);
-                local jobMacroCount = getMacroCount(job.id);
+                local jobPaletteKey = jobs.ResolveMacroPaletteKey(job.id);
+                local isSelected = (not isGlobal and jobPaletteKey == typeKey);
+                local jobMacroCount = getMacroCount(jobPaletteKey);
 
                 -- Build label with indicators
                 local label = job.name;
@@ -2135,7 +2138,7 @@ function M.DrawPalette()
                 end
 
                 -- Add main job indicator
-                if job.id == currentMacroKey or (job.id == currentPlayerJob) then
+                if jobPaletteKey == currentMacroKey or (job.id == currentPlayerJob) then
                     label = label .. '  *';
                 end
 
@@ -2261,14 +2264,22 @@ function M.DrawPalette()
             PopComboStyle();
         end
 
-        -- Pet Palette section (only show if selected palette type is a pet job AND any bar has petAware enabled)
-        local isPetJob = false;
+        -- Pet Palette section (selected job and/or live main/sub pet jobs, if any bar is petAware)
+        local mainJobId = data.rawJobId or data.jobId;
+        local subJobId = data.subjobId;
+        local petJobsForEditor = {};
         if selectedPaletteType and type(selectedPaletteType) == 'number' then
-            isPetJob = petregistry.IsPetJob(selectedPaletteType);
+            petJobsForEditor = petregistry.GetPetJobsForPaletteEditor(selectedPaletteType, mainJobId, subJobId);
+        end
+
+        local hasPetJobOptions = false;
+        for _ in pairs(petJobsForEditor) do
+            hasPetJobOptions = true;
+            break;
         end
 
         local hasPetAwareBar = false;
-        if isPetJob then
+        if hasPetJobOptions then
             for barIndex = 1, data.NUM_BARS do
                 local barSettings = data.GetBarSettings(barIndex);
                 if barSettings and barSettings.petAware then
@@ -2283,107 +2294,95 @@ function M.DrawPalette()
             imgui.Separator();
             imgui.Spacing();
 
-            -- Show current pet detection
-            local currentPetKey = petpalette.GetCurrentPetKey();
-            local petDisplayName = currentPetKey and petregistry.GetDisplayNameForKey(currentPetKey) or 'No Pet';
-
-            imgui.TextColored(COLORS.textDim, 'Active Pet:');
-            imgui.SameLine();
-            if currentPetKey then
-                imgui.TextColored({0.5, 1.0, 0.8, 1.0}, petDisplayName);
-            else
-                imgui.TextColored(COLORS.textMuted, petDisplayName);
+            local function DrawPetPaletteSelectable(barIndex, displayLabel, petKey, hasOverride, activeDisplayName)
+                local isSelected = hasOverride and activeDisplayName == petKey;
+                if isSelected then
+                    imgui.PushStyleColor(ImGuiCol_Text, COLORS.gold);
+                else
+                    imgui.PushStyleColor(ImGuiCol_Text, COLORS.text);
+                end
+                if imgui.Selectable(displayLabel, isSelected) then
+                    petpalette.SetPalette(barIndex, petKey);
+                    ScheduleIconCacheClear(true);
+                end
+                imgui.PopStyleColor();
+                if isSelected then
+                    imgui.SetItemDefaultFocus();
+                end
             end
-
-            -- Show per-bar palette status with dropdown
-            imgui.Spacing();
-            local allSummons = petregistry.GetAllSummonsList();
 
             for barIndex = 1, data.NUM_BARS do
                 local barSettings = data.GetBarSettings(barIndex);
                 if barSettings and barSettings.petAware and barSettings.enabled then
                     local paletteName = petpalette.GetPaletteDisplayName(barIndex, data.jobId);
                     local hasOverride = petpalette.HasManualOverride(barIndex);
+                    local paletteLabel = paletteName;
+                    if hasOverride and petregistry.IsJugPet(paletteName) then
+                        paletteLabel = petregistry.FormatJugPetDisplayName(paletteName);
+                    end
 
                     imgui.TextColored(COLORS.textDim, string.format('Bar %d:', barIndex));
                     imgui.SameLine();
 
                     -- Dropdown for palette selection
-                    local currentLabel = hasOverride and paletteName or 'Automatic';
+                    local currentLabel = hasOverride and paletteLabel or 'No Pet';
 
                     PushComboStyle();
                     imgui.SetNextItemWidth(130);
                     if imgui.BeginCombo('##petPalette' .. barIndex, currentLabel, ImGuiComboFlags_None) then
-                        -- Automatic option (first)
-                        local isAutoSelected = not hasOverride;
-                        if isAutoSelected then
+                        -- No Pet option (first) — clear override / base slots
+                        local isNoPetSelected = not hasOverride;
+                        if isNoPetSelected then
                             imgui.PushStyleColor(ImGuiCol_Text, COLORS.gold);
                         else
                             imgui.PushStyleColor(ImGuiCol_Text, COLORS.text);
                         end
 
-                        if imgui.Selectable('Automatic', isAutoSelected) then
+                        if imgui.Selectable('No Pet', isNoPetSelected) then
                             petpalette.SetPalette(barIndex, nil);
                             ScheduleIconCacheClear(true);
                         end
                         imgui.PopStyleColor();
 
-                        if isAutoSelected then
+                        if isNoPetSelected then
                             imgui.SetItemDefaultFocus();
                         end
 
-                        imgui.Separator();
+                        -- Combined pet options from selected job + live main/sub
+                        -- (DRG/PUP only when main or explicitly selected for editing)
+                        if petJobsForEditor[petregistry.JOB_BST] then
+                            imgui.Separator();
+                            DrawPetPaletteSelectable(barIndex, 'Charmed', petregistry.PET_KEY_CHARMED, hasOverride, paletteName);
 
-                        -- Avatars section
-                        imgui.TextColored(COLORS.textDim, 'Avatars');
-                        for _, summon in ipairs(allSummons) do
-                            if summon.category == 'avatar' then
-                                local petKey = petregistry.GetPetKeyForSummon(summon.name);
-                                local isSelected = hasOverride and petpalette.GetPaletteDisplayName(barIndex, data.jobId) == summon.name;
-
-                                if isSelected then
-                                    imgui.PushStyleColor(ImGuiCol_Text, COLORS.gold);
-                                else
-                                    imgui.PushStyleColor(ImGuiCol_Text, COLORS.text);
-                                end
-
-                                if imgui.Selectable('  ' .. summon.name, isSelected) then
-                                    petpalette.SetPalette(barIndex, petKey);
-                                    ScheduleIconCacheClear(true);
-                                end
-                                imgui.PopStyleColor();
-
-                                if isSelected then
-                                    imgui.SetItemDefaultFocus();
-                                end
+                            imgui.Separator();
+                            imgui.TextColored(COLORS.textDim, 'Jug Pets');
+                            for _, jug in ipairs(petregistry.GetSortedJugPetList()) do
+                                DrawPetPaletteSelectable(barIndex, '  ' .. jug.displayName, jug.key, hasOverride, paletteName);
                             end
                         end
 
-                        imgui.Separator();
-
-                        -- Spirits section
-                        imgui.TextColored(COLORS.textDim, 'Spirits');
-                        for _, summon in ipairs(allSummons) do
-                            if summon.category == 'spirit' then
-                                local petKey = petregistry.GetPetKeyForSummon(summon.name);
-                                local isSelected = hasOverride and petpalette.GetPaletteDisplayName(barIndex, data.jobId) == summon.name;
-
-                                if isSelected then
-                                    imgui.PushStyleColor(ImGuiCol_Text, COLORS.gold);
-                                else
-                                    imgui.PushStyleColor(ImGuiCol_Text, COLORS.text);
-                                end
-
-                                if imgui.Selectable('  ' .. summon.name, isSelected) then
-                                    petpalette.SetPalette(barIndex, petKey);
-                                    ScheduleIconCacheClear(true);
-                                end
-                                imgui.PopStyleColor();
-
-                                if isSelected then
-                                    imgui.SetItemDefaultFocus();
-                                end
+                        if petJobsForEditor[petregistry.JOB_SMN] then
+                            imgui.Separator();
+                            imgui.TextColored(COLORS.textDim, 'Avatars');
+                            for _, name in ipairs(petregistry.GetSortedAvatarList()) do
+                                DrawPetPaletteSelectable(barIndex, '  ' .. name, name, hasOverride, paletteName);
                             end
+
+                            imgui.Separator();
+                            imgui.TextColored(COLORS.textDim, 'Spirits');
+                            for _, name in ipairs(petregistry.GetSortedSpiritList()) do
+                                DrawPetPaletteSelectable(barIndex, '  ' .. name, name, hasOverride, paletteName);
+                            end
+                        end
+
+                        if petJobsForEditor[petregistry.JOB_DRG] then
+                            imgui.Separator();
+                            DrawPetPaletteSelectable(barIndex, 'Wyvern', petregistry.PET_KEY_WYVERN, hasOverride, paletteName);
+                        end
+
+                        if petJobsForEditor[petregistry.JOB_PUP] then
+                            imgui.Separator();
+                            DrawPetPaletteSelectable(barIndex, 'Automaton', petregistry.PET_KEY_AUTOMATON, hasOverride, paletteName);
                         end
 
                         imgui.EndCombo();

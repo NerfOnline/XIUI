@@ -181,8 +181,18 @@ local function getStorageKey(barSettings, jobId, subjobId)
 end
 
 
+-- Helper to deep copy a table (for migrating slot data)
+local function deepCopyTable(tbl)
+    if type(tbl) ~= 'table' then return tbl; end
+    local copy = {};
+    for k, v in pairs(tbl) do
+        copy[k] = deepCopyTable(v);
+    end
+    return copy;
+end
+
 -- Helper to get slotActions with storage key
--- Handles: 'global' and composite keys ('15:10', '15:10:avatar:ifrit', '15:10:palette:name')
+-- Handles: 'global', job keys ('15:10'), pet names ('Fenrir'), and palette keys ('15:10:palette:name')
 -- Falls back to base job key (jobId:0) or base palette key (jobId:0:palette:name) if exact key doesn't exist
 local function getSlotActionsForJob(slotActions, storageKey)
     if not slotActions then return nil; end
@@ -209,19 +219,9 @@ local function getSlotActionsForJob(slotActions, storageKey)
     return nil;
 end
 
--- Helper to deep copy a table (for migrating slot data)
-local function deepCopyTable(tbl)
-    if type(tbl) ~= 'table' then return tbl; end
-    local copy = {};
-    for k, v in pairs(tbl) do
-        copy[k] = deepCopyTable(v);
-    end
-    return copy;
-end
-
 -- Helper to ensure slotActions structure exists for a storage key
--- Handles: 'global' and composite keys ('15:10', '15:10:avatar:ifrit')
--- IMPORTANT: When creating a new key, copies data from fallback keys to preserve slot data
+-- Handles: 'global', job keys ('15:10'), and pet names ('Fenrir')
+-- IMPORTANT: When creating a new job:subjob key, copies data from fallback keys to preserve slot data
 local function ensureSlotActionsStructure(barSettings, storageKey)
     if not barSettings.slotActions then
         barSettings.slotActions = {};
@@ -275,9 +275,10 @@ local PER_BAR_ONLY_KEYS = {
 -- ============================================
 
 -- Build full storage key for a bar, considering job, subjob, pet awareness, and general palettes
--- Returns: 'global', '{jobId}:{subjobId}' (base), '{jobId}:{subjobId}:{petKey}' (pet), or '{jobId}:{subjobId}:palette:{name}' (palette)
+-- Returns: 'global', '{jobId}:{subjobId}' (base), pet name (e.g. 'Fenrir'), or '{jobId}:{subjobId}:palette:{name}'
 -- Priority: global > pet-aware > general palette > base
--- NOTE: Palettes can be subjob-specific or shared (subjob 0), with fallback to shared if no subjob-specific exist
+-- NOTE: Named palettes can be subjob-specific or shared (subjob 0), with fallback to shared if no subjob-specific exist
+-- NOTE: Pet palettes use the pet name only (no job/subjob) so the same pet always shares one palette
 -- OPTIMIZED: Results are cached to avoid 72+ string allocations per frame
 function M.GetStorageKeyForBar(barIndex)
     -- If gConfig was swapped out (profile change), invalidate.
@@ -325,7 +326,8 @@ function M.GetStorageKeyForBar(barIndex)
         end
 
         if petKey then
-            result = string.format('%s:%s', baseKey, petKey);
+            -- Pet palettes are keyed by pet name only (shared across all jobs/subjobs)
+            result = petKey;
         else
             -- Check for general palette (user-defined named palettes)
             -- Palettes use subjob-aware keys with fallback to shared (subjob 0) if no subjob-specific exist
@@ -466,7 +468,7 @@ M.GetEffectiveComboModeForStorage = GetEffectiveComboModeForStorage;
 
 -- Build full storage key for a crossbar combo mode, considering job, subjob, pet awareness, and palettes
 -- NOTE: Crossbar now uses a SINGLE global palette for all combo modes (not per-combo-mode)
--- Returns: 'global', '{jobId}:{subjobId}' (base), '{jobId}:{subjobId}:{petKey}' (pet), or '{jobId}:{subjobId}:palette:{name}' (palette)
+-- Returns: 'global', '{jobId}:{subjobId}' (base), pet name (e.g. 'Fenrir'), or '{jobId}:{subjobId}:palette:{name}'
 function M.GetCrossbarStorageKeyForCombo(comboMode)
     local crossbarSettings = gConfig and gConfig.hotbarCrossbar;
     if not crossbarSettings then
@@ -495,7 +497,8 @@ function M.GetCrossbarStorageKeyForCombo(comboMode)
         if pp then
             local effectivePetKey = pp.GetEffectivePetKeyForCombo(comboMode);
             if effectivePetKey then
-                return string.format('%s:%s', baseKey, effectivePetKey);
+                -- Pet palettes are keyed by pet name only (shared across all jobs/subjobs)
+                return effectivePetKey;
             end
         end
     end
@@ -825,7 +828,7 @@ local function getCrossbarStorageKey(crossbarSettings, jobId, subjobId)
 end
 
 -- Helper to get crossbar slotActions with storage key
--- Handles: 'global' and composite keys ('15:10', '15:10:palette:Stuns', '15:10:avatar:ifrit')
+-- Handles: 'global' and composite keys ('15:10', '15:10:palette:Stuns', '15:0:avatar:ifrit')
 -- Falls back to base job key (jobId:0) preserving any suffix if full job:subjob key doesn't exist
 local function getCrossbarSlotActionsForJob(slotActions, storageKey)
     if not slotActions then return nil; end

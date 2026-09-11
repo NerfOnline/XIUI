@@ -72,19 +72,9 @@ function M.Open()
     -- Always open on the player's CURRENT job, not the last-used selection.
     windowState.selectedJobId = jobs.ResolveJobCategory(data.jobId);
 
-    -- Default the subjob selector to the current subjob only if it has its own
-    -- palettes; otherwise show the Shared library (subjob 0). This mirrors what's
-    -- actually active for the current job.
-    local currentSubjob = data.subjobId or 0;
+    -- Always default the subjob selector to Shared (subjob 0). Users can still
+    -- switch to a specific subjob from the dropdown when needed.
     windowState.selectedSubjobId = 0;
-    if currentSubjob ~= 0 then
-        for _, sid in ipairs(palette.GetSubjobsWithPalettes(windowState.selectedJobId)) do
-            if sid == currentSubjob then
-                windowState.selectedSubjobId = currentSubjob;
-                break;
-            end
-        end
-    end
 
     -- Re-resolve the palette list for the (possibly changed) job/subjob.
     windowState.selectedPaletteName = nil;

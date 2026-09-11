@@ -63,37 +63,47 @@ M.spirits = {
 
 -- ============================================
 -- Jug Pet Names (for BST)
--- Note: Jug pets share a common "jug" palette (too many for individual palettes)
+-- Each jug pet gets its own palette keyed by entity name.
+-- Lists match server availability (Horizon vs retail).
 -- ============================================
 
-M.jugPets = {
-    -- Low level (23-75)
-    'Homunculus', 'HareFamiliar', 'KeenearedSteffi', 'CrabFamiliar',
-    'CourierCarrie', 'SheepFamiliar', 'LullabyMelodia', 'TigerFamiliar',
-    'SaberSiravarde', 'MayflyFamiliar', 'ShellbusterOrob', 'LizardFamiliar',
-    'ColdbloodComo', 'EftFamiliar', 'AmbusherAllie', 'FunguarFamiliar',
-    'FlytrapFamiliar', 'VoraciousAudrey', 'FlowerpotBill', 'FlowerpotBen',
-    'AntlionFamiliar', 'ChopsueyChucky', 'BeetleFamiliar', 'PanzerGalahad',
-    'MiteFamiliar', 'LifedrinkerLars', 'TurbidToloi', 'AmigoSabotender',
-    -- High level (76-119)
-    'DapperMac', 'CraftyClyvonne', 'NurseryNazuna', 'LuckyLulush',
-    'FlowerpotMerle', 'DipperYuly', 'DiscreetLouise', 'FatsoFargann',
-    'PrestoJulio', 'AudaciousAnna', 'MailbusterCetas', 'FaithfulFalcorr',
-    'SwiftSieghard', 'BloodclawShasra', 'BugeyedBroncha', 'GorefangHobs',
-    'GooeyGerard', 'CrudeRaphie', 'AmiableRoche', 'SweetCaroline',
-    'HeadbreakerKen', 'AnklebiterJedd', 'CursedAnnabelle', 'BrainyWaluis',
-    'RedolentCandi', 'AlluringHoney', 'CaringKiyomaro', 'VivaciousVickie',
-    'SuspiciousAlice', 'SurgingStorm', 'SubmergedIyo', 'WarlikePatrick',
-    'RhymingShizuna', 'BlackbeardRandy', 'ThreestarLynn', 'HurlerPercival',
-    'AcuexFamiliar', 'FluffyBredo', 'SlimeFamiliar', 'SultryPatrice',
-    'GenerousArthur', 'DaringRoland', 'AttentiveIbuki', 'SwoopingZhivago',
-    'ChoralLeera', 'ColibriFamiliar', 'HippogrypFamiliar', 'SunburstMalfik',
-    'AgedAngus', 'HeraldHenry', 'BraveHeroGlenn', 'PorterCrabFamiliar',
-    'JovialEdwin', 'ScissorlegXerin',
-    -- Legacy/alternate names (kept for backwards compatibility)
-    'BouncingBertha', 'SharpwitHermes', 'FleetReinhard', 'DroopyDortwin',
-    'PonderingPeter', 'MosquitoFamilia', 'Left-HandedYoko',
-};
+if HzLimitedMode then
+    M.jugPets = {
+        'HareFamiliar', 'SheepFamiliar', 'FlowerpotBill', 'FlytrapFamiliar',
+        'TigerFamiliar', 'BeetleFamiliar', 'EftFamiliar', 'LizardFamiliar',
+        'MayflyFamiliar', 'AntlionFamiliar', 'CrabFamiliar', 'MiteFamiliar',
+        'FunguarFamiliar', 'AmbusherAllie', 'AmigoSabotender', 'ChopsueyChucky',
+        'ColdbloodComo', 'CourierCarrie', 'FlowerpotBen', 'Homunculus',
+        'KeenearedSteffi', 'LifedrinkerLars', 'LullabyMelodia', 'PanzerGalahad',
+        'SaberSiravarde', 'ShellbusterOrob', 'VoraciousAudrey',
+    };
+else
+    M.jugPets = {
+        'Homunculus', 'HareFamiliar', 'KeenearedSteffi', 'CrabFamiliar',
+        'CourierCarrie', 'SheepFamiliar', 'LullabyMelodia', 'TigerFamiliar',
+        'SaberSiravarde', 'MayflyFamiliar', 'ShellbusterOrob', 'LizardFamiliar',
+        'ColdbloodComo', 'EftFamiliar', 'AmbusherAllie', 'FunguarFamiliar',
+        'FlytrapFamiliar', 'VoraciousAudrey', 'FlowerpotBill', 'FlowerpotBen',
+        'AntlionFamiliar', 'ChopsueyChucky', 'BeetleFamiliar', 'PanzerGalahad',
+        'MiteFamiliar', 'LifedrinkerLars', 'TurbidToloi', 'AmigoSabotender',
+        'SlipperySilas', 'DapperMac', 'CraftyClyvonne', 'NurseryNazuna',
+        'LuckyLulush', 'FlowerpotMerle', 'DipperYuly', 'DiscreetLouise',
+        'FatsoFargann', 'PrestoJulio', 'AudaciousAnna', 'MailbusterCetas',
+        'FaithfulFalcorr', 'SwiftSieghard', 'BloodclawShasra', 'BugeyedBroncha',
+        'GorefangHobs', 'GooeyGerard', 'CrudeRaphie', 'AmiableRoche',
+        'SweetCaroline', 'HeadbreakerKen', 'AnklebiterJedd', 'CursedAnnabelle',
+        'BrainyWaluis', 'RedolentCandi', 'AlluringHoney', 'CaringKiyomaro',
+        'VivaciousVickie', 'SuspiciousAlice', 'SurgingStorm', 'SubmergedIyo',
+        'WarlikePatrick', 'RhymingShizuna', 'BlackbeardRandy', 'ThreestarLynn',
+        'HurlerPercival', 'AcuexFamiliar', 'FluffyBredo', 'SlimeFamiliar',
+        'SultryPatrice', 'GenerousArthur', 'DaringRoland', 'AttentiveIbuki',
+        'SwoopingZhivago', 'ChoralLeera', 'ColibriFamiliar', 'HippogrypFamiliar',
+        'SunburstMalfik', 'AgedAngus', 'HeraldHenry', 'BraveHeroGlenn',
+        'PorterCrabFamiliar', 'JovialEdwin', 'ScissorlegXerin',
+        'BouncingBertha', 'SharpwitHermes', 'FleetReinhard', 'DroopyDortwin',
+        'PonderingPeter', 'MosquitoFamilia', 'Left-HandedYoko',
+    };
+end
 
 -- Build lookup table for jug pets
 M.jugPetLookup = {};
@@ -113,6 +123,12 @@ M.jobPetCategories = {
     [M.JOB_BST] = { M.PET_TYPE_JUG, M.PET_TYPE_CHARM },
 };
 
+-- Canonical pet-palette keys for pets that share one palette regardless of
+-- custom entity name (renamed wyvern, automaton nickname, any charmed mob).
+M.PET_KEY_WYVERN = 'Wyvern';
+M.PET_KEY_AUTOMATON = 'Automaton';
+M.PET_KEY_CHARMED = 'Charmed';
+
 -- ============================================
 -- Display Names for Pet Types
 -- ============================================
@@ -120,10 +136,10 @@ M.jobPetCategories = {
 M.petTypeDisplayNames = {
     [M.PET_TYPE_AVATAR] = 'Avatar',
     [M.PET_TYPE_SPIRIT] = 'Spirit',
-    [M.PET_TYPE_WYVERN] = 'Wyvern',
-    [M.PET_TYPE_AUTOMATON] = 'Automaton',
+    [M.PET_TYPE_WYVERN] = M.PET_KEY_WYVERN,
+    [M.PET_TYPE_AUTOMATON] = M.PET_KEY_AUTOMATON,
     [M.PET_TYPE_JUG] = 'Jug Pet',
-    [M.PET_TYPE_CHARM] = 'Charmed',
+    [M.PET_TYPE_CHARM] = M.PET_KEY_CHARMED,
 };
 
 -- ============================================
@@ -178,86 +194,84 @@ function M.GetPetType(petName, jobId)
     return nil;
 end
 
--- Get the storage key suffix for a pet
--- Returns: string like "avatar:ifrit", "wyvern", "jug", "automaton", etc.
--- For SMN avatars/spirits, returns per-entity keys
--- For other jobs, returns per-type keys
+-- Get the pet palette storage key for a live pet entity name.
+-- Keys are the pet name itself (no job/subjob): "Fenrir", "HareFamiliar", etc.
+-- Shared exceptions: Wyvern, Automaton, and all charmed pets -> "Charmed".
 function M.GetPetKey(petName, jobId)
     if petName == nil then return nil; end
 
     local petType = M.GetPetType(petName, jobId);
     if not petType then return nil; end
 
-    -- SMN: Per-avatar/spirit palettes
-    if petType == M.PET_TYPE_AVATAR then
-        local avatarKey = M.avatars[petName];
-        if avatarKey then
-            return M.PET_TYPE_AVATAR .. ':' .. avatarKey;
-        end
-    elseif petType == M.PET_TYPE_SPIRIT then
-        local spiritKey = M.spirits[petName];
-        if spiritKey then
-            return M.PET_TYPE_SPIRIT .. ':' .. spiritKey;
-        end
+    if petType == M.PET_TYPE_CHARM then
+        return M.PET_KEY_CHARMED;
+    elseif petType == M.PET_TYPE_WYVERN then
+        return M.PET_KEY_WYVERN;
+    elseif petType == M.PET_TYPE_AUTOMATON then
+        return M.PET_KEY_AUTOMATON;
     end
 
-    -- Other jobs: Per-type palettes (wyvern, automaton, jug, charm)
-    return petType;
+    -- Avatars, spirits, and jug pets: one palette per entity name
+    return petName;
 end
 
--- Get display name for a pet key
--- Input: "avatar:ifrit", "wyvern", etc.
--- Output: "Ifrit", "Wyvern", etc.
+-- Display label for a pet palette key (keys are already human-readable names)
 function M.GetDisplayNameForKey(petKey)
     if not petKey then return 'Base'; end
-
-    -- Check for avatar/spirit format
-    local petType, petId = petKey:match('^([^:]+):(.+)$');
-    if petType and petId then
-        if petType == M.PET_TYPE_AVATAR then
-            -- Find avatar name
-            for name, key in pairs(M.avatars) do
-                if key == petId then return name; end
-            end
-        elseif petType == M.PET_TYPE_SPIRIT then
-            -- Find spirit name
-            for name, key in pairs(M.spirits) do
-                if key == petId then return name; end
-            end
-        end
-    end
-
-    -- Check for simple type keys
-    local displayName = M.petTypeDisplayNames[petKey];
-    if displayName then return displayName; end
-
     return petKey;
 end
 
--- Get all available pet keys for a job (for cycling)
--- Returns a table of pet keys that can be used for that job
+-- Get all available pet keys for a job (for cycling / dropdowns)
 function M.GetAvailablePetKeys(jobId)
     local keys = {};
 
     if jobId == M.JOB_SMN then
-        -- All avatars
-        for _, key in pairs(M.avatars) do
-            table.insert(keys, M.PET_TYPE_AVATAR .. ':' .. key);
+        for _, name in ipairs(M.GetAvatarList()) do
+            table.insert(keys, name);
         end
-        -- All spirits
-        for _, key in pairs(M.spirits) do
-            table.insert(keys, M.PET_TYPE_SPIRIT .. ':' .. key);
+        for _, name in ipairs(M.GetSpiritList()) do
+            table.insert(keys, name);
         end
     elseif jobId == M.JOB_DRG then
-        table.insert(keys, M.PET_TYPE_WYVERN);
+        table.insert(keys, M.PET_KEY_WYVERN);
     elseif jobId == M.JOB_PUP then
-        table.insert(keys, M.PET_TYPE_AUTOMATON);
+        table.insert(keys, M.PET_KEY_AUTOMATON);
     elseif jobId == M.JOB_BST then
-        table.insert(keys, M.PET_TYPE_JUG);
-        table.insert(keys, M.PET_TYPE_CHARM);
+        for _, petName in ipairs(M.jugPets) do
+            table.insert(keys, petName);
+        end
+        table.insert(keys, M.PET_KEY_CHARMED);
     end
 
     return keys;
+end
+
+-- Insert spaces before capitals for jug dropdown labels (CourierCarrie -> Courier Carrie).
+-- Storage keys stay as the raw entity name.
+function M.FormatJugPetDisplayName(petName)
+    if petName == nil or petName == '' then
+        return '';
+    end
+    return (tostring(petName):gsub('(%l)(%u)', '%1 %2'):gsub('(%d)(%u)', '%1 %2'));
+end
+
+-- Ordered jug pet list for dropdowns (key = entity name, displayName = spaced label)
+function M.GetJugPetList()
+    local list = {};
+    for _, petName in ipairs(M.jugPets) do
+        table.insert(list, {
+            name = petName,
+            key = petName,
+            displayName = M.FormatJugPetDisplayName(petName),
+        });
+    end
+    return list;
+end
+
+-- Get pet key for a known jug entity name
+function M.GetPetKeyForJug(petName)
+    if not M.IsJugPet(petName) then return nil; end
+    return petName;
 end
 
 -- Get ordered list of avatar names (for dropdowns, etc.)
@@ -277,14 +291,42 @@ function M.GetSpiritList()
     };
 end
 
--- Get combined list of all summons (avatars + spirits)
+local function CopyAndSortNames(names)
+    local list = {};
+    for _, name in ipairs(names) do
+        table.insert(list, name);
+    end
+    table.sort(list, function(a, b)
+        return string.lower(a) < string.lower(b);
+    end);
+    return list;
+end
+
+-- Alphabetical avatar names for UI lists
+function M.GetSortedAvatarList()
+    return CopyAndSortNames(M.GetAvatarList());
+end
+
+-- Alphabetical spirit names for UI lists
+function M.GetSortedSpiritList()
+    return CopyAndSortNames(M.GetSpiritList());
+end
+
+-- Alphabetical jug pet list for UI (sorted by spaced display name)
+function M.GetSortedJugPetList()
+    local list = M.GetJugPetList();
+    table.sort(list, function(a, b)
+        return string.lower(a.displayName) < string.lower(b.displayName);
+    end);
+    return list;
+end
+
+-- Combined list of all summons (avatars + spirits)
 function M.GetAllSummonsList()
     local list = {};
-    -- Avatars first
     for _, avatar in ipairs(M.GetAvatarList()) do
         table.insert(list, { name = avatar, category = 'avatar' });
     end
-    -- Then spirits
     for _, spirit in ipairs(M.GetSpiritList()) do
         table.insert(list, { name = spirit, category = 'spirit' });
     end
@@ -293,15 +335,38 @@ end
 
 -- Get the pet key for a summon name (avatar or spirit)
 function M.GetPetKeyForSummon(summonName)
-    -- Check avatars
-    if M.avatars[summonName] then
-        return 'avatar:' .. M.avatars[summonName];
-    end
-    -- Check spirits
-    if M.spirits[summonName] then
-        return 'spirit:' .. M.spirits[summonName];
+    if M.avatars[summonName] or M.spirits[summonName] then
+        return summonName;
     end
     return nil;
+end
+
+-- DRG/PUP pets cannot be active when the job is only subbed.
+function M.IsMainOnlyPetJob(jobId)
+    return jobId == M.JOB_DRG or jobId == M.JOB_PUP;
+end
+
+-- Which pet jobs should appear in the macro-palette pet dropdown.
+-- Includes the job being edited, plus live main/sub (sub skips DRG/PUP).
+-- Returns a set: { [jobId] = true }
+function M.GetPetJobsForPaletteEditor(selectedJobId, mainJobId, subJobId)
+    local jobs = {};
+
+    local function addJob(jobId, isSub)
+        if type(jobId) ~= 'number' or not M.IsPetJob(jobId) then
+            return;
+        end
+        if isSub and M.IsMainOnlyPetJob(jobId) then
+            return;
+        end
+        jobs[jobId] = true;
+    end
+
+    addJob(selectedJobId, false);
+    addJob(mainJobId, false);
+    addJob(subJobId, true);
+
+    return jobs;
 end
 
 -- ============================================
