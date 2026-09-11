@@ -67,7 +67,13 @@ local MODULE_REGISTRY = {
     },
     { key = 'castBar', aliases = { 'castbar' }, keys = { 'CastBar' } },
     { key = 'castCost', aliases = { 'castcost' }, keys = { 'CastCost' } },
-    { key = 'petBar', aliases = { 'petbar' }, keys = { 'PetBar', 'PetBarTarget' } },
+    { key = 'petBar', aliases = { 'petbar' }, keys = { 'PetBar', 'PetBarTarget' },
+        onRecover = function()
+            if gConfig then
+                gConfig.petBarAlignState = nil;
+            end
+        end,
+    },
     { key = 'phantomRoll', aliases = { 'phantomroll' }, keys = { 'PhantomRoll' } },
     {
         key = 'notifications',
