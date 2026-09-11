@@ -60,10 +60,11 @@ durations.spells = {
     [98] = {duration = 90, displayBuffId = 19, kind = 'enfeeble'}, -- Repose
     [841] = {duration = 120, kind = 'enfeeble'}, -- Distract
     [842] = {duration = 120, kind = 'enfeeble'}, -- Distract II
+    [882] = {duration = 120, kind = 'enfeeble'}, -- Distract III
     [843] = {duration = 120, kind = 'enfeeble'}, -- Frazzle
     [844] = {duration = 120, kind = 'enfeeble'}, -- Frazzle II
-    -- 845/846 are Flurry I/II (ally haste), not debuffs. Distract III (882) and
-    -- Frazzle III (883) are unimplemented on LSB.
+    [883] = {duration = 120, kind = 'enfeeble'}, -- Frazzle III
+    -- 845/846 are Flurry I/II (ally haste), not debuffs.
     [255] = {duration = 30, kind = 'enfeeble'},  -- Break
     [365] = {duration = 30, kind = 'enfeeble'},  -- Breakga
     [879] = {duration = 300, kind = 'enfeeble'}, -- Inundation
