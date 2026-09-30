@@ -416,7 +416,12 @@ local function GetIndexFromId(id)
         end
     end
 
-    for i = 1, 0x8FF do
+    -- Players are only in slots 0x400-0x6FF.
+    local first, last = 1, 0x8FF;
+    if id > 0 and id < 0x1000000 then
+        first, last = 0x400, 0x6FF;
+    end
+    for i = first, last do
         if entMgr:GetServerId(i) == id then
             return i;
         end
