@@ -1403,7 +1403,7 @@ local function DrawWindowInner(settings, moduleSettings)
     end
 
     -- Draw palette modifier indicator (refresh icon when modifier key is held)
-    if state.windowX and actions.IsPaletteModifierHeld() then
+    if state.windowX and (actions.IsPaletteModifierHeld() or controller.IsPaletteCycleShoulderHeld()) then
         local refreshTexture = textures:Get('ui_refresh');
         if refreshTexture and refreshTexture.image then
             local iconSize = 18;
