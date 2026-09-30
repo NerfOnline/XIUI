@@ -575,18 +575,13 @@ local function SlotPassesGates(skill, actionType)
 
     if actionType == 'ma' then
         local spellId = skill._id;
-        if spellId and spellId >= 512 and not IsBluSpellSet(spellId) then
+        local elementalMagic = spellId and (spellId < 512 or (spellId >= 885 and spellId <= 892));
+        if spellId and not elementalMagic and not IsBluSpellSet(spellId) then
             return false;
         end
-        if cfg.skillchainRequireAbility then
-            if spellId and spellId >= 512 then
-                if not (PlayerHasBuff(BUFF_AZURE_LORE) or PlayerHasBuff(BUFF_CHAIN_AFFINITY)) then
-                    return false;
-                end
-            else
-                if not PlayerHasBuff(BUFF_IMMANENCE) then
-                    return false;
-                end
+        if cfg.skillchainRequireAbility and not elementalMagic then
+            if not (PlayerHasBuff(BUFF_AZURE_LORE) or PlayerHasBuff(BUFF_CHAIN_AFFINITY)) then
+                return false;
             end
         end
     end
@@ -614,7 +609,7 @@ end
 
 -- Target's open resonation, or nil. Callers pass the entity index from
 -- targetLib.GetTargets(); do not reverse-map ServerId on the draw path.
-local function ResolveOpenResonation(targetIndex)
+local function ResolveTrackedResonation(targetIndex)
     if not targetIndex or targetIndex == 0 then
         return nil;
     end
@@ -624,15 +619,19 @@ local function ResolveOpenResonation(targetIndex)
         return nil;
     end
 
-    local now = os.clock();
-    if now > resonation.WindowClose then
+    if os.clock() > resonation.WindowClose then
         resonationMap[targetIndex] = nil;
         return nil;
     end
-    if now < resonation.WindowOpen then
+
+    return resonation;
+end
+
+local function ResolveOpenResonation(targetIndex)
+    local resonation = ResolveTrackedResonation(targetIndex);
+    if not resonation or os.clock() < resonation.WindowOpen then
         return nil;
     end
-
     return resonation;
 end
 
@@ -648,6 +647,28 @@ local function MatchCloser(wsAttributes, resonation)
         end
     end
     return nil;
+end
+
+local function IsElementalMagicSkill(skill)
+    if not skill or not skill._id then return false; end
+    -- The sub-512 rows are elemental/helix spells; 885-892 are the Helix II set.
+    -- Blue Magic occupies the intervening spell-id range in this table.
+    return skill._id < 512 or (skill._id >= 885 and skill._id <= 892);
+end
+
+local function MatchesActiveBurst(skill, resonation)
+    if not skill or not resonation or not resonation.BurstElements or not resonation.BurstStart then
+        return false;
+    end
+
+    for _, attr in ipairs(GetAttrIds(skill) or {}) do
+        for _, element in ipairs(resonationBurstElements[attr] or {}) do
+            if tableContains(resonation.BurstElements, element) then
+                return true;
+            end
+        end
+    end
+    return false;
 end
 
 function M.DebugDumpState()
@@ -676,12 +697,27 @@ function M.GetSkillchainForSlot(targetIndex, actionType, actionName)
         actionType = 'ws';
     end
 
-    local resonation = ResolveOpenResonation(targetIndex);
-    if not resonation then return nil; end
-
     local skill = FindSlotSkill(actionType, actionName);
     local attrs = GetAttrIds(skill);
     if not attrs then return nil; end
+
+    if actionType == 'ma' and IsElementalMagicSkill(skill) then
+        local tracked = ResolveTrackedResonation(targetIndex);
+        if not tracked then return nil; end
+
+        -- Ordinary nukes are Magic Burst recommendations after a real skillchain.
+        if MatchesActiveBurst(skill, tracked) then
+            return resonationNames[tracked.Attributes[1]];
+        end
+
+        -- Their skillchain properties only exist while Immanence is active.
+        if not PlayerHasBuff(BUFF_IMMANENCE) then
+            return nil;
+        end
+    end
+
+    local resonation = ResolveOpenResonation(targetIndex);
+    if not resonation then return nil; end
     if not SlotPassesGates(skill, actionType) then return nil; end
 
     return MatchCloser(attrs, resonation);
@@ -805,7 +841,10 @@ end
 function M.IsWindowOpen()
     local now = os.clock();
     for _, state in pairs(resonationMap) do
-        if state.WindowOpen and now >= state.WindowOpen and now <= state.WindowClose then
+        local closerOpen = state.WindowOpen and now >= state.WindowOpen and now <= state.WindowClose;
+        local burstOpen = state.BurstElements and state.BurstStart
+            and now >= state.BurstStart and now <= state.WindowClose;
+        if closerOpen or burstOpen then
             return true;
         end
     end
