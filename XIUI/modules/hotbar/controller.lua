@@ -791,9 +791,10 @@ function Controller.HandleXInputButton(e)
         else
             state.leftShoulderHeld = isPressed;
         end
+        -- Never block here: a blocked button is also cleared from the polled xinput_state,
+        -- which would read as released every frame. HandleXInputState hides it from the game.
         if IsShoulderTriggerSwap() then
             RefreshComboState();
-            return blockingEnabled;
         end
         return false;
     end
